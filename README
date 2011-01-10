@@ -1,7 +1,6 @@
 PHP-Daemon 
 
-Easily build-out backend infrastructure quickly by building a Daemon or Cron job on top of this baseclass. We're using this system in production for 2
-critical daemons. It's made the chore of building out our infrastructure much more painless and easy to manage.
+Easily build-out backend infrastructure quickly by building a Daemon or Cron job on top of this baseclass. We're using this system in production for 2 critical daemons. It's made the chore of building out our infrastructure much more painless and easy to manage.
 
 Requires: 
 
@@ -13,18 +12,14 @@ Memcache Connection
 Notable Features: 
 
 Loop Frequency
-The internal run loop can run at whatever frequency you define. If you wish it to execute 5 times per second, or once every 5 seconds, 
-all you have to do is set the ->loop_interval property. If do set it at '5', and your code takes 2 seconds to execute, it will sleep 
-for the next 3 seconds, wake up, and iterate. If you set it at '5' and it's still running at 5 seconds, it will log it as an error condition. 
+The internal run loop can run at whatever frequency you define. If you wish it to execute 5 times per second, or once every 5 seconds, all you have to do is set the ->loop_interval property. If do set it at '5', and your code takes 2 seconds to execute, it will sleep for the next 3 seconds, wake up, and iterate. If you set it at '5' and it's still running at 5 seconds, it will log it as an error condition. 
 
 Signal Handling
-The daemon listens for 3 signals: SIGINT, SIGHUP, SIGUSR1. When you send the Daemon a standard 'kill [pid]' SIGINT, it will do an ordered shutdown: 
-It will finish the current iteration of the run loop and then shutdown. If you send a 'kill -1 [pid]' HUP command, it will restart the daemon. And
-if you send a 'kill -10 [pid]' USR1 signal, it will respond by dumping a block of debug variables to either the log or stdout or both, depending 
+The daemon listens for 3 signals: SIGINT, SIGHUP, SIGUSR1. When you send the Daemon a standard 'kill [pid]' SIGINT, it will do an ordered shutdown: It will finish the current iteration of the run loop and then shutdown. If you send a 'kill -1 [pid]' HUP command, it will restart the daemon. And if you send a 'kill -10 [pid]' USR1 signal, it will respond by dumping a block of debug variables to either the log or stdout or both, depending 
 on how you configure logging. 
 
 Command Line Switches
-You can run a '-H' help command when you run the Daemon. It will dump a help menu that looks like this, but can be easily overridden for your daemon: 
+You can run a '-H' help command when you run the Daemon. It will dump a help menu that looks like this, but can be easily overridden for your daemon:
 
 	Example_Daemon
 	
@@ -38,24 +33,16 @@ You can run a '-H' help command when you run the Daemon. It will dump a help men
 	 -p PID_FILE File to write process ID out to
 
  Auto Restart
- When run in Daemon mode (-d at the command prompt), the system will keep an internal clock of it's runtime. When it reaches the point set in the 
- config.auto_restart_interval key, it will automatically restart itself by calling itself using an exec() command and then killing the mature process
- in favor of the newly created. Additionally, when a fatal error is thrown, if it's been running for more than 10 seconds, it'll log the fatal but then
- attempt to recover by restarting itself. 
+ When run in Daemon mode (-d at the command prompt), the system will keep an internal clock of it's runtime. When it reaches the point set in the config.auto_restart_interval key, it will automatically restart itself by calling itself using an exec() command and then killing the mature process  in favor of the newly created. Additionally, when a fatal error is thrown, if it's been running for more than 10 seconds, it'll log the fatal but then  attempt to recover by restarting itself. 
  
  Memcache Heartbeat
- Every iteration, a "Heartbeat" is written to a special key in Memcache containing the PID of the process that wrote it. When a daemon starts, it checks
- that key for an existing heartbeat. If one is heard, it will gracefully shut down. You could also write external systems that poll that same key. 
+ Every iteration, a "Heartbeat" is written to a special key in Memcache containing the PID of the process that wrote it. When a daemon starts, it checks that key for an existing heartbeat. If one is heard, it will gracefully shut down. You could also write external systems that poll that same key.  
  
  Memcache Wrapper
- A small Memcache wrapper is included that implements auto_retry functionality. This adds more redundancy to Memcache to prevent a crash condition in the 
- event where, at that specific microsecond, memcache was blocking and a key couldn't be written.
+ A small Memcache wrapper is included that implements auto_retry functionality. This adds more redundancy to Memcache to prevent a crash condition in the event where, at that specific microsecond, memcache was blocking and a key couldn't be written.
  
  Simple Logging
- By providing a filename, either staticly via the ->log_file property or dynamically by overloading the ->log_file() method, the system will keep 
- a simple log file format, writing the timestamp, PID, and message. You can easily add entries to the log file throught your custom code by calling
- either the ->log($message) method or, if appropriate, the ->fatal_error($message) method. 
+ By providing a filename, either staticly via the ->log_file property or dynamically by overloading the ->log_file() method, the system will keep a simple log file format, writing the timestamp, PID, and message. You can easily add entries to the log file throught your custom code by calling  either the ->log($message) method or, if appropriate, the ->fatal_error($message) method. 
  
  Simple Config Loading
- The daemon requires a config file with at least one key: config.auto_restart_interval. You can add any additional settings in there to control your
- daemon at runtime. All the settings are available by reading ->config[$section][$key]. 
+ The daemon requires a config file with at least one key: config.auto_restart_interval. You can add any additional settings in there to control your daemon at runtime. All the settings are available by reading ->config[$section][$key]. 
