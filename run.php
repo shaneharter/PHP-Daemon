@@ -10,7 +10,7 @@ email_on_error('2125559999@vtext.com');
 App_Example::setFilename(__file__);
 
 // And it needs to have a Memcache namespace.
-App_Example::setMemcacheNamespace('sting_development');
+App_Example::setMemcacheNamespace('example');
 
 // The run() method will start the daemon loop. 
 App_Example::getInstance()->run();
