@@ -158,4 +158,20 @@ final class Core_Memcache extends Memcache
 					
 		return $key;
 	}
+	
+	/**
+	 * Connect to an array of Memcache servers
+	 * @param array $connections
+	 * @return Boolean	Returns true only if all connections were made. 
+	 */
+	public function connect_all(array $connections)
+	{
+		$connection_count = 0;
+		foreach ($connections as $connection)
+			if (is_array($connection) && isset($connection['host']) && isset($connection['port']))
+				if ($this->addServer($connection['host'], $connection['port']) == true)
+					$connection_count++;
+	
+		return (count($connections) == $connection_count);
+	}	
 }

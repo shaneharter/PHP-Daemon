@@ -12,14 +12,12 @@ declare(ticks = 5);
  * 
  * 2. In your constructor, CALL THE parent::__construct() and then set: loop_interval, email_distribution_list, log_file, required_config_sections. See phpdoc for each. 
  * 
- * 3. Set the PREFIX define, this is your memcache namespace. 
- * 
- * 4. Create a config file in ./config.ini, or elsewhere if you set ->config_file in your constructor. Copy this into the top of it and then add whatever you'd like. 
+ * 3. Create a config file in ./config.ini, or elsewhere if you set ->config_file in your constructor. Copy this into the top of it and then add whatever you'd like. 
  * 
  * 		[config]
  * 		auto_restart_interval = 600
  * 
- * 5. Overload the log_file() method if you wish to use an algorithm to define the log file. 
+ * 4. Overload the log_file() method if you wish to use an algorithm to define the log file. 
  * 
  * @uses PHP 5.3 or Higher
  * @uses Core_Memcache
@@ -51,6 +49,12 @@ abstract class Core_Daemon
 	 */
 	public $memcache;
 	
+	/**
+	* An array containing an associative array of Memcache servers with the keys: host, port.
+	* @var string
+	*/
+	protected $memcache_servers = array(); 	
+		
 	/**
 	 * This is the config file accessed by self::__construct
 	 * @var string
@@ -202,9 +206,9 @@ abstract class Core_Daemon
 		// Connect to memcache
 		$this->memcache = new Core_Memcache();
 		$this->memcache->ns(self::$memcache_namespace);
-		if ($this->memcache->connect($config['memcache']['host'], $config['memcache']['port']) === false)
-			throw new Exception('Core_Daemon::init failed: Invalid Memcache Connection to ' . $config['memcache']['host']);
-
+		if ($this->memcache->connect_all($this->memcache_servers) === false)
+			throw new Exception('Core_Daemon::init failed: Memcache Connection Failed');	
+			
 		// Set the initial heartbeat and gracefully exit if another heartbeat is detected
 		try
 		{
