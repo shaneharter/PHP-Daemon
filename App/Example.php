@@ -1,8 +1,5 @@
 <?php
 
-// The PREFIX is used for memcache namespacing
-define('PREFIX', 'example_');
-
 class App_Example extends Core_Daemon
 {
 

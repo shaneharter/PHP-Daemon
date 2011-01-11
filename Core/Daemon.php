@@ -46,7 +46,7 @@ abstract class Core_Daemon
 	public $config = array();
 	
 	/**
-	 * This is the Core_Memcache proxy object
+	 * This is the Bf_Memcache proxy object
 	 * @var Core_Memcache
 	 */
 	public $memcache;
@@ -83,12 +83,6 @@ abstract class Core_Daemon
 	 * @var string
 	 */
 	protected $log_file = './log';
-	
-	/**
-	 * An array containing an associative array of Memcache servers with the keys: host, port. 
-	 * @var string
-	 */
-	protected $memcache_servers = array();	
 	
 	/**
 	 * Timestamp when was this pid started? 
@@ -129,10 +123,16 @@ abstract class Core_Daemon
 	/**
 	 * This has to be set using the Core_Daemon::setFilename before init. 
 	 * It's used as part of the auto-restart mechanism. Probably a way to figure it out programatically tho. 
-	 * @var unknown_type
+	 * @var string
 	 */
 	private static $filename = false;
-		
+	
+	/**
+	 * This has to be set using the Core_Daemon::setMemcacheNamespace before init. 
+	 * It's used as part of the heartbeat mechanism. 
+	 * @var string
+	 */
+	private static $memcache_namespace = false;	
 	
 	protected function __construct()
 	{
@@ -152,15 +152,18 @@ abstract class Core_Daemon
 	{
 		$errors = array();
 		
+		if (empty(self::$filename))
+			$errors[] = 'Filename is Missing: setFilename Must Be Called Before an Instance can be Initialized';
+			
+		if (empty(self::$memcache_namespace))
+			$errors[] = 'Memcache Namespace is Missing: setMemcacheNamespace Must Be Called Before an Instance can be Initialized';		
+		
 		if (empty($this->loop_interval) || is_numeric($this->loop_interval) == false)
 			$errors[] = "Invalid Loop Interval: $this->loop_interval";
 			
 		if (function_exists('pcntl_fork') == false)
 			$errors[] = "The PCNTL Extension is Not Installed";
-			
-		if (defined('PREFIX') == false)
-			$errors[] = "The PREFIX constant is Not Defined";
-			
+	
 		if (version_compare(PHP_VERSION, '5.3.0') < 0)
 			$errors[] = "PHP 5.3 or Higher is Required";
 			
@@ -181,9 +184,6 @@ abstract class Core_Daemon
 	{
 		global $config;
 		
-		if (self::$filename == false)
-			throw new Exception('Core_Daemon::init failed: setFilename Must Be Called Before an Instance can be Initialized');
-		
 		// Validate that we have proper-looking config
 		$missing_sections = array();
 		$this->required_config_sections = array_merge(array('config'), $this->required_config_sections);
@@ -201,8 +201,9 @@ abstract class Core_Daemon
 			
 		// Connect to memcache
 		$this->memcache = new Core_Memcache();
-		if ($this->memcache->connect_all($this->memcache_servers) === false)
-			throw new Exception('Core_Daemon::init failed: Memcache Connection Failed');
+		$this->memcache->ns(self::$memcache_namespace);
+		if ($this->memcache->connect($config['memcache']['host'], $config['memcache']['port']) === false)
+			throw new Exception('Core_Daemon::init failed: Invalid Memcache Connection to ' . $config['memcache']['host']);
 
 		// Set the initial heartbeat and gracefully exit if another heartbeat is detected
 		try
@@ -259,14 +260,24 @@ abstract class Core_Daemon
 
 	/**
      * Set the current Filename wherein this object is being instantiated and run. 
-     * @param $filename the acutal filename, pass in __file__
+     * @param string $filename the acutal filename, pass in __file__
      * @return void
      */
     public static function setFilename($filename)
     {
     	self::$filename = realpath($filename);
     }    
-    
+
+	/**
+     * Set the memcache namespace that will be used by the daemon during this execution
+     * @param string $namespace
+     * @return void
+     */
+    public static function setMemcacheNamespace($namespace)
+    {
+    	self::$memcache_namespace = $namespace;
+    }   
+        
     /**
      * This is the main program loop for the daemon
      * @return void
@@ -341,7 +352,7 @@ abstract class Core_Daemon
 		$duration = microtime(true) - $start_time;
 
 		if ($duration > ($this->loop_interval * 0.9))
-			$this->log('Run Loop Taking Too Long. Duration: ' . $duration . ' Interval: ' . $this->loop_interval);
+			$this->log('Run Loop Taking Too Long. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);
 		
 		if ($duration > $this->loop_interval)
 			return;
@@ -359,7 +370,7 @@ abstract class Core_Daemon
 	 */
 	protected function heartbeat()
 	{
-		$heartbeat = $this->memcache->get(PREFIX . self::CACHE_HEARTBEAT_KEY);
+		$heartbeat = $this->memcache->getWithRetry(PREFIX . self::CACHE_HEARTBEAT_KEY, false, 0.50);
 		
 		if ($heartbeat && $heartbeat['pid'] != $this->pid)
 			throw new Exception(sprintf('Additional Heartbeat Detected. [Heartbeat Pid: %s Set At: %s] [Current Pid: %s At: %s]', 
@@ -369,7 +380,7 @@ abstract class Core_Daemon
 		$heartbeat['pid'] = $this->pid;
 		$heartbeat['timestamp'] = time();
 				
-		$this->memcache->set(PREFIX . self::CACHE_HEARTBEAT_KEY, $heartbeat, false, ceil($this->loop_interval) + self::CACHE_HEARTBEAT_SECONDS);
+		$this->memcache->set(PREFIX . self::CACHE_HEARTBEAT_KEY, $heartbeat, false, self::CACHE_HEARTBEAT_SECONDS);
 	}
 	
 	/**
@@ -432,7 +443,7 @@ abstract class Core_Daemon
 	 * Multi-Line messages will be handled nicely.
 	 * @param string $message
 	 */
-	public function log($message)
+	public function log($message, $send_alert = false)
 	{
 		static $handle = false;
 		
@@ -459,7 +470,7 @@ abstract class Core_Daemon
 					echo $header;
 	        }
 	        
-	        $message = $prefix . ' ' . str_replace("\n", "\n$prefix ", trim($message))."\n";
+	        $message = $prefix . ' ' . str_replace("\n", "\n$prefix ", trim($message)) . "\n";
             fwrite($handle, $message);
             
             if ($this->verbose)
@@ -469,6 +480,10 @@ abstract class Core_Daemon
         {
         	echo $e->getMessage();
         }
+        
+        // Optionally distribute this error message to anyboady on the ->email_distribution_list
+        if ($send_alert && $message)
+        	$this->send_alert($message);
 	}
 	
 	/**
@@ -477,11 +492,12 @@ abstract class Core_Daemon
 	 */
 	protected function fatal_error($log_message)
 	{
+		// Log the Error
 		$this->log($log_message);
 		$this->log(get_class($this) . ' is Shutting Down...');
-		
-		foreach($this->email_distribution_list as $email)
-			mail($email, get_class($this) . ' Shutdown', $log_message);
+
+		// Send Alerts
+		$this->send_alert($log_message, get_class($this) . ' Shutdown');
 		
 		// If this process has just started, we have to just log and exit. However, if it was running
 		// for a while, we will try to sleep for just a moment in hopes that, if an external resource caused the 
@@ -495,6 +511,22 @@ abstract class Core_Daemon
 		
 		// If we get here, it means we couldn't try a re-start or we tried and it just didn't work. 
 		exit(1);
+	}
+	
+	/**
+	 * Send the $message to everybody on the $this->email_distribution_list
+	 * @param string $message
+	 */
+	private function send_alert($message, $subject = false)
+	{
+		if (empty($message))
+			return;
+			
+		if (empty($subject))
+			$subject = get_class($this) . ' Alert';
+			
+		foreach($this->email_distribution_list as $email)
+			@mail($email, $subject, $log_message);
 	}
 	
 	/**
@@ -552,25 +584,20 @@ abstract class Core_Daemon
         $opts = getopt("Hdvp:");
 
         if(isset($opts["H"]))
-        {
             $this->show_help();
-        }
         
         if(isset($opts['d']))
         {			  
         	$pid = pcntl_fork();      	
-            if($pid > 0) {
+            if($pid > 0)
 				exit();
-            }
             
 			$this->daemon = true;
 			$this->pid = getmypid();	// We have a new pid now
         }
 	        
         if(isset($opts['v']) && $this->daemon == false)
-        {
 			$this->verbose = true;
-        }        
         
 		if(isset($opts['p']))
 		{
