@@ -154,7 +154,8 @@ final class Core_Memcache extends Memcache
 			foreach($key as &$row)
 				$row = $this->key($key);
 		else
-			$key = "{$this->namespace}_{$this->key}";
+			if (empty($this->namespace) == false)
+				$key = "{$this->namespace}_{$key}";
 					
 		return $key;
 	}
