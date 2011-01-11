@@ -3,7 +3,7 @@ require_once 'App/config.php';
 require_once 'App/error_handlers.php';
 
 // Add some email addresses that will be notified on error.
-email_on_error('jon_doe@mycompanyhere.php');
+email_on_error('jon_doe@mycompanyhere.com');
 email_on_error('2125559999@vtext.com');
 
 // The daemon needs to know from which file it was executed.
