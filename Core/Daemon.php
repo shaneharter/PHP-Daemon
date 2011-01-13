@@ -374,7 +374,7 @@ abstract class Core_Daemon
 	 */
 	protected function heartbeat()
 	{
-		$heartbeat = $this->memcache->getWithRetry(PREFIX . self::CACHE_HEARTBEAT_KEY, false, 0.50);
+		$heartbeat = $this->memcache->getWithRetry(self::CACHE_HEARTBEAT_KEY, false, 0.50);
 		
 		if ($heartbeat && $heartbeat['pid'] != $this->pid)
 			throw new Exception(sprintf('Additional Heartbeat Detected. [Heartbeat Pid: %s Set At: %s] [Current Pid: %s At: %s]', 
@@ -384,7 +384,7 @@ abstract class Core_Daemon
 		$heartbeat['pid'] = $this->pid;
 		$heartbeat['timestamp'] = time();
 				
-		$this->memcache->set(PREFIX . self::CACHE_HEARTBEAT_KEY, $heartbeat, false, self::CACHE_HEARTBEAT_SECONDS);
+		$this->memcache->set(self::CACHE_HEARTBEAT_KEY, $heartbeat, false, self::CACHE_HEARTBEAT_SECONDS);
 	}
 	
 	/**
@@ -423,7 +423,7 @@ abstract class Core_Daemon
 		$command .= ' > /dev/null';
 		
 		// Then remove the existing heartbeat that we set so the new process doesn't see it and auto-kill itself.
-		$this->memcache->delete(PREFIX . self::CACHE_HEARTBEAT_KEY);
+		$this->memcache->delete(self::CACHE_HEARTBEAT_KEY);
 		 
 		// Now do the restart and die
 		// Close the resource handles to prevent this process from hanging on the exec() output.
