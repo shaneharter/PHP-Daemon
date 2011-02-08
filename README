@@ -44,3 +44,10 @@ By providing a filename, either staticly via the ->log_file property or dynamica
  
 Simple Config Loading
 The daemon requires a config file with at least one key: config.auto_restart_interval. You can add any additional settings in there to control your daemon at runtime. All the settings are available by reading ->config[$section][$key]. 
+
+
+TODO: 
+
+1. Replace this simple logging code (which grew more complex over time) with ZendLog or similar. 
+2. Make it easy to add your own signal handlers without having to overload the current signal handling functionality. 
+3. Unit Tests. 
