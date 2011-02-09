@@ -53,17 +53,63 @@ class App_Example extends Core_Daemon
 		$this->memcache->auto_retry(1);
 		
 		// You may also want to load any libraries your job needs, make a database connection, etc. 
-		// If you have any troubles, throw an exception. 
+		// If you have any troubles, throw an exception.
+		
+		// If you use the fork() method to parallelize long-running tasks, note that if those child processes need a mysql connection
+		// and you create the mysql connection here in the setup you'll need to re-run the setup in the child process after the fork. 
+		// This is because a Mysql connection in the parent is dead in the child after you fork. The fork() method makes it really simple
+		// to do this: just pass "true" as the 3rd param and it will re-run this setup method as soon as the child process is spawned. 
+		// However, there may be thinsg in this method that you don't want/need to be called in those cases of re-setup. In those cases
+		// you can do this: 
+		
+		if ($this->is_parent)
+		{
+			// Some setup stuff you only want run once, in the parent, when the daemon starts. 
+		}
 	}
 	
 	/**
 	 * This is where you implement your task. This method is called at the frequency
-	 * defined by loop_interval. 
+	 * defined by loop_interval. If this method takes longer than 90% of the loop_interval, 
+	 * a Warning will be raised. 
+	 * 
 	 * @return void
 	 */
 	protected function execute()
 	{
 		// Any Code Added here will be called Once per Second.
+		// If this method takes longer than 0.9 seconds a warning will be sent. If longer than 1 second, an error. 
+		// If your usage requires that this be run every second with precision, then you have the responsibility of ensuring
+		// that your code here completes its work on time. 
+		
+		// If you do have a specific long-running task, maybe emailing a bunch of people or using an external API, you should
+		// do it in a child-process so it doesn't intefere with your timer. You can do this very, very easily: 
+		
+		$params 	= array('value_for_param_1', 'value_for_param_2', array('value_for_param_3'));
+		$callback 	= array($this, 'some_long_running_task');
+		
+		if ($this->fork($callback, $params))
+		{
+			// If we are here, it means the child process was created just fine. However, we have no idea
+			// if some_long_running_task() will run successfully. The fork() method returns as soon as the fork is attempted. 
+			// If the fork failed for some reason, it will retrun false. 
+			
+			// NOTE: 
+			// If some_long_running_task() requires a MySQL Connection, you need to re-establish the connection in the child process
+			// after the fork. If you create the connection here in the setup() method, It will LOOK like the child has a valid MySQL
+			// resource after forking, but in reality it's dead. To fix that, you can easily re-run the setup() method in the child
+			// process by passing "true" as the 3rd param: 
+
+			$this->fork($callback, $params, true);
+			
+			// If you have anything in your setup() method that you don't want to ever be re-run from the child process, you can 
+			// check the $this->is_parent flag. 
+		}
+	}
+	
+	protected function some_long_running_task($param_one, $param_two, Array $param_three)
+	{
+		
 	}
 	
 	/**

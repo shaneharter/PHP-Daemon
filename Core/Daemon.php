@@ -371,7 +371,13 @@ abstract class Core_Daemon
 		$duration = microtime(true) - $start_time;
 
 		if ($duration > $this->loop_interval) 
-			return $this->log('Run Loop Taking Too Long. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);
+		{
+			// Even though the execute() method took too long to run, we need to be sure we give the CPU a little break.
+			// Sleep for 1/500 a second. 
+			usleep(2000);
+			$this->log('Run Loop Taking Too Long. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);			
+			return;
+		}
 		
 		if ($duration > ($this->loop_interval * 0.9))
 			$this->log('Warning: Run Loop Near Max Allowed Duration. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);
