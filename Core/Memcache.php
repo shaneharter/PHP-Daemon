@@ -119,7 +119,7 @@ final class Core_Memcache extends Memcache
 	 * @param string|array $key
 	 * @param string $flags
 	 */
-	public function get($key, $flags)
+	public function get($key, $flags = null)
 	{
 		return parent::get($this->key($key), $flags);
 	}

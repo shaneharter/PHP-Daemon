@@ -3,21 +3,28 @@
 declare(ticks = 5);
 
 /**
- * Daemon Base Class with various cool daemon features. 
+ * Daemon Base Class with various cool daemon features. Unlike other Daemon libraries, this includes a built-in timer. 
+ * You define an execute() method, and a loop_interval. Interval could be as low as 5, 10 times per second. The timer does the rest. 
+ * Long-running tasks can be passed as a callback into the ->fork() method to be run in a child process. 
  * 
  * USAGE: 
  * 1. Implement the setup() and execute() methods in your base class. 
  * 	  - setup() is called once, during the Init process. It's called after the daemon init is completed.  
- *    - execute() is called inside the run() loop. 
+ *    - execute() is called inside the run() loop. Like an internal crontab -- execute() runs at whatever frequency you define. 
+ *    - Provide at least one memcache server. Daemon uses this for it's Heartbeat feature. Heartbeat prevents multiple instances of daemon
+ *    	from running at the same time, Also lets outside systems monitor the uptime of the daemon. 
  * 
- * 2. In your constructor, CALL THE parent::__construct() and then set: loop_interval, email_distribution_list, log_file, required_config_sections. See phpdoc for each. 
+ * 2. In your constructor, CALL THE parent::__construct() and then set: 
+ * 		loop_interval				In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10.   
+ * 		email_distribution_list		An array of email addresses that will be alerted when things go bad. 
+ * 		log_file					The name of the file you want to log to. Can alternatively implement the log_file() method. See phpdocs.  
+ * 		required_config_sections 	The setup process will validate that the config.ini has the sections you add here. The "config" section is mandatory.
  * 
- * 3. Create a config file in ./config.ini, or elsewhere if you set ->config_file in your constructor. Copy this into the top of it and then add whatever you'd like. 
+ * 3. Create a config file in ./config.ini, or elsewhere if you set ->config_file in your constructor. 
+ * 	  Copy this into the top of it and then add whatever you'd like. 
  * 
  * 		[config]
  * 		auto_restart_interval = 600
- * 
- * 4. Overload the log_file() method if you wish to use an algorithm to define the log file. 
  * 
  * @uses PHP 5.3 or Higher
  * @uses Core_Memcache
@@ -88,6 +95,12 @@ abstract class Core_Daemon
 	 */
 	protected $log_file = './log';
 	
+	/**
+	 * If the process is forked, this will indicate whether we're still in the parent or not. 
+	 * @var boolean
+	 */
+	protected $is_parent = true;
+		
 	/**
 	 * Timestamp when was this pid started? 
 	 * @var integer
@@ -290,13 +303,15 @@ abstract class Core_Daemon
 	{
 		try
 		{		
-			while($this->shutdown == false)
+			while($this->shutdown == false && $this->is_parent)
 			{
 				$this->timer(true);
 				$this->auto_restart();				
 				$this->heartbeat();
 				$this->execute();
 				$this->timer();
+				
+				pcntl_wait($status, WNOHANG);
 			}
 		}
 		catch(Exception $e)
@@ -355,11 +370,11 @@ abstract class Core_Daemon
 			
 		$duration = microtime(true) - $start_time;
 
-		if ($duration > ($this->loop_interval * 0.9))
-			$this->log('Run Loop Taking Too Long. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);
+		if ($duration > $this->loop_interval) 
+			return $this->log('Run Loop Taking Too Long. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);
 		
-		if ($duration > $this->loop_interval)
-			return;
+		if ($duration > ($this->loop_interval * 0.9))
+			$this->log('Warning: Run Loop Near Max Allowed Duration. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);
 		
 		// usleep accepts microseconds, 1 second in microseconds = 1,000,000
 		usleep(($this->loop_interval - $duration) * 1000000);
@@ -411,6 +426,9 @@ abstract class Core_Daemon
 	 */
 	private function restart()
 	{
+		if ($this->is_parent == false)
+			return false;
+					
 		$this->log('Restart Happening Now...');
 			
 		// Build the QS to execute
@@ -518,6 +536,58 @@ abstract class Core_Daemon
 	}
 	
 	/**
+	 * Parrellize any task by passing it as a callback. Will fork into a child process, execute the callback, and exit. 
+	 * If the task uses MySQL or certain other outside resources, the connection will have to be re-established in the child process
+	 * so in those cases, set the run_setup flag. 
+	 * 
+	 * @param Callback $callback		A valid PHP callback. 
+	 * @param Array $params				The params that will be passed into the Callback when it's called.
+	 * @param unknown_type $run_setup	After the child process is created, it will re-run the setup() method. 
+	 * @return boolean					Cannot know if the callback worked or not, but returns true if the fork was successful. 
+	 * 
+	 * @todo This should accept a closure.
+	 */
+	protected function fork($callback, array $params = array(), $run_setup = false)
+	{
+		$pid = pcntl_fork();
+        switch($pid) 
+        {
+            case -1:
+            	$msg = 'Fork Request Failed. Uncalled Callback: ' . is_array($callback) ? implode('::', $callback) : $callback;
+                $this->log($msg, true);
+                return false;
+                break;
+                
+            case 0:
+				// Child Process
+				$this->is_parent = false;
+				$this->pid = getmypid();
+				
+				if ($run_setup) {
+					$this->log("running Setup in PID " . $this->pid);
+					$this->setup();
+				}
+				
+				try
+				{
+					call_user_func_array($callback, $params);
+				}
+				catch(Exception $e)
+				{
+					$this->log('Exception Caught from Callback: ' . $e->getMessage());
+				}
+				
+				exit;
+            	break;    
+                            
+            default:
+            	// Parent Process
+            	return true;
+                break;
+        }
+	}
+		
+	/**
 	 * Send the $message to everybody on the $this->email_distribution_list
 	 * @param string $message
 	 */
@@ -530,7 +600,7 @@ abstract class Core_Daemon
 			$subject = get_class($this) . ' Alert';
 			
 		foreach($this->email_distribution_list as $email)
-			@mail($email, $subject, $log_message);
+			@mail($email, $subject, $message);
 	}
 	
 	/**
