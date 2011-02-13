@@ -20,6 +20,8 @@ Example: You set "->loop_interval=1". The PHP-Daemon will call your execute() me
 * Braindead-Simple Forking for tasks that can be parallelized
 Suppose your execute() method needed to push its results to an external API. If your interval is at 1 second you just don't have enough time to use an external resource. In these instances, PHP-Daemon provides a fork() method.  It accepts a callback (todo: a Closure). When called, it spawns a child process, executes the callback, and exits. You have to be careful, dozens of long-running, possibly hung child processes is not good. But when used carefully it gives you a very simple, very powerful tool and you don't have to worry about mastering the idiosyncrasies of PHP forking. 
 
+https://github.com/shaneharter/PHP-Daemon/wiki/Forking-Example
+
 * Auto Restart
 No matter how diligent you are, memory bloat can occur. PHP-Daemon is able to auto-restart itself both as an attempt to recover from a fatal error, and on a user-defined interval to combat memory bloat. Only available when running in "Daemon mode" (-d at the command prompt), the built-in timer will track total runtime and when it hits the threshold you've set in the ini file, it will perform a graceful restart. 
 
@@ -51,9 +53,3 @@ You can run a '-H' help command when you run the Daemon. It will dump a help men
 	 -v Verbose, echo any logged messages. Ignored in Daemon mode.
 	 -H Shows this help
 	 -p PID_FILE File to write process ID out to
-
-TODO: 
-
-1. Replace this simple logging code (which grew more complex over time) with ZendLog or similar. 
-2. Make it easy to add your own signal handlers without having to overload the current signal handling functionality. 
-3. Unit Tests. 
