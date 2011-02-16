@@ -11,6 +11,14 @@ class App_Example extends Core_Daemon
 	 */
 	protected function __construct()
 	{
+		// Set our Heatbeat Provider
+		$this->heartbeat = new Core_Heartbeat_Memcached;
+		$this->heartbeat->daemon_name = __class__;
+        
+		// You probably will keep the memcache settings in a single config location in your app
+        // that you'd pull from here, but for this example, just hard-coding them works
+		$this->heartbeat->memcache_servers[] = array('host' => '127.0.0.1', 'port' => '11211');
+		
 		// Load our email-on-error queue into the daemon. It will use it when it logs caught/user-defined errors.
 		$this->email_distribution_list = email_on_error();
 		
@@ -26,10 +34,6 @@ class App_Example extends Core_Daemon
         // You can set a specific file here or you can implement more advaced filename logic by 
         // overloading the log_file() method like I've done here. 
         $this->log_file	= 'example_log';
-        
-        // You probably will keep the memcache settings in a single config location in your app
-        // that you'd pull from here, but 
-		$this->memcache_servers[] = array('host' => '127.0.0.1', 'port' => '11211');
         
 		parent::__construct();
 	}

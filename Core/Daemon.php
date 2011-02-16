@@ -11,10 +11,9 @@ declare(ticks = 5);
  * 1. Implement the setup() and execute() methods in your base class. 
  * 	  - setup() is called once, during the Init process. It's called after the daemon init is completed.  
  *    - execute() is called inside the run() loop. Like an internal crontab -- execute() runs at whatever frequency you define. 
- *    - Provide at least one memcache server. Daemon uses this for it's Heartbeat feature. Heartbeat prevents multiple instances of daemon
- *    	from running at the same time, Also lets outside systems monitor the uptime of the daemon. 
  * 
  * 2. In your constructor, CALL THE parent::__construct() and then set: 
+ * 		heartbeat					Currently only a Memcache provider is available. Each provider will have its own requirements.
  * 		loop_interval				In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10.   
  * 		email_distribution_list		An array of email addresses that will be alerted when things go bad. 
  * 		log_file					The name of the file you want to log to. Can alternatively implement the log_file() method. See phpdocs.  
@@ -27,16 +26,12 @@ declare(ticks = 5);
  * 		auto_restart_interval = 600
  * 
  * @uses PHP 5.3 or Higher
- * @uses Core_Memcache
  * @author Shane Harter
  * @singleton
  * @abstract
  */
 abstract class Core_Daemon
 {
-	const CACHE_HEARTBEAT_SECONDS = 2;
-	const CACHE_HEARTBEAT_KEY = 'process_heartbeat';
-	
 	/**
 	 * The config.ini has a setting wherein the daemon can be auto-restarted every X seconds. 
 	 * We don't want to kill the server with process spawning so any number below this constant will be ignored. 
@@ -51,16 +46,10 @@ abstract class Core_Daemon
 	public $config = array();
 	
 	/**
-	 * This is the Bf_Memcache proxy object
-	 * @var Core_Memcache
+	 * A heartbeat provider object that implements the Core_Heartbeat_HeartbeatInterface interface.
+	 * @var Core_Heartbeat_HeartbeatInterface
 	 */
-	public $memcache;
-	
-	/**
-	* An array containing an associative array of Memcache servers with the keys: host, port.
-	* @var string
-	*/
-	protected $memcache_servers = array(); 	
+	protected $heartbeat;
 		
 	/**
 	 * This is the config file accessed by self::__construct
@@ -145,11 +134,11 @@ abstract class Core_Daemon
 	private static $filename = false;
 	
 	/**
-	 * This has to be set using the Core_Daemon::setMemcacheNamespace before init. 
+	 * This has to be set using the Core_Daemon::setDaemonName before init. 
 	 * It's used as part of the heartbeat mechanism. 
 	 * @var string
 	 */
-	private static $memcache_namespace = false;	
+	private static $daemon_name = false;	
 	
 	protected function __construct()
 	{
@@ -172,8 +161,8 @@ abstract class Core_Daemon
 		if (empty(self::$filename))
 			$errors[] = 'Filename is Missing: setFilename Must Be Called Before an Instance can be Initialized';
 			
-		if (empty(self::$memcache_namespace))
-			$errors[] = 'Memcache Namespace is Missing: setMemcacheNamespace Must Be Called Before an Instance can be Initialized';		
+		if (empty(self::$daemon_name))
+			$errors[] = 'Daemon Name is Missing: setDaemonName Must Be Called Before an Instance can be Initialized';		
 		
 		if (empty($this->loop_interval) || is_numeric($this->loop_interval) == false)
 			$errors[] = "Invalid Loop Interval: $this->loop_interval";
@@ -183,6 +172,18 @@ abstract class Core_Daemon
 	
 		if (version_compare(PHP_VERSION, '5.3.0') < 0)
 			$errors[] = "PHP 5.3 or Higher is Required";
+			
+		if (is_object($this->heartbeat) == false)
+			$errors[] = "You must set a Heatbeat provider";
+			
+		if (is_object($this->heartbeat) && ($this->heartbeat instanceof Core_Heartbeat_HeartbeatInterface) == false)
+			$errors[] = "Invalid Heartbeat Provider: Heartbeat Providers Must Implement Core_Heartbeat_HeartbeatInterface";
+			
+		if (is_object($this->heartbeat) && ($this->heartbeat instanceof Core_ResourceInterface) == false)
+			$errors[] = "Invalid Heartbeat Provider: Heartbeat Providers Must Implement Core_ResourceInterface";			
+			
+		// Check any Heartbeat errors -- implements Core_ResourceInterface
+		$errors = array_merge($errors, $this->heartbeat->check_environment());
 			
 		if (count($errors))
 		{
@@ -216,22 +217,19 @@ abstract class Core_Daemon
 		if ($this->config['config']['auto_restart_interval'] < self::MIN_RESTART_SECONDS)
 			throw new Exception('Core_Daemon::init failed: Auto Restart Inteval set in config file is too low. Minimum Value: ' . self::MIN_RESTART_SECONDS);
 			
-		// Connect to memcache
-		$this->memcache = new Core_Memcache();
-		$this->memcache->ns(self::$memcache_namespace);
-		if ($this->memcache->connect_all($this->memcache_servers) === false)
-			throw new Exception('Core_Daemon::init failed: Memcache Connection Failed');	
+		// Setup the Heartbeat Provider
+		$this->heartbeat->setup();
 			
 		// Set the initial heartbeat and gracefully exit if another heartbeat is detected
-		try
+		$heartbeat = $this->heartbeat->listen();
+		
+		if ($heartbeat)
 		{
-			$this->heartbeat();
-		}
-		catch(Exception $e)
-		{
-			$this->log('Shutting Down... ' . $e->getMessage());
+			$this->log('Shutting Down: Heartbeat Detected. Details: ' . $heartbeat);
 			exit(0);
 		}
+
+		$this->heartbeat->set();
 		
 		// Run any per-daemon setup 
 		$this->setup();
@@ -246,6 +244,8 @@ abstract class Core_Daemon
 	
 	public function __destruct() 
 	{
+		$this->heartbeat->teardown();
+		
 		if(!empty($this->pid_file) && file_exists($this->pid_file))
         	unlink($this->pid_file);
     }
@@ -286,13 +286,13 @@ abstract class Core_Daemon
     }    
 
 	/**
-     * Set the memcache namespace that will be used by the daemon during this execution
-     * @param string $namespace
+     * Give this Daemon instance a unique name
+     * @param string $name
      * @return void
      */
-    public static function setMemcacheNamespace($namespace)
+    public static function setDaemonName($name)
     {
-    	self::$memcache_namespace = $namespace;
+    	self::$daemon_name = $name;
     }   
         
     /**
@@ -307,7 +307,7 @@ abstract class Core_Daemon
 			{
 				$this->timer(true);
 				$this->auto_restart();				
-				$this->heartbeat();
+				$this->heartbeat->set();
 				$this->execute();
 				$this->timer();
 				
@@ -388,27 +388,6 @@ abstract class Core_Daemon
 	}
 	
 	/**
-	 * Set a memcache key heartbeat. Also used as a process lock: Cron will attempt to start a Bot every minute but it will 
-	 * automatically kill itself if the heartbeat of a running bot is detected 
-	 * 
-	 * @return void
-	 */
-	protected function heartbeat()
-	{
-		$heartbeat = $this->memcache->getWithRetry(self::CACHE_HEARTBEAT_KEY, false, 0.50);
-		
-		if ($heartbeat && $heartbeat['pid'] != $this->pid)
-			throw new Exception(sprintf('Additional Heartbeat Detected. [Heartbeat Pid: %s Set At: %s] [Current Pid: %s At: %s]', 
-				$heartbeat['pid'], $heartbeat['timestamp'], $this->pid, time()));
-
-		$heartbeat = array();
-		$heartbeat['pid'] = $this->pid;
-		$heartbeat['timestamp'] = time();
-				
-		$this->memcache->set(self::CACHE_HEARTBEAT_KEY, $heartbeat, false, self::CACHE_HEARTBEAT_SECONDS);
-	}
-	
-	/**
 	 * If this is in daemon mode, provide an auto-restart feature. 
 	 * This is designed to allow us to get a fresh stack, fresh memory allocation, etc. 
 	 * @return boolean
@@ -447,7 +426,7 @@ abstract class Core_Daemon
 		$command .= ' > /dev/null';
 		
 		// Then remove the existing heartbeat that we set so the new process doesn't see it and auto-kill itself.
-		$this->memcache->delete(self::CACHE_HEARTBEAT_KEY);
+		$this->heartbeat->teardown();
 		 
 		// Now do the restart and die
 		// Close the resource handles to prevent this process from hanging on the exec() output.
@@ -673,7 +652,9 @@ abstract class Core_Daemon
 				exit();
             
 			$this->daemon = true;
+			
 			$this->pid = getmypid();	// We have a new pid now
+			$this->heartbeat->pid = getmypid();
         }
 	        
         if(isset($opts['v']) && $this->daemon == false)
