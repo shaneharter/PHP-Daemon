@@ -13,7 +13,7 @@ declare(ticks = 5);
  *    - execute() is called inside the run() loop. Like an internal crontab -- execute() runs at whatever frequency you define. 
  * 
  * 2. In your constructor, CALL THE parent::__construct() and then set: 
- * 		lock						Several lock providers exist or write your own to the Core_Lock_LockInterface. Used to prevent duplicate instances of the daemon. 
+ * 		lock						Several lock providers exist or write your own that extends Core_Lock_Lock. Used to prevent duplicate instances of the daemon. 
  * 		loop_interval				In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10.   
  * 		email_distribution_list		An array of email addresses that will be alerted when things go bad. 
  * 		log_file					The name of the file you want to log to. Can alternatively implement the log_file() method. See phpdocs.  
@@ -46,8 +46,8 @@ abstract class Core_Daemon
 	public $config = array();
 	
 	/**
-	 * A lock provider object that implements the Core_Lock_LockInterface interface.
-	 * @var Core_Lock_LockInterface
+	 * A lock provider object that implements the Core_Lock_Lock interface.
+	 * @var Core_Lock_Lock
 	 */
 	protected $lock;
 		
@@ -166,8 +166,8 @@ abstract class Core_Daemon
 		if (is_object($this->lock) == false)
 			$errors[] = "You must set a Heatbeat provider";
 			
-		if (is_object($this->lock) && ($this->lock instanceof Core_Lock_LockInterface) == false)
-			$errors[] = "Invalid Lock Provider: Lock Providers Must Implement Core_Lock_LockInterface";
+		if (is_object($this->lock) && ($this->lock instanceof Core_Lock_Lock) == false)
+			$errors[] = "Invalid Lock Provider: Lock Providers Must Extend Core_Lock_Lock";
 			
 		if (is_object($this->lock) && ($this->lock instanceof Core_ResourceInterface) == false)
 			$errors[] = "Invalid Lock Provider: Lock Providers Must Implement Core_ResourceInterface";			

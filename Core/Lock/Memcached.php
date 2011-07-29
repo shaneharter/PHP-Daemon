@@ -1,6 +1,15 @@
 <?php
 
-class Core_Lock_Memcached implements Core_Lock_LockInterface, Core_ResourceInterface
+/**
+ * A distributed lock provider. If you need to ensure only one instance of the daemon
+ * is running across multiple servers. 
+ * 
+ * An idea behind these lock providers is that they 
+ *  
+ * @author Shane Harter
+ * @since 2011-07-28
+ */
+class Core_Lock_Memcached extends Core_Lock_Lock implements Core_ResourceInterface
 {
 	private $memcache = false;
 	
@@ -25,7 +34,7 @@ class Core_Lock_Memcached implements Core_Lock_LockInterface, Core_ResourceInter
 	
 	public function teardown()
 	{
-		$this->memcache->delete(Core_Lock_LockInterface::LOCK_UNIQUE_ID);
+		$this->memcache->delete(Core_Lock_Lock::LOCK_UNIQUE_ID);
 	}
 	
 	public function check_environment()
@@ -55,8 +64,8 @@ class Core_Lock_Memcached implements Core_Lock_LockInterface, Core_ResourceInter
 		$lock['pid'] = $this->pid;
 		$lock['timestamp'] = time();
 		
-		$memcache_key = Core_Lock_LockInterface::LOCK_UNIQUE_ID;
-		$memcache_timeout = Core_Lock_LockInterface::LOCK_TTL_SECONDS;
+		$memcache_key = Core_Lock_Lock::LOCK_UNIQUE_ID;
+		$memcache_timeout = Core_Lock_Lock::LOCK_TTL_PADDING_SECONDS + $this->ttl;
 				
 		$this->memcache->set($memcache_key, $lock, false, $memcache_timeout);		
 	}
@@ -71,7 +80,7 @@ class Core_Lock_Memcached implements Core_Lock_LockInterface, Core_ResourceInter
 			return $lock;
 		
 		// There is no valid cache, so return
-		$lock 		= $this->memcache->get(Core_Lock_LockInterface::LOCK_UNIQUE_ID);
+		$lock 		= $this->memcache->get(Core_Lock_Lock::LOCK_UNIQUE_ID);
 		$lock_time = microtime(true);
 		
 		if (empty($lock))

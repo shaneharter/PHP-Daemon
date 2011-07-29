@@ -2,8 +2,6 @@
 
 date_default_timezone_set('America/New_York');
 
-
-
 // Define path to project root directory
 define("BASE_PATH", dirname(dirname(__FILE__)));
 

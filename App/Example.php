@@ -11,18 +11,19 @@ class App_Example extends Core_Daemon
 	 */
 	protected function __construct()
 	{
+		// We want to our daemon to loop once per second.
+		$this->loop_interval = 1.00;
+				
 		// Set our Heatbeat Provider
 		$this->lock = new Core_Lock_Null;
 		$this->lock->daemon_name = __class__;
+		$this->lock->ttl = $this->loop_interval;
         
 		// Load our email-on-error queue into the daemon. It will use it when it logs caught/user-defined errors.
 		$this->email_distribution_list = email_on_error();
 		
 		// The main 'config' section is always required, but use this to ensure the config file looks right.
 		$this->required_config_sections = array('example_section_one', 'example_section_two');
-		
-		// We want to our daemon to loop once per second.
-		$this->loop_interval = 1.00;
 		
 		// You have to use the BASE_PATH, using ./ will fail if the daemon is ever started by crontab. 
         $this->config_file = BASE_PATH . '/config.ini';
