@@ -12,10 +12,7 @@
 class Core_Lock_Memcached extends Core_Lock_Lock implements Core_ResourceInterface
 {
 	private $memcache = false;
-	
 	public $memcache_servers = array();
-	public $pid;
-	public $daemon_name;
 	
 	public function __construct()
 	{
@@ -29,7 +26,7 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_ResourceInterfa
 		$this->memcache->ns($this->daemon_name);
 		
 		if ($this->memcache->connect_all($this->memcache_servers) === false)
-			throw new Exception('Core_Daemon::init failed: Memcache Connection Failed');			
+			throw new Exception('Core_Lock_Memcached::setup failed: Memcache Connection Failed');			
 	}
 	
 	public function teardown()
@@ -70,17 +67,10 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_ResourceInterfa
 		$this->memcache->set($memcache_key, $lock, false, $memcache_timeout);		
 	}
 	
-	public function check()
+	public function get()
 	{
-		// Cache the result of a check() for 1/10 a second
-		static $lock 		= false;
-		static $lock_time 	= false;
-		
-		if ($result && (microtime(true) - $lock_time) < 0.10)
-			return $lock;
-		
 		// There is no valid cache, so return
-		$lock 		= $this->memcache->get(Core_Lock_Lock::LOCK_UNIQUE_ID);
+		$lock = $this->memcache->get(Core_Lock_Lock::LOCK_UNIQUE_ID);
 		$lock_time = microtime(true);
 		
 		if (empty($lock))
@@ -90,7 +80,7 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_ResourceInterfa
 		if ($lock['pid'] == $this->pid)
 			return false;
 		
-		// If We're here, there's another heatbeat. Return a string with the details. 
-		return $lock['pid'] . ':' . $lock['timestamp'];
+		// If We're here, there's another lock... return the pid..
+		return $lock['pid'];
 	}
 }
