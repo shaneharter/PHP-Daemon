@@ -12,13 +12,9 @@ class App_Example extends Core_Daemon
 	protected function __construct()
 	{
 		// Set our Heatbeat Provider
-		$this->heartbeat = new Core_Heartbeat_Memcached;
-		$this->heartbeat->daemon_name = __class__;
+		$this->lock = new Core_Lock_Null;
+		$this->lock->daemon_name = __class__;
         
-		// You probably will keep the memcache settings in a single config location in your app
-        // that you'd pull from here, but for this example, just hard-coding them works
-		$this->heartbeat->memcache_servers[] = array('host' => '127.0.0.1', 'port' => '11211');
-		
 		// Load our email-on-error queue into the daemon. It will use it when it logs caught/user-defined errors.
 		$this->email_distribution_list = email_on_error();
 		
@@ -29,7 +25,7 @@ class App_Example extends Core_Daemon
 		$this->loop_interval = 1.00;
 		
 		// You have to use the BASE_PATH, using ./ will fail if the daemon is ever started by crontab. 
-        $this->config_file = BASE_PATH . '/example/config.ini';
+        $this->config_file = BASE_PATH . '/config.ini';
         
         // You can set a specific file here or you can implement more advaced filename logic by 
         // overloading the log_file() method like I've done here. 

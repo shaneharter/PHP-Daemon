@@ -13,7 +13,7 @@ declare(ticks = 5);
  *    - execute() is called inside the run() loop. Like an internal crontab -- execute() runs at whatever frequency you define. 
  * 
  * 2. In your constructor, CALL THE parent::__construct() and then set: 
- * 		heartbeat					Currently only a Memcache provider is available. Each provider will have its own requirements.
+ * 		lock						Currently only a Memcache provider is available. Each provider will have its own requirements.
  * 		loop_interval				In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10.   
  * 		email_distribution_list		An array of email addresses that will be alerted when things go bad. 
  * 		log_file					The name of the file you want to log to. Can alternatively implement the log_file() method. See phpdocs.  
@@ -46,10 +46,10 @@ abstract class Core_Daemon
 	public $config = array();
 	
 	/**
-	 * A heartbeat provider object that implements the Core_Heartbeat_HeartbeatInterface interface.
-	 * @var Core_Heartbeat_HeartbeatInterface
+	 * A lock provider object that implements the Core_Lock_LockInterface interface.
+	 * @var Core_Lock_LockInterface
 	 */
-	protected $heartbeat;
+	protected $lock;
 		
 	/**
 	 * This is the config file accessed by self::__construct
@@ -135,7 +135,7 @@ abstract class Core_Daemon
 	
 	/**
 	 * This has to be set using the Core_Daemon::setDaemonName before init. 
-	 * It's used as part of the heartbeat mechanism. 
+	 * It's used as part of the lock mechanism. 
 	 * @var string
 	 */
 	private static $daemon_name = false;	
@@ -173,17 +173,17 @@ abstract class Core_Daemon
 		if (version_compare(PHP_VERSION, '5.3.0') < 0)
 			$errors[] = "PHP 5.3 or Higher is Required";
 			
-		if (is_object($this->heartbeat) == false)
+		if (is_object($this->lock) == false)
 			$errors[] = "You must set a Heatbeat provider";
 			
-		if (is_object($this->heartbeat) && ($this->heartbeat instanceof Core_Heartbeat_HeartbeatInterface) == false)
-			$errors[] = "Invalid Heartbeat Provider: Heartbeat Providers Must Implement Core_Heartbeat_HeartbeatInterface";
+		if (is_object($this->lock) && ($this->lock instanceof Core_Lock_LockInterface) == false)
+			$errors[] = "Invalid Lock Provider: Lock Providers Must Implement Core_Lock_LockInterface";
 			
-		if (is_object($this->heartbeat) && ($this->heartbeat instanceof Core_ResourceInterface) == false)
-			$errors[] = "Invalid Heartbeat Provider: Heartbeat Providers Must Implement Core_ResourceInterface";			
+		if (is_object($this->lock) && ($this->lock instanceof Core_ResourceInterface) == false)
+			$errors[] = "Invalid Lock Provider: Lock Providers Must Implement Core_ResourceInterface";			
 			
-		// Check any Heartbeat errors -- implements Core_ResourceInterface
-		$errors = array_merge($errors, $this->heartbeat->check_environment());
+		// Check any Lock errors -- implements Core_ResourceInterface
+		$errors = array_merge($errors, $this->lock->check_environment());
 			
 		if (count($errors))
 		{
@@ -217,19 +217,19 @@ abstract class Core_Daemon
 		if ($this->config['config']['auto_restart_interval'] < self::MIN_RESTART_SECONDS)
 			throw new Exception('Core_Daemon::init failed: Auto Restart Inteval set in config file is too low. Minimum Value: ' . self::MIN_RESTART_SECONDS);
 			
-		// Setup the Heartbeat Provider
-		$this->heartbeat->setup();
+		// Setup the Lock Provider
+		$this->lock->setup();
 			
-		// Set the initial heartbeat and gracefully exit if another heartbeat is detected
-		$heartbeat = $this->heartbeat->listen();
+		// Set the initial lock and gracefully exit if another lock is detected
+		$lock = $this->lock->check();
 		
-		if ($heartbeat)
+		if ($lock)
 		{
-			$this->log('Shutting Down: Heartbeat Detected. Details: ' . $heartbeat);
+			$this->log('Shutting Down: Lock Detected. Details: ' . $lock);
 			exit(0);
 		}
 
-		$this->heartbeat->set();
+		$this->lock->set();
 		
 		// Run any per-daemon setup 
 		$this->setup();
@@ -244,7 +244,7 @@ abstract class Core_Daemon
 	
 	public function __destruct() 
 	{
-		$this->heartbeat->teardown();
+		$this->lock->teardown();
 		
 		if(!empty($this->pid_file) && file_exists($this->pid_file))
         	unlink($this->pid_file);
@@ -307,7 +307,7 @@ abstract class Core_Daemon
 			{
 				$this->timer(true);
 				$this->auto_restart();				
-				$this->heartbeat->set();
+				$this->lock->set();
 				$this->execute();
 				$this->timer();
 				
@@ -425,8 +425,8 @@ abstract class Core_Daemon
 		// We have to explicitely redirect output to /dev/null to prevent the exec() call from hanging
 		$command .= ' > /dev/null';
 		
-		// Then remove the existing heartbeat that we set so the new process doesn't see it and auto-kill itself.
-		$this->heartbeat->teardown();
+		// Then remove the existing lock that we set so the new process doesn't see it and auto-kill itself.
+		$this->lock->teardown();
 		 
 		// Now do the restart and die
 		// Close the resource handles to prevent this process from hanging on the exec() output.
@@ -654,7 +654,7 @@ abstract class Core_Daemon
 			$this->daemon = true;
 			
 			$this->pid = getmypid();	// We have a new pid now
-			$this->heartbeat->pid = getmypid();
+			$this->lock->pid = getmypid();
         }
 	        
         if(isset($opts['v']) && $this->daemon == false)

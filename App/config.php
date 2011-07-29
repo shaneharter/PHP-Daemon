@@ -2,6 +2,8 @@
 
 date_default_timezone_set('America/New_York');
 
+
+
 // Define path to project root directory
 define("BASE_PATH", dirname(dirname(__FILE__)));
 
@@ -10,8 +12,8 @@ defined('AE') || define('AE', (getenv('AE') ? getenv('AE') : 'production'));
 
 // Define a simple Auto Loader
 set_include_path(implode(PATH_SEPARATOR, array(
-    realpath(BP . '/Core'),
-    realpath(BP . '/App'),
+    realpath(BASE_PATH . '/Core'),
+    realpath(BASE_PATH . '/App'),
     get_include_path(),
 )));
 
@@ -27,11 +29,11 @@ function __autoload($className)
  * @param $email_address A single email address you wish to be emailed on error. Call as many times as you want to add all addresses.
  * @return Array
  */
-function email_on_error($email_address)
+function email_on_error($email_address = false)
 {
 	static $queue = array();
 	
-	if (empty($email_address))
+	if ($email_address == false)
 		return $queue;
 	
 	if (false == in_array($email_address, $queue))
