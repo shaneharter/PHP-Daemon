@@ -8,7 +8,7 @@ require_once 'App/error_handlers.php';
 email_on_error('shane.harter@gmail.com');
 
 // The daemon needs to know from which file it was executed.
-App_Example::setFilename(__file__);
+App_QueueReader::setFilename(__file__);
 
 // The run() method will start the daemon loop. 
-App_Example::getInstance()->run();
+App_QueueReader::getInstance()->run();

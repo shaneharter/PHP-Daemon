@@ -25,6 +25,10 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_ResourceInterfa
 		$this->memcache = new Core_Memcache();
 		$this->memcache->ns($this->daemon_name);
 		
+		// We want to use the auto-retry feature built into our memcache wrapper. This will ensure that the occassional blocking operation on 
+		// the memacahe server doesn't crash the daemon. It'll retry every 1/10 of a second until it hits its limit. We're giving it a 1 second limit. 
+		$this->memcache->auto_retry(1);
+		
 		if ($this->memcache->connect_all($this->memcache_servers) === false)
 			throw new Exception('Core_Lock_Memcached::setup failed: Memcache Connection Failed');			
 	}

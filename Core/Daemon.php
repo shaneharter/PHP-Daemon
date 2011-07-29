@@ -12,14 +12,14 @@ declare(ticks = 5);
  * 	  - setup() is called once, during the Init process. It's called after the daemon init is completed.  
  *    - execute() is called inside the run() loop. Like an internal crontab -- execute() runs at whatever frequency you define. 
  * 
- * 2. In your constructor, CALL THE parent::__construct() and then set: 
+ * 2. In your constructor, CALL THE parent::__construct() FIRST and then set: 
  * 		lock						Several lock providers exist or write your own that extends Core_Lock_Lock. Used to prevent duplicate instances of the daemon. 
  * 		loop_interval				In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10.   
  * 		email_distribution_list		An array of email addresses that will be alerted when things go bad. 
  * 		log_file					The name of the file you want to log to. Can alternatively implement the log_file() method. See phpdocs.  
  * 		required_config_sections 	The setup process will validate that the config.ini has the sections you add here. The "config" section is mandatory.
  * 
- * 3. Create a config file in ./config.ini, or elsewhere if you set ->config_file in your constructor. 
+ * 3. Create a config file in ./config.ini, or elsewhere if you overload $this->config_file. 
  * 	  Copy this into the top of it and then add whatever you'd like. 
  * 
  * 		[config]

@@ -14,7 +14,7 @@ class App_Example extends Core_Daemon
 		// We want to our daemon to loop once per second.
 		$this->loop_interval = 1.00;
 				
-		// Set our Heatbeat Provider
+		// Set our Lock Provider
 		$this->lock = new Core_Lock_Null;
 		$this->lock->daemon_name = __class__;
 		$this->lock->ttl = $this->loop_interval;
