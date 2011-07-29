@@ -1,3 +1,12 @@
+** STABLE VERSION ** 
+Use the v1.0.1 tag 
+
+** HEAD STATE **
+Currently being tested. When I'm satisfied I'll tag it as v1.1.0
+
+
+
+
 PHP-Daemon 
 
 Create solid, long-running PHP daemon processes by extending this Core_Daemon base class. Unlike other popular daemon libraries, PHP-Daemon has a built-in timer. By setting the loop interval and providing an execute method, the library runs the while loop for you and calls your execute() method at the desired frequency. 
