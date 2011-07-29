@@ -13,7 +13,7 @@ declare(ticks = 5);
  *    - execute() is called inside the run() loop. Like an internal crontab -- execute() runs at whatever frequency you define. 
  * 
  * 2. In your constructor, CALL THE parent::__construct() and then set: 
- * 		lock						Currently only a Memcache provider is available. Each provider will have its own requirements.
+ * 		lock						Several lock providers exist or write your own to the Core_Lock_LockInterface. Used to prevent duplicate instances of the daemon. 
  * 		loop_interval				In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10.   
  * 		email_distribution_list		An array of email addresses that will be alerted when things go bad. 
  * 		log_file					The name of the file you want to log to. Can alternatively implement the log_file() method. See phpdocs.  
@@ -133,13 +133,6 @@ abstract class Core_Daemon
 	 */
 	private static $filename = false;
 	
-	/**
-	 * This has to be set using the Core_Daemon::setDaemonName before init. 
-	 * It's used as part of the lock mechanism. 
-	 * @var string
-	 */
-	private static $daemon_name = false;	
-	
 	protected function __construct()
 	{
 		$this->start_time = time();
@@ -161,9 +154,6 @@ abstract class Core_Daemon
 		if (empty(self::$filename))
 			$errors[] = 'Filename is Missing: setFilename Must Be Called Before an Instance can be Initialized';
 			
-		if (empty(self::$daemon_name))
-			$errors[] = 'Daemon Name is Missing: setDaemonName Must Be Called Before an Instance can be Initialized';		
-		
 		if (empty($this->loop_interval) || is_numeric($this->loop_interval) == false)
 			$errors[] = "Invalid Loop Interval: $this->loop_interval";
 			
@@ -187,8 +177,8 @@ abstract class Core_Daemon
 			
 		if (count($errors))
 		{
-			$errors = implode("\n", $errors);
-			throw new Exception("Core_Daemon::check_environment Found The Following Errors:\n$errors");
+			$errors = implode("\n  ", $errors);
+			throw new Exception("Core_Daemon::check_environment Found The Following Errors:\n  $errors");
 		}
 	}
 	
@@ -285,16 +275,6 @@ abstract class Core_Daemon
     	self::$filename = realpath($filename);
     }    
 
-	/**
-     * Give this Daemon instance a unique name
-     * @param string $name
-     * @return void
-     */
-    public static function setDaemonName($name)
-    {
-    	self::$daemon_name = $name;
-    }   
-        
     /**
      * This is the main program loop for the daemon
      * @return void
@@ -453,6 +433,7 @@ abstract class Core_Daemon
 	public function log($message, $send_alert = false)
 	{
 		static $handle = false;
+		static $raise_logfile_error = true;
 		
 		try
 		{
@@ -463,15 +444,21 @@ abstract class Core_Daemon
 	        			
         	if($handle === false)
 	        {
-	        	if (strlen($this->log_file()) == 0)
-	        		throw new Exception("$prefix $message");
+	        	if (strlen($this->log_file()) > 0)
+					$handle = @fopen($this->log_file(), 'a+');
 	        	
-				$handle = @fopen($this->log_file(), 'a+');
-	        	
-	            if($handle)
-	                fwrite($handle, $header);
-	            else
-					throw new Exception("$prefix $message");
+	            if($handle === false) 
+	            {
+	            	// If the log file can't be written-to, dump the errors to stdout with the explination... 
+	            	if ($raise_logfile_error) {
+	            		$raise_logfile_error = false;
+	            		$this->log('Unable to write logfile at ' . $this->log_file() . '. Redirecting errors to stdout.');
+	            	}
+	            	
+					throw new Exception("$prefix $message");	                
+	            }
+	            
+	            fwrite($handle, $header);
 				
 				if ($this->verbose)
 					echo $header;
@@ -485,7 +472,7 @@ abstract class Core_Daemon
 		}
         catch(Exception $e)
         {
-        	echo $e->getMessage();
+        	echo PHP_EOL . $e->getMessage();
         }
         
         // Optionally distribute this error message to anyboady on the ->email_distribution_list
@@ -517,6 +504,7 @@ abstract class Core_Daemon
 		}
 		
 		// If we get here, it means we couldn't try a re-start or we tried and it just didn't work. 
+		echo PHP_EOL;
 		exit(1);
 	}
 	
