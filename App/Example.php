@@ -48,11 +48,6 @@ class App_Example extends Core_Daemon
 			throw new Exception('Setup Failed: Expecting an Integer in example_section_one.example_integer. Value: ' . 
 			$this->config['example_section_one']['example_integer']);
 		
-		// We want to use the auto-retry feature built into our memcache wrapper. This will ensure that micro-second long
-		// locks on memcache keys won't cause the daemon to fail. By passing in '1', we're telling it that it should auto-retry
-		// every 1/10 second for 10 times before finally failing. You can set it as high as you want. 
-		$this->memcache->auto_retry(1);
-		
 		// You may also want to load any libraries your job needs, make a database connection, etc. 
 		// If you have any troubles, throw an exception.
 		
@@ -95,17 +90,19 @@ class App_Example extends Core_Daemon
 			// if some_long_running_task() will run successfully. The fork() method returns as soon as the fork is attempted. 
 			// If the fork failed for some reason, it will retrun false. 
 			
-			// NOTE: 
-			// If some_long_running_task() requires a MySQL Connection, you need to re-establish the connection in the child process
-			// after the fork. If you create the connection here in the setup() method, It will LOOK like the child has a valid MySQL
-			// resource after forking, but in reality it's dead. To fix that, you can easily re-run the setup() method in the child
-			// process by passing "true" as the 3rd param: 
-
-			$this->fork($callback, $params, true);
-			
-			// If you have anything in your setup() method that you don't want to ever be re-run from the child process, you can 
-			// check the $this->is_parent flag. 
 		}
+		
+		// NOTE: 
+		// If some_long_running_task() requires a MySQL Connection, you need to re-establish the connection in the child process
+		// after the fork. If you create the connection here in the setup() method, It will LOOK like the child has a valid MySQL
+		// resource after forking, but in reality it's dead. To fix that, you can easily re-run the setup() method in the child
+		// process by passing "true" as the 3rd param: 
+
+		$this->fork($callback, $params, true);
+		
+		// If you have anything in your setup() method that you don't want to ever be re-run from the child process, you can 
+		// check the $this->is_parent flag. 		
+		
 	}
 	
 	protected function some_long_running_task($param_one, $param_two, Array $param_three)
