@@ -8,7 +8,14 @@
  */
 class Core_Lock_File extends Core_Lock_Lock implements Core_ResourceInterface
 {
-	public $path = './';
+	/**
+	 * The directory where the lockfile will be written. The filename will be whatever you set the $daemon_name to be. 
+	 * To use the current directory, define and use a BASE_PATH constant: Using ./ will fail when the script is 
+	 * run from crontab.   
+	 * 
+	 * @var string	A filesystem path 
+	 */
+	public $path = '';
 
 	private function filename()
 	{
@@ -43,7 +50,7 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_ResourceInterface
 		touch($this->filename());		
 	}
 	
-	public function get()
+	protected function get()
 	{
 		if (file_exists($this->filename()) == false)
 			return false;

@@ -10,12 +10,6 @@
  */
 class Core_Lock_Null extends Core_Lock_Lock implements Core_ResourceInterface
 {
-
-	public function __construct()
-	{
-		$this->pid = getmypid();
-	}
-	
 	public function setup()
 	{
 		// Nothing to setup
@@ -37,9 +31,9 @@ class Core_Lock_Null extends Core_Lock_Lock implements Core_ResourceInterface
 		// Nothing to set
 	}
 	
-	public function check()
+	protected function get()
 	{
-		// False is a good thing -- it means no heartbeat was detected. 
+		// False is a good thing -- it means no lock was detected. 
 		return false;
 	}
 }

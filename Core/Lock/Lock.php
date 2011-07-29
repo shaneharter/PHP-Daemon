@@ -17,6 +17,31 @@ abstract class Core_Lock_Lock
 	 */
 	public $ttl = 0;
 	
+	public function __construct()
+	{
+		$this->pid = getmypid();
+	}	
+	
 	abstract public function set();
-	abstract public function check();
+	abstract protected function get();
+	
+	/**
+	 * Check for the existence of a lock. 
+	 * Cache results of get() check for 1/10 a second.
+	 *  
+	 * @return false OR the PID of a conflicting lock
+	 */
+	public function check()
+	{
+		static $get = false;
+		static $get_time = false;
+
+		if ($get_time && (microtime(true) - $get_time) < 0.10)
+			return $get;
+			
+		$get = $this->get();
+		$get_time = microtime(true);
+		
+		return $get;
+	}
 }

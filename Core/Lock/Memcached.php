@@ -67,7 +67,7 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_ResourceInterfa
 		$this->memcache->set($memcache_key, $lock, false, $memcache_timeout);		
 	}
 	
-	public function get()
+	protected function get()
 	{
 		// There is no valid cache, so return
 		$lock = $this->memcache->get(Core_Lock_Lock::LOCK_UNIQUE_ID);
