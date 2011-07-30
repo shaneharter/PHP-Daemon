@@ -1,6 +1,6 @@
 <?php
 
-abstract class Core_Lock_Lock 
+abstract class Core_Lock_Lock implements Core_PluginInterface
 {
 	public static $LOCK_TTL_PADDING_SECONDS = 2.0;
 	public static $LOCK_UNIQUE_ID = 'daemon_lock';

@@ -6,7 +6,7 @@
  * @author Shane Harter
  * @since 2011-07-29
  */
-class Core_Lock_File extends Core_Lock_Lock implements Core_ResourceInterface
+class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 {
 	/**
 	 * The directory where the lockfile will be written. The filename will be whatever you set the $daemon_name to be. 

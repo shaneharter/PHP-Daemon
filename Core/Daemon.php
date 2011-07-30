@@ -3,20 +3,21 @@
 declare(ticks = 5);
 
 /**
- * Daemon Base Class with various cool daemon features. Unlike other Daemon libraries, this includes a built-in timer. 
- * You define an execute() method, and a loop_interval. Interval could be as low as 5, 10 times per second. The timer does the rest. 
- * Long-running tasks can be passed as a callback into the ->fork() method to be run in a child process. 
+ * Daemon Base Class with various cool daemon features. Includes a built-in timer:
+ * You define an execute() method, and a loop_interval (in seconds) (Could be 1, 10, 60, 3600, 0.5, 0.1, etc). The timer does the rest. 
+ * Single-threaded by default, but parallel processing is as easy as passing a callback to the ->fork() method. 
  * 
  * USAGE: 
- * 1. Implement the setup() and execute() methods in your base class. 
- * 	  - setup() is called once, during the Init process. It's called after the daemon init is completed.  
- *    - execute() is called inside the run() loop. Like an internal crontab -- execute() runs at whatever frequency you define. 
+ * 1. Implement the setup(), execute() and log_file() methods in your base class. 
+ * 	  - setup() is called automaticaly after __construct() and init() are called, and can be called for you automatically after each ->fork(). 
+ *    - execute() is called on whaveter timer you define when you set the loop_interval. 
+ *    - log_file() should return the path that all log events will be written-to. Maybe use date('Ymd') to build a simple daily log rotator. 
  * 
- * 2. In your constructor, CALL THE parent::__construct() FIRST and then set: 
+ * 2. In your constructor, call parent::__construct() and then set: 
  * 		lock						Several lock providers exist or write your own that extends Core_Lock_Lock. Used to prevent duplicate instances of the daemon. 
- * 		loop_interval				In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10.   
+ * 		loop_interval				In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10. 
+ * 		auto_restart_interval		In seconds, how often shoudl the daemon restart itself? Must be no lower than the const value in Core_Daemon::MIN_RESTART_SECONDS.  
  * 		email_distribution_list		An array of email addresses that will be alerted when things go bad. 
- * 		log_file					The name of the file you want to log to. Can alternatively implement the log_file() method. See phpdocs.  
  * 		required_config_sections 	The setup process will validate that the config.ini has the sections you add here. The "config" section is mandatory.
  * 
  * 3. Create a config file in ./config.ini, or elsewhere if you overload $this->config_file. 
@@ -40,28 +41,10 @@ abstract class Core_Daemon
 	const MIN_RESTART_SECONDS = 10;
 	
 	/**
-	 * The contents of the config.ini
-	 * @var array
-	 */
-	public $config = array();
-	
-	/**
-	 * A lock provider object that implements the Core_Lock_Lock interface.
+	 * A lock provider object that extends the Core_Lock_Lock abstract class.
 	 * @var Core_Lock_Lock
 	 */
-	protected $lock;
-		
-	/**
-	 * This is the config file accessed by self::__construct
-	 * @var string
-	 */
-	protected $config_file = './config.ini';
-	
-	/**
-	 * The email accounts in this list will be notified when a fatal error occurs. 
-	 * @var Array
-	 */
-	protected $required_config_sections = array('config');	
+	protected $lock;	
 	
 	/**
 	 * The email accounts in this list will be notified when a fatal error occurs. 
@@ -74,15 +57,17 @@ abstract class Core_Daemon
 	 * interval will be spent in a sleep state. If there is no remaining time, that will be logged as an error condition.  
 	 * @example $this->loop_interval = 300; // Execute() will be called once every 5 minutes 
 	 * @example $this->loop_interval = 0.1; // Execute() will be called 10 times every second 
-	 * @var float	The time in Seconds
+	 * @var float	The interval in Seconds
 	 */
 	protected $loop_interval = 0.00;
-	
+		
 	/**
-	 * A mandatory filename where we write logs to. 
-	 * @var string
+	 * The frequency (in seconds) at which the timer will automatically restart the daemon. 
+	 * @example $this->auto_restart_interval = 3600; // Daemon will be restarted once an hour
+	 * @example $this->auto_restart_interval = 86400; // Daemon will be restarted once an day
+	 * @var integer		The interval in Seconds
 	 */
-	protected $log_file = './log';
+	protected $auto_restart_interval = 86400;
 	
 	/**
 	 * If the process is forked, this will indicate whether we're still in the parent or not. 
@@ -127,6 +112,12 @@ abstract class Core_Daemon
 	private $verbose 	= false;
 	
 	/**
+	 * A simple stack of plugins that are enabled. Set from load_plugin() method.
+	 * @var Array
+	 */
+	private $plugins = array();
+	
+	/**
 	 * This has to be set using the Core_Daemon::setFilename before init. 
 	 * It's used as part of the auto-restart mechanism. Probably a way to figure it out programatically tho. 
 	 * @var string
@@ -136,26 +127,35 @@ abstract class Core_Daemon
 	protected function __construct()
 	{
 		$this->start_time = time();
-		$this->config = parse_ini_file($this->config_file, true);
 		$this->pid = getmypid();
 		$this->getopt();
 		$this->register_signal_handlers();
+		
+		// The lock provider is a special plugin
+		// We load it outside of the standard load_plugin API, but we need to register it as a plugin
+		$this->plugins[] = 'lock';
 	}
 	
 	/**
 	 * Ensure that essential runtime conditions are met. 
+	 * To easily add rules to this, overload this method, build yourself an array of error messages, 
+	 * and then call parent::check_environment($my_errors)
 	 * @return void
 	 * @throws Exception
 	 */
-	protected function check_environment()
+	protected function check_environment(Array $errors = array())
 	{
-		$errors = array();
-		
 		if (empty(self::$filename))
 			$errors[] = 'Filename is Missing: setFilename Must Be Called Before an Instance can be Initialized';
 			
 		if (empty($this->loop_interval) || is_numeric($this->loop_interval) == false)
 			$errors[] = "Invalid Loop Interval: $this->loop_interval";
+			
+		if (empty($this->auto_restart_interval) || is_numeric($this->auto_restart_interval) == false)
+			$errors[] = "Invalid Auto Restart Interval: $this->auto_restart_interval";		
+			
+		if (is_numeric($this->auto_restart_interval) && $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
+			$errors[] = 'Auto Restart Inteval is Too Low. Minimum Value: ' . self::MIN_RESTART_SECONDS;		
 			
 		if (function_exists('pcntl_fork') == false)
 			$errors[] = "The PCNTL Extension is Not Installed";
@@ -169,11 +169,12 @@ abstract class Core_Daemon
 		if (is_object($this->lock) && ($this->lock instanceof Core_Lock_Lock) == false)
 			$errors[] = "Invalid Lock Provider: Lock Providers Must Extend Core_Lock_Lock";
 			
-		if (is_object($this->lock) && ($this->lock instanceof Core_ResourceInterface) == false)
-			$errors[] = "Invalid Lock Provider: Lock Providers Must Implement Core_ResourceInterface";			
+		if (is_object($this->lock) && ($this->lock instanceof Core_PluginInterface) == false)
+			$errors[] = "Invalid Lock Provider: Lock Providers Must Implement Core_PluginInterface";			
 			
-		// Check any Lock errors -- implements Core_ResourceInterface
-		$errors = array_merge($errors, $this->lock->check_environment());
+		// Poll any plugins for errors
+		foreach($this->plugins as $plugin) 
+			$errors = array_merge($errors, $this->{$plugin}->check_environment());
 			
 		if (count($errors))
 		{
@@ -183,58 +184,40 @@ abstract class Core_Daemon
 	}
 	
 	/**
-	 * Initialize external resources. Done here to simplfy the constructor
-	 * and because error handling and exception throwing from within the constructor causes drama. 
+	 * Call the daemons setup() method, Call setup() of any loaded plugins, and
+	 * check and set the lock provider. 
 	 * 
 	 * @return void
 	 */
 	private function init()
 	{
-		global $config;
-		
-		// Validate that we have proper-looking config
-		$missing_sections = array();
-		$this->required_config_sections = array_merge(array('config'), $this->required_config_sections);
-		foreach($this->required_config_sections as $section)
-			if (is_array($this->config[$section]) && count($this->config[$section]) > 0)
-				continue;
-			else
-				$missing_sections[] = $section;
-				
-		if (count($missing_sections))
-			throw new Exception('Core_Daemon::init failed: Seems the config file is missing some important sections: ' . implode(',', $missing_sections));
+		// Run the per-daemon setup 
+		$this->setup();		
 			
-		if ($this->config['config']['auto_restart_interval'] < self::MIN_RESTART_SECONDS)
-			throw new Exception('Core_Daemon::init failed: Auto Restart Inteval set in config file is too low. Minimum Value: ' . self::MIN_RESTART_SECONDS);
-			
-		// Setup the Lock Provider
-		$this->lock->setup();
+		// Setup any registered plugins
+		foreach($this->plugins as $plugin)
+			$this->{$plugin}->setup();
 			
 		// Set the initial lock and gracefully exit if another lock is detected
-		$lock = $this->lock->check();
-		
-		if ($lock)
+		if ($lock = $this->lock->check())
 		{
 			$this->log('Shutting Down: Lock Detected. Details: ' . $lock);
 			exit(0);
 		}
-
 		$this->lock->set();
-		
-		// Run any per-daemon setup 
-		$this->setup();
 		
 		// We're all Done. Print some info to the screen and be on our way. 
 		if ($this->daemon == false)
 			$this->log('Note: Auto-Restart Feature Disabled When Not Run as Daemon');
 			
 		$this->log('Process Initialization Complete. Ready to Begin.');		
-
 	}
 	
 	public function __destruct() 
 	{
-		$this->lock->teardown();
+		// Teardown any registered plugins
+		foreach($this->plugins as $plugin)
+			$this->{$plugin}->teardown();		
 		
 		if(!empty($this->pid_file) && file_exists($this->pid_file))
         	unlink($this->pid_file);
@@ -308,7 +291,7 @@ abstract class Core_Daemon
 	 * @return void
 	 * @throws Exception
 	 */
-	protected abstract function execute();
+	abstract protected function execute();
 	
 	/**
 	 * The setup method will contain the one-time setup needs of the daemon.
@@ -318,17 +301,15 @@ abstract class Core_Daemon
 	 * @return void
 	 * @throws Exception
 	 */
-	protected abstract function setup();
-
-    /**
-     * Extend this method if you want to use an algorithm to determine the logfile name (daily rotation, etc)
-     * This is not a combo getter/setter because it is not needed: $this->log_file is a protected member. 
-     * @retun string Returns, untouched, the value of $this->log_file.  
-     */
-    protected function log_file()
-    {
-    	return $this->log_file;
-    }	
+	abstract protected function setup();
+	
+	/**
+	 * Return a log file name that will be used by the log() method. 
+	 * You could hard-code a string like './log', create a simple log rotator using the date() method, etc, etc
+	 * 
+	 * @return string
+	 */
+	abstract protected function log_file();
 	
 	/**
 	 * Time the execution loop and sleep an appropriate amount of time. 
@@ -378,7 +359,7 @@ abstract class Core_Daemon
 			return false;
 			
 		// We have an Auto Kill mechanism to allow the system to restart itself when in daemon mode
-		if ($this->runtime() < $this->config['config']['auto_restart_interval'] || $this->config['config']['auto_restart_interval'] < self::MIN_RESTART_SECONDS)
+		if ($this->runtime() < $this->auto_restart_interval || $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
 			return false;	
 
 		$this->restart();
@@ -623,6 +604,43 @@ abstract class Core_Daemon
     }
     
     /**
+     * Load any plugin that implements the Core_PluginInterface. If it's not in the daemons directory structure, 
+     * supply an optional $relative_path.
+     *  
+     * @param string $class
+     * @param string $relative_path
+     * @return void
+     * @throws Exception
+     */
+    protected function load_plugin($class, $relative_path = false)
+    {
+    	$class = ucfirst($class);
+    	
+    	if ($relative_path) {
+    		$path = BASE_PATH . "/$relative_path";
+    		$path = str_replace('//', '/', $path);
+    		
+			set_include_path(implode(PATH_SEPARATOR, array(
+    			realpath($path),
+    			get_include_path()
+    		)));
+    	}
+    	
+    	if (class_exists($class, true)) {
+
+    		$interfaces = class_implements($class, true);
+    		
+    		if (is_array($interfaces) && isset($interfaces['Core_PluginInterface'])) {
+    			$this->{$class} = new $class;
+    			$this->plugins[] = $class;
+    			return;
+    		}
+    	}
+    	
+    	throw new Exception(__METHOD__ . ' Failed. Could Not Load Plugin: ' . $class);
+    }
+    
+    /**
      * Handle command line arguments. To easily extend, just add parent::getopt at the TOP of your overloading method. 
      * @return void
      */
@@ -694,18 +712,17 @@ abstract class Core_Daemon
     	$x = array();
     	$x[] = "Dump Signal Recieved";
     	$x[] = "Loop Interval: " 	. $this->loop_interval;
+    	$x[] = "Restart Interval: " . $this->auto_restart_interval;
     	$x[] = "Start Time: " 		. $this->start_time;
     	$x[] = "Duration: " 		. $this->runtime();
-    	$x[] = "Config File: " 		. $this->config_file;
     	$x[] = "Log File: " 		. $this->log_file();
     	$x[] = "Daemon Mode: " 		. (int)$this->daemon();
     	$x[] = "Shutdown Signal: " 	. (int)$this->shutdown();
     	$x[] = "Verbose Mode: " 	. (int)$this->verbose();
-    	$x[] = "Restart Interval: " . $this->config['config']['auto_restart_interval'];
+    	$x[] = "Loaded Plugins: " 	. implode(', ', $this->plugins);
     	$x[] = "Memory Usage: " 	. memory_get_usage(true);
     	$x[] = "Memory Peak Usage: ". memory_get_peak_usage(true);
     	$x[] = "Current User: " 	. get_current_user();
-    	
     	$this->log(implode("\n", $x));
     }
     

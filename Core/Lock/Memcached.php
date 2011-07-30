@@ -9,7 +9,7 @@
  * @author Shane Harter
  * @since 2011-07-28
  */
-class Core_Lock_Memcached extends Core_Lock_Lock implements Core_ResourceInterface
+class Core_Lock_Memcached extends Core_Lock_Lock implements Core_PluginInterface
 {
 	private $memcache = false;
 	public $memcache_servers = array();
