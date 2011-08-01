@@ -16,6 +16,11 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 	 * @var string	A filesystem path 
 	 */
 	public $path = '';
+	
+	public method setup()
+	{
+		// Satisfy Core_PluginInterface
+	}
 
 	private function filename()
 	{
@@ -54,6 +59,9 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 	{
 		if (file_exists($this->filename()) == false)
 			return false;
+			
+		// This is called by check() which caches the result for a small time, so we shouldn't have to worry about thrashing the disk
+		clearstatcache();
 			
 		// If the lock was set more than N seconds ago, it's expired...
 		if (filemtime($this->filename()) < (time() - Core_Lock_Lock::LOCK_TTL_PADDING_SECONDS - $this->ttl))

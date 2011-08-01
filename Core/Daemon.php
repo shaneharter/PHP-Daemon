@@ -17,14 +17,11 @@ declare(ticks = 5);
  * 		lock						Several lock providers exist or write your own that extends Core_Lock_Lock. Used to prevent duplicate instances of the daemon. 
  * 		loop_interval				In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10. 
  * 		auto_restart_interval		In seconds, how often shoudl the daemon restart itself? Must be no lower than the const value in Core_Daemon::MIN_RESTART_SECONDS.  
- * 		email_distribution_list		An array of email addresses that will be alerted when things go bad. 
- * 		required_config_sections 	The setup process will validate that the config.ini has the sections you add here. The "config" section is mandatory.
+ * 		email_distribution_list		An array of email addresses that will be alerted when falat errors occur 
  * 
- * 3. Create a config file in ./config.ini, or elsewhere if you overload $this->config_file. 
- * 	  Copy this into the top of it and then add whatever you'd like. 
- * 
- * 		[config]
- * 		auto_restart_interval = 600
+ * 3. Configure any Plugins you want to use. For example, the /Plugins/Ini.php provides integrated, validated ini file loading. Functionality implemented as a plugin
+ * 	  can add runtime checks that get called very early in the daemon startup. Much better to know that your config file (for example) is mangled during the check_environment
+ *    call than it is to wait until you've got a running daemon that's trusted to remain error-free and functional.  
  * 
  * @uses PHP 5.3 or Higher
  * @author Shane Harter
@@ -449,7 +446,7 @@ abstract class Core_Daemon
             fwrite($handle, $message);
             
             if ($this->verbose)
-            	throw new Exception($message);
+            	echo $message;
 		}
         catch(Exception $e)
         {
@@ -604,34 +601,25 @@ abstract class Core_Daemon
     }
     
     /**
-     * Load any plugin that implements the Core_PluginInterface. If it's not in the daemons directory structure, 
-     * supply an optional $relative_path.
+     * Load any plugin that implements the Core_PluginInterface. 
+     * All Plugin classes must be named Core_Plugins_ClassNameHere. To select and use a plugin
+     * just provide the ClassNameHere part. It will be instantinated as $this->ClassNameHere.  
      *  
      * @param string $class
-     * @param string $relative_path
      * @return void
      * @throws Exception
      */
-    protected function load_plugin($class, $relative_path = false)
+    protected function load_plugin($class)
     {
-    	$class = ucfirst($class);
     	
-    	if ($relative_path) {
-    		$path = BASE_PATH . "/$relative_path";
-    		$path = str_replace('//', '/', $path);
-    		
-			set_include_path(implode(PATH_SEPARATOR, array(
-    			realpath($path),
-    			get_include_path()
-    		)));
-    	}
+    	$qualified_class = ucfirst($class);
+		$qualified_class = 'Core_Plugins_' . $qualified_class;
     	
-    	if (class_exists($class, true)) {
-
-    		$interfaces = class_implements($class, true);
-    		
+    	if (class_exists($qualified_class, true)) 
+    	{
+    		$interfaces = class_implements($qualified_class, true);
     		if (is_array($interfaces) && isset($interfaces['Core_PluginInterface'])) {
-    			$this->{$class} = new $class;
+    			$this->{$class} = new $qualified_class;
     			$this->plugins[] = $class;
     			return;
     		}
