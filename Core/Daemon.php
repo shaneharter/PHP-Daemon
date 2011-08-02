@@ -212,7 +212,6 @@ abstract class Core_Daemon
 	
 	public function __destruct() 
 	{
-		// Teardown any registered plugins
 		foreach($this->plugins as $plugin)
 			$this->{$plugin}->teardown();		
 		
@@ -514,8 +513,13 @@ abstract class Core_Daemon
 				$this->is_parent = false;
 				$this->pid = getmypid();
 				
+				// Trunc the plugins array, so that way 
+				// when this fork dies and the __destruct runs, it will only shut down 
+				// plugins that were added to the fork explicitely in the setup() call below
+				$this->plugins = array();
+				
 				if ($run_setup) {
-					$this->log("running Setup in PID " . $this->pid);
+					$this->log("Running Setup in forked PID " . $this->pid);
 					$this->setup();
 				}
 				

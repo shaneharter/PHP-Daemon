@@ -21,20 +21,21 @@ function __autoload($className)
     require_once $classFile;
 }
 
+
 /**
- * Call this method as many times as you want to push error messages onto the stack. 
- * When a user error or php error occurs, the system will attempt to send an email to all of them.
- * @param $email_address A single email address you wish to be emailed on error. Call as many times as you want to add all addresses.
+ * Pass as many email addresses as you want as individual arguments. 
+ * When you call the function without any params, all stored email addresses will be returned.  
  * @return Array
  */
-function email_on_error($email_address = false)
+function email_on_error()
 {
 	static $queue = array();
-	
-	if ($email_address == false)
-		return $queue;
-	
-	if (false == in_array($email_address, $queue))
-		$queue[] = $email_address;
-}
 
+	if (func_num_args() == 0)
+		return $queue;
+
+	$foo = $queue;
+	$queue = func_get_args();
+		
+	return $foo;
+}
