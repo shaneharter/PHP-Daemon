@@ -17,7 +17,7 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 	 */
 	public $path = '';
 	
-	public method setup()
+	public function setup()
 	{
 		// Satisfy Core_PluginInterface
 	}
@@ -29,14 +29,16 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 	
 	public function teardown()
 	{
-		@unlink($this->filename());
+		// If the lockfile was set by this process, remove it 
+		if ($this->pid == file_get_contents($this->filename()))
+			@unlink($this->filename());
 	}
 	
 	public function check_environment()
 	{
 		$errors = array();
 		
-		if (is_writable($this->filename()) == false)
+		if (is_writable(dirname($this->filename())) == false)
 			$errors[] = 'Lock File "' . $this->filename() . '" Not Writable.';
 			
 		return $errors;
@@ -64,7 +66,7 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 		clearstatcache();
 			
 		// If the lock was set more than N seconds ago, it's expired...
-		if (filemtime($this->filename()) < (time() - Core_Lock_Lock::LOCK_TTL_PADDING_SECONDS - $this->ttl))
+		if (filemtime($this->filename()) < (time() - Core_Lock_Lock::$LOCK_TTL_PADDING_SECONDS - $this->ttl))
 			return false;
 			
 		// If the lock isn't expired yet, read its contents -- which will be the PID that wrote it. 

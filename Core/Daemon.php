@@ -469,7 +469,7 @@ abstract class Core_Daemon
 		$this->log(get_class($this) . ' is Shutting Down...');
 
 		// Send Alerts
-		$this->send_alert($log_message, get_class($this) . ' Shutdown');
+		//$this->send_alert($log_message, get_class($this) . ' Shutdown');
 		
 		// If this process has just started, we have to just log and exit. However, if it was running
 		// for a while, we will try to sleep for just a moment in hopes that, if an external resource caused the 
@@ -611,7 +611,6 @@ abstract class Core_Daemon
      */
     protected function load_plugin($class)
     {
-    	
     	$qualified_class = ucfirst($class);
 		$qualified_class = 'Core_Plugins_' . $qualified_class;
     	

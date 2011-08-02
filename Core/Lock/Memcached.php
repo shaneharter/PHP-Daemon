@@ -35,7 +35,10 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_PluginInterface
 	
 	public function teardown()
 	{
-		$this->memcache->delete(Core_Lock_Lock::LOCK_UNIQUE_ID);
+		// If this PID set this lock, release it
+		$lock = $this->memcache->get(Core_Lock_Lock::$LOCK_UNIQUE_ID);
+		if (is_array($lock) && isset($lock['pid']) && $lock['pid'] == $this->pid)
+			$this->memcache->delete(Core_Lock_Lock::$LOCK_UNIQUE_ID);
 	}
 	
 	public function check_environment()
@@ -65,8 +68,8 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_PluginInterface
 		$lock['pid'] = $this->pid;
 		$lock['timestamp'] = time();
 		
-		$memcache_key = Core_Lock_Lock::LOCK_UNIQUE_ID;
-		$memcache_timeout = Core_Lock_Lock::LOCK_TTL_PADDING_SECONDS + $this->ttl;
+		$memcache_key = Core_Lock_Lock::$LOCK_UNIQUE_ID;
+		$memcache_timeout = Core_Lock_Lock::$LOCK_TTL_PADDING_SECONDS + $this->ttl;
 				
 		$this->memcache->set($memcache_key, $lock, false, $memcache_timeout);		
 	}
@@ -74,7 +77,7 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_PluginInterface
 	protected function get()
 	{
 		// There is no valid cache, so return
-		$lock = $this->memcache->get(Core_Lock_Lock::LOCK_UNIQUE_ID);
+		$lock = $this->memcache->get(Core_Lock_Lock::$LOCK_UNIQUE_ID);
 		$lock_time = microtime(true);
 		
 		if (empty($lock))

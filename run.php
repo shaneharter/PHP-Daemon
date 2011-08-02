@@ -1,6 +1,4 @@
 <?php
-error_reporting(E_ALL);
-
 require_once 'App/config.php';
 require_once 'App/error_handlers.php';
 

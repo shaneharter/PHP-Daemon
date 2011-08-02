@@ -5,7 +5,17 @@ abstract class Core_Lock_Lock implements Core_PluginInterface
 	public static $LOCK_TTL_PADDING_SECONDS = 2.0;
 	public static $LOCK_UNIQUE_ID = 'daemon_lock';
 	
+	/**
+	 * The pid of the current daemon -- Set automatically by the constructor. 
+	 * Also set manually in Core_Daemon::getopt() after the daemon process is forked when run in daemon mode
+	 * @var integer
+	 */
 	public $pid;
+	
+	/**
+	 * The name of the current domain -- set when the lock provider is instantiated. 
+	 * @var string
+	 */
 	public $daemon_name;	
 	
 	/**
@@ -36,8 +46,8 @@ abstract class Core_Lock_Lock implements Core_PluginInterface
 		static $get = false;
 		static $get_time = false;
 
-		if ($get_time && (microtime(true) - $get_time) < 0.10)
-			return $get;
+		//if ($get_time && (microtime(true) - $get_time) < 0.10)
+		//	return $get;
 			
 		$get = $this->get();
 		$get_time = microtime(true);
