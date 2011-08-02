@@ -9,7 +9,6 @@ I use this in production. It includes many features to make it durable and stabl
 Requires: 
 PHP 5.3 or Higher
 POSIX and PCNTL Extensions for PHP
-Memcache Connection
 
 
 Notable Features: 
@@ -28,17 +27,21 @@ No matter how diligent you are, memory bloat can occur. PHP-Daemon is able to au
 * Signal Handling
 By default PHP-Daemon listens for 3 signals: SIGINT, SIGHUP, SIGUSR1. When you send the Daemon a standard 'kill [pid]' SIGINT, it will do an graceful shutdown: It will finish the current iteration of the run loop and then shutdown. If you send a 'kill -1 [pid]' HUP command, it will trigger the auto-restart feature. And if you send a 'kill -10 [pid]' SIGUSR1, it will respond by dumping a block of runtime variables to either the log or stdout or both, depending on how you configure logging. 
 
-* Process Heartbeat
-Every iteration, a "Heartbeat" is written to a special key in Memcache containing the PID of the process that wrote it. When a daemon starts, it checks that key for an existing heartbeat. If one is heard, it will instantly shut down to prevent multiple running instances of the same daemon. You can also use the heatbeat to monitor the daemon uptime.
+* Process Locking
+A lock is created when your daemon starts that will prevent additional, errant instances of the daemon from starting. Currently, File and Memcached lock providers are available. By using the Memcached lock provider you can even restrict the daemon to a single instance across a cluster of servers. 
+
+During development, a Null lock provider can be used to emulate locking behavior without locks getting in your way. 
+
+The locks are "self expiring" so you won't have to worry about a stale lock having to be manually removed after a crash. 
  
 * Memcache Wrapper
-A small Memcache wrapper is included that implements easy namespacing but most importantly, auto_retry functionality. In our high-throughput memcache environment we occasionally have an issue where memcache was blocking at that specific microsecond and a key couldn't be written. To avoid this crashing the Daemon, auto-retry functionality was added. This feature will try several times to write the key -- until it reaches the timeout you specify. 
+Useful for daemons that need to store runtime details in Memcached, a small Memcache wrapper is included that implements easy namespacing and auto_retry functionality. In our high-throughput memcache environment we occasionally have an issue where memcache was blocking at that specific microsecond and a key couldn't be written. To avoid this crashing the Daemon, auto-retry functionality was added. This feature will try several times to write the key -- until it reaches the timeout you specify. 
  
 * Simple Logging
 By providing a filename, either staticly via the ->log_file property or dynamically by overloading the ->log_file() method, the system will keep a simple log file format, writing the timestamp, PID, and message. The PHP-Daemon system will log noteworthy events and you can easily add your own entries by calling  either the ->log($message) method or, if appropriate, the ->fatal_error($message) method. An "alert" flag can be set that will email the $message to the distribution list you define in your constructor. 
  
 * Simple Config Loading
-The daemon requires a config file with at least one key: config.auto_restart_interval. You can add any additional settings in there to control your daemon at runtime. All the settings are available by reading ->config[$section][$key]. 
+A simple Plugin loader is included, and the first plugin created will help you use and validate Ini files. This functionality was moved from the daemon core into a Plugin for the 1.1.0 release to simplify daemon core. 
 
 * Command Line Switches
 You can run a '-H' help command when you run the Daemon. It will dump a help menu that looks like this, but can be easily overridden for your daemon:
