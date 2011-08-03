@@ -112,7 +112,7 @@ abstract class Core_Daemon
 	 * A simple stack of plugins that are enabled. Set from load_plugin() method.
 	 * @var Array
 	 */
-	private $plugins = array();
+	private $plugins 	= array();
 	
 	/**
 	 * This has to be set using the Core_Daemon::setFilename before init. 
@@ -121,6 +121,74 @@ abstract class Core_Daemon
 	 */
 	private static $filename = false;
 	
+	
+	/**
+	 * The execute method will contain the actual function of the daemon. 
+	 * It can be called directly if needed but its intention is to be called every iteration by the ->run() method.
+	 * Any exceptions thrown from execute() will be logged as Fatal Errors and result in the daemon attempting to restart or shut down. 
+	 * 
+	 * @return void
+	 * @throws Exception
+	 */
+	abstract protected function execute();
+	
+	/**
+	 * The setup method will contain the one-time setup needs of the daemon.
+	 * It will be called as part of the built-in init() method. 
+	 * Any exceptions thrown from setup() will be logged as Fatal Errors and result in the daemon shutting down. 
+	 * 
+	 * @return void
+	 * @throws Exception
+	 */
+	abstract protected function setup();
+	
+	/**
+	 * Return a log file name that will be used by the log() method. 
+	 * You could hard-code a string like './log', create a simple log rotator using the date() method, etc, etc
+	 * 
+	 * @return string
+	 */
+	abstract protected function log_file();	
+	
+	
+    
+    /**
+     * Return an instance of the Core_Daemon signleton
+     * @return Core_Daemon
+     */
+    public static function getInstance()
+    {
+    	static $o = false;
+    	
+    	if ($o)
+    		return $o;
+    	
+    	try
+    	{
+    		$o = new static;
+    		$o->check_environment();
+    		$o->init();
+    	}
+    	catch(Exception $e)
+    	{
+    		$o->fatal_error($e->getMessage());
+    	}
+    	
+    	return $o;
+    }
+
+	/**
+     * Set the current Filename wherein this object is being instantiated and run. 
+     * @param string $filename the acutal filename, pass in __file__
+     * @return void
+     */
+    public static function setFilename($filename)
+    {
+    	self::$filename = realpath($filename);
+    }    
+
+    
+    
 	protected function __construct()
 	{
 		$this->start_time = time();
@@ -215,49 +283,14 @@ abstract class Core_Daemon
 		foreach($this->plugins as $plugin)
 			$this->{$plugin}->teardown();		
 		
-		if(!empty($this->pid_file) && file_exists($this->pid_file))
-        	unlink($this->pid_file);
-    }
-    
-    /**
-     * Return an instance of the Core_Daemon signleton
-     * @return Core_Daemon
-     */
-    public static function getInstance()
-    {
-    	static $o = false;
-    	
-    	if ($o)
-    		return $o;
-    	
-    	try
-    	{
-    		$o = new static;
-    		$o->check_environment();
-    		$o->init();
-    	}
-    	catch(Exception $e)
-    	{
-    		$o->fatal_error($e->getMessage());
-    	}
-    	
-    	return $o;
+		if(!empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
+			unlink($this->pid_file);
     }
 
 	/**
-     * Set the current Filename wherein this object is being instantiated and run. 
-     * @param string $filename the acutal filename, pass in __file__
-     * @return void
-     */
-    public static function setFilename($filename)
-    {
-    	self::$filename = realpath($filename);
-    }    
-
-    /**
-     * This is the main program loop for the daemon
-     * @return void
-     */
+	 * This is the main program loop for the daemon
+	 * @return void
+	 */
 	public function run()
 	{
 		try
@@ -278,129 +311,64 @@ abstract class Core_Daemon
 			$this->fatal_error('Error in Core_Daemon::run(): ' . $e->getMessage());
 		}			
 	}
-	
-	/**
-	 * The execute method will contain the actual function of the daemon. 
-	 * It can be called directly if needed but its intention is to be called every iteration by the ->run() method.
-	 * Any exceptions thrown from execute() will be logged as Fatal Errors and result in the daemon attempting to restart or shut down. 
-	 * 
-	 * @return void
-	 * @throws Exception
-	 */
-	abstract protected function execute();
-	
-	/**
-	 * The setup method will contain the one-time setup needs of the daemon.
-	 * It will be called as part of the built-in init() method. 
-	 * Any exceptions thrown from setup() will be logged as Fatal Errors and result in the daemon shutting down. 
-	 * 
-	 * @return void
-	 * @throws Exception
-	 */
-	abstract protected function setup();
-	
-	/**
-	 * Return a log file name that will be used by the log() method. 
-	 * You could hard-code a string like './log', create a simple log rotator using the date() method, etc, etc
-	 * 
-	 * @return string
-	 */
-	abstract protected function log_file();
-	
-	/**
-	 * Time the execution loop and sleep an appropriate amount of time. 
-	 * @param boolean $start
-	 */
-	private function timer($start = false)
-	{
-		static $start_time = false; 
-		
-		// Start the Stop Watch and Return
-		if ($start)
-			return $start_time = microtime(true);
 
-		// End the Stop Watch
-		// Calculate the duration. We want to run the code once for every $this->loop_interval. We should sleep for any part of
-		// the loop_interval that's left over. If it took longer than the loop_interval, log it and return immediately. 
-		if (is_float($start_time) == false)
-			$this->fatal_error('An Error Has Occurred: The timer() method Failed. Invalid Start Time: ' . $start_time);
-			
-		$duration = microtime(true) - $start_time;
-
-		if ($duration > $this->loop_interval) 
-		{
-			// Even though the execute() method took too long to run, we need to be sure we give the CPU a little break.
-			// Sleep for 1/500 a second. 
-			usleep(2000);
-			$this->log('Run Loop Taking Too Long. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);			
-			return;
-		}
-		
-		if ($duration > ($this->loop_interval * 0.9))
-			$this->log('Warning: Run Loop Near Max Allowed Duration. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);
-		
-		// usleep accepts microseconds, 1 second in microseconds = 1,000,000
-		usleep(($this->loop_interval - $duration) * 1000000);
-		$start_time = false;
-	}
 	
 	/**
-	 * If this is in daemon mode, provide an auto-restart feature. 
-	 * This is designed to allow us to get a fresh stack, fresh memory allocation, etc. 
-	 * @return boolean
-	 */	
-	protected function auto_restart()
-	{
-		if ($this->daemon == false)
-			return false;
-			
-		// We have an Auto Kill mechanism to allow the system to restart itself when in daemon mode
-		if ($this->runtime() < $this->auto_restart_interval || $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
-			return false;	
-
-		$this->restart();
-	}
-	
-	/**
-	 * There are 2 paths to the daemon calling restart: The Auto Restart feature, and, also, if a fatal error
-	 * is encountered after it's been running for a while, it will attempt to re-start. 
-	 * @return void;
+	 * Parrellize any task by passing it as a callback. Will fork into a child process, execute the callback, and exit. 
+	 * If the task uses MySQL or certain other outside resources, the connection will have to be re-established in the child process
+	 * so in those cases, set the run_setup flag. 
+	 * 
+	 * @param Callback $callback		A valid PHP callback. 
+	 * @param Array $params				The params that will be passed into the Callback when it's called.
+	 * @param unknown_type $run_setup	After the child process is created, it will re-run the setup() method. 
+	 * @return boolean					Cannot know if the callback worked or not, but returns true if the fork was successful. 
+	 * 
+	 * @todo This should accept a closure.
 	 */
-	private function restart()
+	public function fork($callback, array $params = array(), $run_setup = false)
 	{
-		if ($this->is_parent == false)
-			return false;
-					
-		$this->log('Restart Happening Now...');
-			
-		// Build the QS to execute
-		$command = 'php ' . self::$filename . ' -d';
-		
-		if ($this->pid_file)
-			$command .= ' -p ' . $this->pid_file;
-			
-		// We have to explicitely redirect output to /dev/null to prevent the exec() call from hanging
-		$command .= ' > /dev/null';
-		
-		// Then remove the existing lock that we set so the new process doesn't see it and auto-kill itself.
-		$this->lock->teardown();
-		 
-		// Now do the restart and die
-		// Close the resource handles to prevent this process from hanging on the exec() output.
-		if (is_resource(STDOUT)) fclose(STDOUT);
-		if (is_resource(STDERR)) fclose(STDERR); 
-		exec($command);
-		exit();
-	}
-	
-	/**
-	 * Return the running time in Seconds
-	 * @return integer
-	 */
-	public function runtime()
-	{
-		return (time() - $this->start_time);
-	}
+		$pid = pcntl_fork();
+        switch($pid) 
+        {
+            case -1:
+            	$msg = 'Fork Request Failed. Uncalled Callback: ' . is_array($callback) ? implode('::', $callback) : $callback;
+                $this->log($msg, true);
+                return false;
+                break;
+                
+            case 0:
+				// Child Process
+				$this->is_parent = false;
+				$this->pid = getmypid();
+				
+				// Trunc the plugins array, so that way 
+				// when this fork dies and the __destruct runs, it will only shut down 
+				// plugins that were added to the fork explicitely in the setup() call below
+				$this->plugins = array();
+				
+				if ($run_setup) {
+					$this->log("Running Setup in forked PID " . $this->pid);
+					$this->setup();
+				}
+				
+				try
+				{
+					call_user_func_array($callback, $params);
+				}
+				catch(Exception $e)
+				{
+					$this->log('Exception Caught from Callback: ' . $e->getMessage());
+				}
+				
+				exit;
+            	break;    
+                            
+            default:
+            	// Parent Process
+            	return true;
+                break;
+        }
+	}	
 	
 	/**
 	 * Log the $message to the $this->log_file and possibly print to stdout. 
@@ -461,7 +429,7 @@ abstract class Core_Daemon
 	 * Raise a fatal error and kill-off the process. If it's been running for a while, it'll try to restart itself. 
 	 * @param string $log_message
 	 */
-	protected function fatal_error($log_message)
+	public function fatal_error($log_message)
 	{
 		// Log the Error
 		$this->log($log_message);
@@ -484,93 +452,6 @@ abstract class Core_Daemon
 		echo PHP_EOL;
 		exit(1);
 	}
-	
-	/**
-	 * Parrellize any task by passing it as a callback. Will fork into a child process, execute the callback, and exit. 
-	 * If the task uses MySQL or certain other outside resources, the connection will have to be re-established in the child process
-	 * so in those cases, set the run_setup flag. 
-	 * 
-	 * @param Callback $callback		A valid PHP callback. 
-	 * @param Array $params				The params that will be passed into the Callback when it's called.
-	 * @param unknown_type $run_setup	After the child process is created, it will re-run the setup() method. 
-	 * @return boolean					Cannot know if the callback worked or not, but returns true if the fork was successful. 
-	 * 
-	 * @todo This should accept a closure.
-	 */
-	protected function fork($callback, array $params = array(), $run_setup = false)
-	{
-		$pid = pcntl_fork();
-        switch($pid) 
-        {
-            case -1:
-            	$msg = 'Fork Request Failed. Uncalled Callback: ' . is_array($callback) ? implode('::', $callback) : $callback;
-                $this->log($msg, true);
-                return false;
-                break;
-                
-            case 0:
-				// Child Process
-				$this->is_parent = false;
-				$this->pid = getmypid();
-				
-				// Trunc the plugins array, so that way 
-				// when this fork dies and the __destruct runs, it will only shut down 
-				// plugins that were added to the fork explicitely in the setup() call below
-				$this->plugins = array();
-				
-				if ($run_setup) {
-					$this->log("Running Setup in forked PID " . $this->pid);
-					$this->setup();
-				}
-				
-				try
-				{
-					call_user_func_array($callback, $params);
-				}
-				catch(Exception $e)
-				{
-					$this->log('Exception Caught from Callback: ' . $e->getMessage());
-				}
-				
-				exit;
-            	break;    
-                            
-            default:
-            	// Parent Process
-            	return true;
-                break;
-        }
-	}
-		
-	/**
-	 * Send the $message to everybody on the $this->email_distribution_list
-	 * @param string $message
-	 */
-	private function send_alert($message, $subject = false)
-	{
-		if (empty($message))
-			return;
-			
-		if (empty($subject))
-			$subject = get_class($this) . ' Alert';
-			
-		foreach($this->email_distribution_list as $email)
-			@mail($email, $subject, $message);
-	}
-	
-	/**
-	 * Register Signal Handlers
-	 * @return void
-	 */
-    private function register_signal_handlers() 
-    {
-		pcntl_signal(SIGTERM, 	array($this, "signal"));
-		pcntl_signal(SIGINT, 	array($this, "signal"));
-		pcntl_signal(SIGUSR1, 	array($this, "signal"));
-		pcntl_signal(SIGUSR2, 	array($this, "signal"));
-		pcntl_signal(SIGCONT, 	array($this, "signal"));
-		pcntl_signal(SIGHUP, 	array($this, "signal"));
-    }
 
 	/**
 	 * When a signal is sent to the process it'll be handled here
@@ -602,8 +483,147 @@ abstract class Core_Daemon
 			default:
                 // handle all other signals
 		}
+    }	
+	
+	/**
+	 * Register Signal Handlers
+	 * @return void
+	 */
+    private function register_signal_handlers() 
+    {
+		pcntl_signal(SIGTERM, 	array($this, "signal"));
+		pcntl_signal(SIGINT, 	array($this, "signal"));
+		pcntl_signal(SIGUSR1, 	array($this, "signal"));
+		pcntl_signal(SIGUSR2, 	array($this, "signal"));
+		pcntl_signal(SIGCONT, 	array($this, "signal"));
+		pcntl_signal(SIGHUP, 	array($this, "signal"));
     }
     
+    /**
+     * This will dump various runtime details to the log. 
+     * @return void
+     */
+    private function dump()
+    {
+    	$x = array();
+    	$x[] = "Dump Signal Recieved";
+    	$x[] = "Loop Interval: " 	. $this->loop_interval;
+    	$x[] = "Restart Interval: " . $this->auto_restart_interval;
+    	$x[] = "Start Time: " 		. $this->start_time;
+    	$x[] = "Duration: " 		. $this->runtime();
+    	$x[] = "Log File: " 		. $this->log_file();
+    	$x[] = "Daemon Mode: " 		. (int)$this->daemon();
+    	$x[] = "Shutdown Signal: " 	. (int)$this->shutdown();
+    	$x[] = "Verbose Mode: " 	. (int)$this->verbose();
+    	$x[] = "Loaded Plugins: " 	. implode(', ', $this->plugins);
+    	$x[] = "Memory Usage: " 	. memory_get_usage(true);
+    	$x[] = "Memory Peak Usage: ". memory_get_peak_usage(true);
+    	$x[] = "Current User: " 	. get_current_user();
+    	$this->log(implode("\n", $x));
+    }  	
+	
+	/**
+	 * Send the $message to everybody on the $this->email_distribution_list
+	 * @param string $message
+	 */
+	private function send_alert($message, $subject = false)
+	{
+		if (empty($message))
+			return;
+			
+		if (empty($subject))
+			$subject = get_class($this) . ' Alert';
+			
+		foreach($this->email_distribution_list as $email)
+			@mail($email, $subject, $message);
+	}
+	
+	/**
+	 * Time the execution loop and sleep an appropriate amount of time. 
+	 * @param boolean $start
+	 */
+	private function timer($start = false)
+	{
+		static $start_time = false; 
+		
+		// Start the Stop Watch and Return
+		if ($start)
+			return $start_time = microtime(true);
+
+		// End the Stop Watch
+		// Calculate the duration. We want to run the code once for every $this->loop_interval. We should sleep for any part of
+		// the loop_interval that's left over. If it took longer than the loop_interval, log it and return immediately. 
+		if (is_float($start_time) == false)
+			$this->fatal_error('An Error Has Occurred: The timer() method Failed. Invalid Start Time: ' . $start_time);
+			
+		$duration = microtime(true) - $start_time;
+
+		if ($duration > $this->loop_interval) 
+		{
+			// Even though the execute() method took too long to run, we need to be sure we give the CPU a little break.
+			// Sleep for 1/500 a second. 
+			usleep(2000);
+			$this->log('Run Loop Taking Too Long. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);			
+			return;
+		}
+		
+		if ($duration > ($this->loop_interval * 0.9))
+			$this->log('Warning: Run Loop Near Max Allowed Duration. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);
+		
+		// usleep accepts microseconds, 1 second in microseconds = 1,000,000
+		usleep(($this->loop_interval - $duration) * 1000000);
+		$start_time = false;
+	}
+	
+	/**
+	 * If this is in daemon mode, provide an auto-restart feature. 
+	 * This is designed to allow us to get a fresh stack, fresh memory allocation, etc. 
+	 * @return boolean
+	 */	
+	private function auto_restart()
+	{
+		if ($this->daemon == false)
+			return false;
+			
+		// We have an Auto Kill mechanism to allow the system to restart itself when in daemon mode
+		if ($this->runtime() < $this->auto_restart_interval || $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
+			return false;	
+
+		$this->restart();
+	}
+	
+	/**
+	 * There are 2 paths to the daemon calling restart: The Auto Restart feature, and, also, if a fatal error
+	 * is encountered after it's been running for a while, it will attempt to re-start. 
+	 * @return void;
+	 */
+	private function restart()
+	{
+		if ($this->is_parent == false)
+			return false;
+					
+		$this->log('Restart Happening Now...');
+			
+		// Build the QS to execute
+		$command = 'php ' . self::$filename . ' -d';
+		
+		if ($this->pid_file)
+			$command .= ' -p ' . $this->pid_file;
+			
+		// We have to explicitely redirect output to /dev/null to prevent the exec() call from hanging
+		$command .= ' > /dev/null';
+		
+		// Then remove the existing lock that we set so the new process doesn't see it and auto-kill itself.
+		$this->lock->teardown();
+		 
+		// Now do the restart and die
+		// Close the resource handles to prevent this process from hanging on the exec() output.
+		if (is_resource(STDOUT)) fclose(STDOUT);
+		if (is_resource(STDERR)) fclose(STDERR); 
+		exec($command);
+		exit();
+	}	
+
     /**
      * Load any plugin that implements the Core_PluginInterface. 
      * All Plugin classes must be named Core_Plugins_ClassNameHere. To select and use a plugin
@@ -694,28 +714,14 @@ abstract class Core_Daemon
         exit();
     }
     
-    /**
-     * This will dump various runtime details to the log. 
-     * @return void
-     */
-    private function dump()
-    {
-    	$x = array();
-    	$x[] = "Dump Signal Recieved";
-    	$x[] = "Loop Interval: " 	. $this->loop_interval;
-    	$x[] = "Restart Interval: " . $this->auto_restart_interval;
-    	$x[] = "Start Time: " 		. $this->start_time;
-    	$x[] = "Duration: " 		. $this->runtime();
-    	$x[] = "Log File: " 		. $this->log_file();
-    	$x[] = "Daemon Mode: " 		. (int)$this->daemon();
-    	$x[] = "Shutdown Signal: " 	. (int)$this->shutdown();
-    	$x[] = "Verbose Mode: " 	. (int)$this->verbose();
-    	$x[] = "Loaded Plugins: " 	. implode(', ', $this->plugins);
-    	$x[] = "Memory Usage: " 	. memory_get_usage(true);
-    	$x[] = "Memory Peak Usage: ". memory_get_peak_usage(true);
-    	$x[] = "Current User: " 	. get_current_user();
-    	$this->log(implode("\n", $x));
-    }
+	/**
+	 * Return the running time in Seconds
+	 * @return integer
+	 */
+	protected function runtime()
+	{
+		return (time() - $this->start_time);
+	}    
     
     /**
      * Combination getter/setter for the $shutdown property. This is needed because $this->shutdown is a private member. 
