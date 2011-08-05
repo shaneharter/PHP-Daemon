@@ -24,7 +24,7 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 
 	private function filename()
 	{
-		return $this->path . $this->daemon_name;
+		return $this->path . $this->daemon_name . '.lock';
 	}
 	
 	public function teardown()
@@ -54,7 +54,7 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 		// The lock value will contain the procss PID
 		file_put_contents($this->filename(), $this->pid);
 		
-		touch($this->filename());		
+		touch($this->filename());
 	}
 	
 	protected function get()

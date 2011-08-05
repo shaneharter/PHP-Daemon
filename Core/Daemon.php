@@ -515,6 +515,7 @@ abstract class Core_Daemon
     	$x[] = "Daemon Mode: " 		. (int)$this->daemon();
     	$x[] = "Shutdown Signal: " 	. (int)$this->shutdown();
     	$x[] = "Verbose Mode: " 	. (int)$this->verbose();
+    	$x[] = "Email On Error: " 	. implode(', ', $this->email_distribution_list);
     	$x[] = "Loaded Plugins: " 	. implode(', ', $this->plugins);
     	$x[] = "Memory Usage: " 	. memory_get_usage(true);
     	$x[] = "Memory Peak Usage: ". memory_get_peak_usage(true);
