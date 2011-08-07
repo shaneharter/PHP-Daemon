@@ -16,8 +16,8 @@ class App_Example extends Core_Daemon
 	 */
 	protected function __construct()
 	{
-		// We want to our daemon to loop once per second.
-		$this->loop_interval = 1.00;
+		// We want to our daemon to loop once every 5 seconds.
+		$this->loop_interval = 5.00;
 				
 		// Set our Lock Provider
 		$this->lock = new Core_Lock_File;
@@ -64,17 +64,17 @@ class App_Example extends Core_Daemon
 	 */
 	protected function execute()
 	{
-			
-		// The Ini plugin implements the SPL ArrayAccess interface, so in your execute() method you can access the data like this: 
-		$example_key = $this->Ini['example_section']['example_key'];
-					
-		$this->log($example_key);
-		
+                // The Ini plugin implements the SPL ArrayAccess interface, so in your execute() method you can access the data like this:
+                $example_key = $this->Ini['example_section']['example_key'];
+                $this->log("Reading value from INI file using the Ini plugin: $example_key");
+
+		$this->log('Executing this stuff every ' . $this->loop_interval . ' seconds. The next 2 messages will be coming from forked children that will exit once they log their message.');
+
 		// If you do have a specific long-running task, maybe emailing a bunch of people or using an external API, you can
 		// easily fork a child process: 
 		$callback = array($this, 'some_forked_task');
 		
-		if ($this->fork($callback, array('Hello from the first fork() call')))
+		if ($this->fork($callback, array('Hello from the first fork() call. Notice my unique PID?')))
 		{
 			// If we are here, it means the child process was created just fine. However, we have no idea
 			// if some_long_running_task() will run successfully. The fork() method returns as soon as the fork is attempted. 
@@ -86,12 +86,12 @@ class App_Example extends Core_Daemon
 		// after the fork. If you create the connection here in the setup() method, It will LOOK like the child has a valid MySQL
 		// resource after forking, but in reality it's dead. To fix that, you can easily re-run the setup() method in the child
 		// process by passing "true" as the 3rd param: 
-		$this->fork($callback, array('Hello from the second fork() call'), true);
+		$this->fork($callback, array('Hello from the second fork() call. Notice MY unique PID?'), true);
 	}
 	
-	protected function some_forked_task($param_one)
+	protected function some_forked_task($param)
 	{
-		$this->log('This is logging from a child process');
+		$this->log($param);
 	}
 	
 	/**

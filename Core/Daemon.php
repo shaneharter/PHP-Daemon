@@ -5,22 +5,21 @@ declare(ticks = 5);
 /**
  * Daemon Base Class with various cool daemon features. Includes a built-in timer:
  * You define an execute() method, and a loop_interval (in seconds) (Could be 1, 10, 60, 3600, 0.5, 0.1, etc). The timer does the rest. 
- * Single-threaded by default, but parallel processing is as easy as passing a callback to the ->fork() method. 
  * 
  * USAGE: 
  * 1. Implement the setup(), execute() and log_file() methods in your base class. 
- * 	  - setup() is called automaticaly after __construct() and init() are called, and can be called for you automatically after each ->fork(). 
+ *    - setup() is called automaticaly after __construct() and init() are called, and can be called for you automatically after each ->fork(). 
  *    - execute() is called on whaveter timer you define when you set the loop_interval. 
  *    - log_file() should return the path that all log events will be written-to. Maybe use date('Ymd') to build a simple daily log rotator. 
  * 
  * 2. In your constructor, call parent::__construct() and then set: 
- * 		lock						Several lock providers exist or write your own that extends Core_Lock_Lock. Used to prevent duplicate instances of the daemon. 
- * 		loop_interval				In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10. 
+ * 		lock				Several lock providers exist or write your own that extends Core_Lock_Lock. Used to prevent duplicate instances of the daemon. 
+ * 		loop_interval			In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10. 
  * 		auto_restart_interval		In seconds, how often shoudl the daemon restart itself? Must be no lower than the const value in Core_Daemon::MIN_RESTART_SECONDS.  
  * 		email_distribution_list		An array of email addresses that will be alerted when falat errors occur 
  * 
  * 3. Configure any Plugins you want to use. For example, the /Plugins/Ini.php provides integrated, validated ini file loading. Functionality implemented as a plugin
- * 	  can add runtime checks that get called very early in the daemon startup. Much better to know that your config file (for example) is mangled during the check_environment
+ *    can add runtime checks that get called very early in the daemon startup. Much better to know that your config file (for example) is mangled during the check_environment
  *    call than it is to wait until you've got a running daemon that's trusted to remain error-free and functional.  
  * 
  * @uses PHP 5.3 or Higher
@@ -244,7 +243,7 @@ abstract class Core_Daemon
 		if (count($errors))
 		{
 			$errors = implode("\n  ", $errors);
-			throw new Exception("Core_Daemon::check_environment Found The Following Errors:\n  $errors");
+			throw new Exception("Core_Daemon could not begin:\n  $errors");
 		}
 	}
 	
@@ -273,9 +272,9 @@ abstract class Core_Daemon
 		
 		// We're all Done. Print some info to the screen and be on our way. 
 		if ($this->daemon == false)
-			$this->log('Note: Auto-Restart Feature Disabled When Not Run as Daemon');
+			$this->log('Note: Auto-Restart feature is disabled when not run in Daemon mode (using -d).');
 			
-		$this->log('Process Initialization Complete. Ready to Begin.');		
+		$this->log('Process Initialization Complete. Starting timer at a ' . $this->loop_interval . ' second interval.');
 	}
 	
 	public function __destruct() 
@@ -382,47 +381,47 @@ abstract class Core_Daemon
 		
 		try
 		{
-			$header		= "Date                  PID   Message\n";
-	        $date 		= date("Y-m-d H:i:s");
-	        $pid 		= str_pad($this->pid, 5, " ", STR_PAD_LEFT);
-	        $prefix 	= "[$date] $pid";
+			$header	= "Date                   PID   Message\n";
+		        $date 		= date("Y-m-d H:i:s");
+			$pid 		= str_pad($this->pid, 5, " ", STR_PAD_LEFT);
+			$prefix 	= "[$date] $pid";
 	        			
-        	if($handle === false)
-	        {
-	        	if (strlen($this->log_file()) > 0)
+        		if($handle === false)
+	        	{
+	        		if (strlen($this->log_file()) > 0)
 					$handle = @fopen($this->log_file(), 'a+');
 	        	
-	            if($handle === false) 
-	            {
-	            	// If the log file can't be written-to, dump the errors to stdout with the explination... 
-	            	if ($raise_logfile_error) {
-	            		$raise_logfile_error = false;
-	            		$this->log('Unable to write logfile at ' . $this->log_file() . '. Redirecting errors to stdout.');
-	            	}
+	           		if($handle === false) 
+	           	 	{
+	            			// If the log file can't be written-to, dump the errors to stdout with the explination... 
+	            			if ($raise_logfile_error) {
+	            				$raise_logfile_error = false;
+	            				$this->log('Unable to write logfile at ' . $this->log_file() . '. Redirecting messages to stdout.');
+		            		}
 	            	
 					throw new Exception("$prefix $message");	                
-	            }
+	        	    	}
 	            
-	            fwrite($handle, $header);
+	            		fwrite($handle, $header);
 				
 				if ($this->verbose)
 					echo $header;
-	        }
+	        	}
 	        
-	        $message = $prefix . ' ' . str_replace("\n", "\n$prefix ", trim($message)) . "\n";
-            fwrite($handle, $message);
+		        $message = $prefix . ' ' . str_replace("\n", "\n$prefix ", trim($message)) . "\n";
+        	    	fwrite($handle, $message);
             
-            if ($this->verbose)
-            	echo $message;
+           		 if ($this->verbose)
+            			echo $message;
 		}
-        catch(Exception $e)
-        {
-        	echo PHP_EOL . $e->getMessage();
-        }
+	        catch(Exception $e)
+		{
+        		echo PHP_EOL . $e->getMessage();
+        	}
         
-        // Optionally distribute this error message to anyboady on the ->email_distribution_list
-        if ($send_alert && $message)
-        	$this->send_alert($message);
+		// Optionally distribute this error message to anyboady on the ->email_distribution_list
+		if ($send_alert && $message)
+        		$this->send_alert($message);
 	}
 	
 	/**
