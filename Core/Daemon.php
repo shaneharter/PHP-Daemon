@@ -475,7 +475,7 @@ abstract class Core_Daemon
 				
 			case SIGINT:
 			case SIGTERM:
-            	$this->log("Shutdown Signal Received");
+            	$this->log("Shutdown Signal Received\n");
                 $this->shutdown = true;
                 break;
 
