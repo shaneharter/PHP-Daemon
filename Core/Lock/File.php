@@ -38,6 +38,12 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 	{
 		$errors = array();
 		
+		if (empty($this->path))
+			$errors[] = 'Lock File "path" property is not set. Please set $this->lock->path in your daemon constructor. Note: "./" is invalid.';
+			
+		if ($this->path == './')
+			$errors[] = 'Lock File "path" property is invalid: You cannot use "./" -- Please update $this->lock->path in your daemon constructor.';
+		
 		if (is_writable(dirname($this->filename())) == false)
 			$errors[] = 'Lock File "' . $this->filename() . '" Not Writable.';
 			

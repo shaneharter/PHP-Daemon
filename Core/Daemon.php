@@ -37,18 +37,6 @@ abstract class Core_Daemon
 	const MIN_RESTART_SECONDS = 10;
 	
 	/**
-	 * A lock provider object that extends the Core_Lock_Lock abstract class.
-	 * @var Core_Lock_Lock
-	 */
-	protected $lock;	
-	
-	/**
-	 * The email accounts in this list will be notified when a fatal error occurs. 
-	 * @var Array
-	 */
-	protected $email_distribution_list = array();
-	
-	/**
 	 * The frequency at which the run() loop will run (and execute() method will called). After exectute() is called, any remaining time in that
 	 * interval will be spent in a sleep state. If there is no remaining time, that will be logged as an error condition.  
 	 * @example $this->loop_interval = 300; // Execute() will be called once every 5 minutes 
@@ -64,6 +52,26 @@ abstract class Core_Daemon
 	 * @var integer		The interval in Seconds
 	 */
 	protected $auto_restart_interval = 86400;
+	
+	/**
+	 * The email accounts in this list will be notified when a fatal error occurs. 
+	 * @var Array
+	 */
+	protected $email_distribution_list = array();	
+	
+	/**
+	 * A lock provider object that extends the Core_Lock_Lock abstract class.
+	 * @var Core_Lock_Lock
+	 */
+	protected $lock;		
+	
+	/**
+	 * An array of instructions that's displayed when the -i param is passed into the daemon. 
+	 * Help's sysadmins and users of your daemons get installation correct. Guide them to set 
+	 * correct permissions, crontab entries, init.d scripts, etc
+	 * @var Array
+	 */
+	protected $install_instructions = array();
 	
 	/**
 	 * If the process is forked, this will indicate whether we're still in the parent or not. 
@@ -190,6 +198,9 @@ abstract class Core_Daemon
     
 	protected function __construct()
 	{
+		// We have to set any installaton instructions before we call getopt()
+		$this->install_instructions[] = "Add Crontab Entry:\n   * * * * * " . $this->getFilename();
+		
 		$this->start_time = time();
 		$this->pid = getmypid();
 		$this->getopt();
@@ -484,6 +495,24 @@ abstract class Core_Daemon
 		}
     }	
 	
+    /**
+     * Get the fully qualified command used to start (and restart) the daemon
+     * 
+     * @return string
+     */
+    private function getFilename()
+    {
+    	$command = 'php ' . self::$filename . ' -d';
+		
+		if ($this->pid_file)
+			$command .= ' -p ' . $this->pid_file;
+			
+		// We have to explicitely redirect output to /dev/null to prevent the exec() call from hanging
+		$command .= ' > /dev/null';
+		
+		return $command;
+    }
+    
 	/**
 	 * Register Signal Handlers
 	 * @return void
@@ -604,15 +633,6 @@ abstract class Core_Daemon
 					
 		$this->log('Restart Happening Now...');
 			
-		// Build the QS to execute
-		$command = 'php ' . self::$filename . ' -d';
-		
-		if ($this->pid_file)
-			$command .= ' -p ' . $this->pid_file;
-			
-		// We have to explicitely redirect output to /dev/null to prevent the exec() call from hanging
-		$command .= ' > /dev/null';
-		
 		// Then remove the existing lock that we set so the new process doesn't see it and auto-kill itself.
 		$this->lock->teardown();
 		 
@@ -620,7 +640,7 @@ abstract class Core_Daemon
 		// Close the resource handles to prevent this process from hanging on the exec() output.
 		if (is_resource(STDOUT)) fclose(STDOUT);
 		if (is_resource(STDERR)) fclose(STDERR); 
-		exec($command);
+		exec($this->getFilename());
 		exit();
 	}	
 
@@ -657,11 +677,15 @@ abstract class Core_Daemon
      */
 	protected function getopt()
 	{
-        $opts = getopt("Hdvp:");
+        $opts = getopt("Hidvp:");
 
         if(isset($opts["H"]))
             $this->show_help();
         
+
+        if(isset($opts["i"]))
+            $this->show_install_instructions();            
+            
         if(isset($opts['d']))
         {			  
         	$pid = pcntl_fork();      	
@@ -706,12 +730,26 @@ abstract class Core_Daemon
         echo "USAGE:\n";
         echo " # " . basename(self::$filename) . " -H | [-d] [-v] [-p PID_FILE]\n\n";
         echo "OPTIONS:\n";
+        echo " -i Print any daemon install instructions to the screen\n";
         echo " -d Daemon, detach and run in the background\n";
         echo " -v Verbose, echo any logged messages. Ignored in Daemon mode.\n";
         echo " -H Shows this help\n";
         echo " -p PID_FILE File to write process ID out to\n";
         echo "\n";
         exit();
+    }
+    
+    /**
+     * Print any install instructions to the screen. 
+     * Could be anything from copying init.d scripts, setting crontab entries, creating executable or writable directories, etc. 
+     * Add instructions from your daemon by adding them one by one: $this->install_instructions[] = 'Do foo'
+     * @return void
+     */
+    protected function show_install_instructions() {
+    	echo get_class($this) . " Installation Instructions:\n\n - ";
+    	echo implode("\n - ", $this->install_instructions);
+    	echo "\n";
+    	exit();
     }
     
 	/**
