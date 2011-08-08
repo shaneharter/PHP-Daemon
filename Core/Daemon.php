@@ -728,7 +728,7 @@ abstract class Core_Daemon
         
         echo get_class($this) . "\n\n";
         echo "USAGE:\n";
-        echo " # " . basename(self::$filename) . " -H | [-d] [-v] [-p PID_FILE]\n\n";
+        echo " # " . basename(self::$filename) . " -H | -i | [-d] [-v] [-p PID_FILE]\n\n";
         echo "OPTIONS:\n";
         echo " -i Print any daemon install instructions to the screen\n";
         echo " -d Daemon, detach and run in the background\n";

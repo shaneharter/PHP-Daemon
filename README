@@ -9,6 +9,9 @@ Requires:
 PHP 5.3 or Higher
 POSIX and PCNTL Extensions for PHP
 
+Changes in 1.1.1:
+* Several Bugfixes
+* Add simple "Installation Instructions" feature: Pass -i to your daemon to print out simple installation instructions (crontab entries, file permissions, etc). Easily define these instructions in your daemon by adding messages to an array. 
 
 Changes in 1.1.0: 
 * Add a simple Plugin interface.
@@ -55,15 +58,20 @@ A plugin can be created very easily by implementing the Core_PluginInterface. Cu
 * Simple Config Loading
 A simple Plugin loader is included, and the first plugin created will help you use and validate Ini files. This functionality was moved from the daemon core into a Plugin for the 1.1.0 release to simplify daemon core. 
 
+* Simple Installation Guidance 
+Help sysadmins and users of your Daemon by definig installation instructions directly in your daemon. Add messages to the
+$this->install_instructions array in your daemon's constructor. Then when you call the daemon with a "-i" argument, a complete list of your instructions and Core_Daemon instructions will be displayed to the daemon user. 
+
 * Command Line Switches
 You can run a '-H' help command when you run the Daemon. It will dump a help menu that looks like this, but can be easily overridden for your daemon:
 
 	Example_Daemon
 	
 	USAGE:
-	 # run.php -H | [-d] [-v] [-p PID_FILE]
+	 # run.php -H | -i | [-d] [-v] [-p PID_FILE]
 	
 	OPTIONS:
+	 -i Print any daemon install instructions to the screen
 	 -d Daemon, detach and run in the background
 	 -v Verbose, echo any logged messages. Ignored in Daemon mode.
 	 -H Shows this help
