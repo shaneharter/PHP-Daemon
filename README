@@ -20,7 +20,7 @@ Changes in 1.1.0:
 
 Notable Features: 
 
-* Built-In while() loop and micro-time timer. 
+* Built-In while() loop and micro-time timer
 Example: You set "->loop_interval=1". The PHP-Daemon will call your execute() method and time it. Suppose it takes 0.2 seconds. Upon its completion, the timer will sleep for the remaining 8/10 second. It wakes-up and then iterates. If your execute() method does not return before the end of the loop_interval (1 second in this case), an error will be logged. But since the execute() method is blocking, the next iteration will not begin until the first is complete. 
 
 * Braindead-Simple Forking for tasks that can be parallelized
