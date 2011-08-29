@@ -35,6 +35,16 @@ abstract class Core_Lock_Lock implements Core_PluginInterface
 	abstract public function set();
 	abstract protected function get();
 	
+	
+	/**
+	 * Set the lock each time the daemon run() loop iterates. 
+	 * @see Core_PluginInterface::run()
+	 */
+	public function run()
+	{
+		$this->set();
+	}
+	
 	/**
 	 * Check for the existence of a lock. 
 	 * Cache results of get() check for 1/10 a second.

@@ -20,4 +20,9 @@ interface Core_PluginInterface
 	 */
 	public function check_environment();
 	
+	/**
+	 * This is called after execute() is called each interval. Be cautious that anything coded here does not use up too much time in the interval. 
+	 * @return void
+	 */
+	public function run();	
 }
