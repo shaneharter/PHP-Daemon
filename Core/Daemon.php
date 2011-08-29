@@ -5,21 +5,22 @@ declare(ticks = 5);
 /**
  * Daemon Base Class with various cool daemon features. Includes a built-in timer:
  * You define an execute() method, and a loop_interval (in seconds) (Could be 1, 10, 60, 3600, 0.5, 0.1, etc). The timer does the rest. 
+ * Single-threaded by default, but parallel processing is as easy as passing a callback to the ->fork() method. 
  * 
  * USAGE: 
  * 1. Implement the setup(), execute() and log_file() methods in your base class. 
- *    - setup() is called automaticaly after __construct() and init() are called, and can be called for you automatically after each ->fork(). 
+ * 	  - setup() is called automaticaly after __construct() and init() are called, and can be called for you automatically after each ->fork(). 
  *    - execute() is called on whaveter timer you define when you set the loop_interval. 
  *    - log_file() should return the path that all log events will be written-to. Maybe use date('Ymd') to build a simple daily log rotator. 
  * 
  * 2. In your constructor, call parent::__construct() and then set: 
- * 		lock				Several lock providers exist or write your own that extends Core_Lock_Lock. Used to prevent duplicate instances of the daemon. 
- * 		loop_interval			In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10. 
+ * 		lock						Several lock providers exist or write your own that extends Core_Lock_Lock. Used to prevent duplicate instances of the daemon. 
+ * 		loop_interval				In seconds, how often should the execute() method run? Decimals are allowed. Tested as low as 0.10. 
  * 		auto_restart_interval		In seconds, how often shoudl the daemon restart itself? Must be no lower than the const value in Core_Daemon::MIN_RESTART_SECONDS.  
  * 		email_distribution_list		An array of email addresses that will be alerted when falat errors occur 
  * 
  * 3. Configure any Plugins you want to use. For example, the /Plugins/Ini.php provides integrated, validated ini file loading. Functionality implemented as a plugin
- *    can add runtime checks that get called very early in the daemon startup. Much better to know that your config file (for example) is mangled during the check_environment
+ * 	  can add runtime checks that get called very early in the daemon startup. Much better to know that your config file (for example) is mangled during the check_environment
  *    call than it is to wait until you've got a running daemon that's trusted to remain error-free and functional.  
  * 
  * @uses PHP 5.3 or Higher
@@ -37,6 +38,25 @@ abstract class Core_Daemon
 	const MIN_RESTART_SECONDS = 10;
 	
 	/**
+	 * A stdClass array of all Workers created by the worker() method
+	 * @var stdClass
+	 */
+	private $workers;
+	
+	/**
+	 * A lock provider object that extends the Core_Lock_Lock abstract class.
+	 * @var Core_Lock_Lock
+	 */
+	protected $lock;	
+	
+	/**
+	 * The email accounts in this list will be notified when a fatal error occurs. 
+	 * @uses sendmail via PHP mail() function
+	 * @var Array
+	 */
+	protected $email_distribution_list = array();
+	
+	/**
 	 * The frequency at which the run() loop will run (and execute() method will called). After exectute() is called, any remaining time in that
 	 * interval will be spent in a sleep state. If there is no remaining time, that will be logged as an error condition.  
 	 * @example $this->loop_interval = 300; // Execute() will be called once every 5 minutes 
@@ -52,26 +72,6 @@ abstract class Core_Daemon
 	 * @var integer		The interval in Seconds
 	 */
 	protected $auto_restart_interval = 86400;
-	
-	/**
-	 * The email accounts in this list will be notified when a fatal error occurs. 
-	 * @var Array
-	 */
-	protected $email_distribution_list = array();	
-	
-	/**
-	 * A lock provider object that extends the Core_Lock_Lock abstract class.
-	 * @var Core_Lock_Lock
-	 */
-	protected $lock;		
-	
-	/**
-	 * An array of instructions that's displayed when the -i param is passed into the daemon. 
-	 * Help's sysadmins and users of your daemons get installation correct. Guide them to set 
-	 * correct permissions, crontab entries, init.d scripts, etc
-	 * @var Array
-	 */
-	protected $install_instructions = array();
 	
 	/**
 	 * If the process is forked, this will indicate whether we're still in the parent or not. 
@@ -198,9 +198,6 @@ abstract class Core_Daemon
     
 	protected function __construct()
 	{
-		// We have to set any installaton instructions before we call getopt()
-		$this->install_instructions[] = "Add Crontab Entry:\n   * * * * * " . $this->getFilename();
-		
 		$this->start_time = time();
 		$this->pid = getmypid();
 		$this->getopt();
@@ -209,6 +206,8 @@ abstract class Core_Daemon
 		// The lock provider is a special plugin
 		// We load it outside of the standard load_plugin API, but we need to register it as a plugin
 		$this->plugins[] = 'lock';
+		
+		$this->worker = new stdClass;
 	}
 	
 	/**
@@ -248,13 +247,14 @@ abstract class Core_Daemon
 			$errors[] = "Invalid Lock Provider: Lock Providers Must Implement Core_PluginInterface";			
 			
 		// Poll any plugins for errors
-		foreach($this->plugins as $plugin) 
-			$errors = array_merge($errors, $this->{$plugin}->check_environment());
+		foreach($this->plugins as $plugin)
+			foreach($this->{$plugin}->check_environment() as $error)
+				$errors[] = "[$plugin] $error";
 			
 		if (count($errors))
 		{
 			$errors = implode("\n  ", $errors);
-			throw new Exception("Core_Daemon could not begin:\n  $errors");
+			throw new Exception("Core_Daemon::check_environment Found The Following Errors:\n  $errors");
 		}
 	}
 	
@@ -270,8 +270,15 @@ abstract class Core_Daemon
 		$this->setup();		
 			
 		// Setup any registered plugins
-		foreach($this->plugins as $plugin)
-			$this->{$plugin}->setup();
+		try 
+		{
+			foreach($this->plugins as $plugin)
+				$this->{$plugin}->setup();
+		}
+		catch(Exception $e)
+		{
+			throw new Exception(sprintf("Plugin Exception! [$plugin] " . $e->getMessage()));
+		}
 			
 		// Set the initial lock and gracefully exit if another lock is detected
 		if ($lock = $this->lock->check())
@@ -283,9 +290,9 @@ abstract class Core_Daemon
 		
 		// We're all Done. Print some info to the screen and be on our way. 
 		if ($this->daemon == false)
-			$this->log('Note: Auto-Restart feature is disabled when not run in Daemon mode (using -d).');
+			$this->log('Note: Auto-Restart Feature Disabled When Not Run as Daemon');
 			
-		$this->log('Process Initialization Complete. Starting timer at a ' . $this->loop_interval . ' second interval.');
+		$this->log('Process Initialization Complete. Ready to Begin.');		
 	}
 	
 	public function __destruct() 
@@ -296,7 +303,30 @@ abstract class Core_Daemon
 		if(!empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
 			unlink($this->pid_file);
     }
-
+    
+    /**
+     * Allow named workers to be accessed as a local property 
+     * @example $this->WorkerName->timeout = 30;
+     * @example $this->WorkerName->execute();
+     * @param string $name	The name of the worker to access
+     */
+    public function __get($name)
+    {
+    	if (isset($this->workers->{$name}) is_object($this->workers->{$name}) && $this->workers->{$name} instanceof Core_Worker) 
+    		return $this->workers->{$name};
+    }
+    
+    /**
+     * Allow named workers to be accessed as a local method
+     * @example $this->WorkerName();
+     * @param string $name	The name of the worker to access
+     */    
+    public function __call($name, $args)
+    {
+    	if (isset($this->workers->{$name}) is_object($this->workers->{$name}) && $this->workers->{$name} instanceof Core_Worker) 
+    		return call_user_func_array(array($this->workers->{$name}, 'execute'), $args);
+    }    
+    
 	/**
 	 * This is the main program loop for the daemon
 	 * @return void
@@ -309,7 +339,8 @@ abstract class Core_Daemon
 			{
 				$this->timer(true);
 				$this->auto_restart();				
-				$this->lock->set();
+				foreach($this->plugins as &$plugin) $this->{$plugin}->run();
+				foreach($this->workers as &$worker) $worker->run();
 				$this->execute();
 				$this->timer();
 				
@@ -324,16 +355,14 @@ abstract class Core_Daemon
 
 	
 	/**
-	 * Parrellize any task by passing it as a callback. Will fork into a child process, execute the callback, and exit. 
+	 * Parrellize any task by passing it as a callback or closure. Will fork into a child process, execute the supplied function, and exit. 
 	 * If the task uses MySQL or certain other outside resources, the connection will have to be re-established in the child process
 	 * so in those cases, set the run_setup flag. 
 	 * 
-	 * @param Callback $callback		A valid PHP callback. 
+	 * @param Function $callback		A valid PHP callback or closure. 
 	 * @param Array $params				The params that will be passed into the Callback when it's called.
-	 * @param unknown_type $run_setup	After the child process is created, it will re-run the setup() method. 
+	 * @param boolean $run_setup		After the child process is created, it will re-run the setup() method. 
 	 * @return boolean					Cannot know if the callback worked or not, but returns true if the fork was successful. 
-	 * 
-	 * @todo This should accept a closure.
 	 */
 	public function fork($callback, array $params = array(), $run_setup = false)
 	{
@@ -341,7 +370,11 @@ abstract class Core_Daemon
         switch($pid) 
         {
             case -1:
-            	$msg = 'Fork Request Failed. Uncalled Callback: ' . is_array($callback) ? implode('::', $callback) : $callback;
+            	if ($callback instanceof Closure)
+            		$msg = 'Fork Request Failed. Uncalled Closure';
+            	else
+            		$msg = 'Fork Request Failed. Uncalled Callback: ' . is_array($callback) ? implode('::', $callback) : $callback;
+            		
                 $this->log($msg, true);
                 return false;
                 break;
@@ -367,23 +400,42 @@ abstract class Core_Daemon
 				}
 				catch(Exception $e)
 				{
-					$this->log('Exception Caught from Callback: ' . $e->getMessage());
+					$this->log('Exception Caught in Fork: ' . $e->getMessage());
 				}
 				
 				exit;
             	break;    
                             
             default:
-            	// Parent Process
             	return true;
                 break;
         }
 	}	
 	
+
+	/**
+	 * Create a persistent Worker process. Essentially a managed Fork, the daemon can apply 
+	 * timeouts, keep the worker running, restart the worker when it's complete, etc. 
+	 * What you CANNOT do is queue jobs to a worker: It can only do one at a time. Queuing jobs in memory is volatile
+	 * and a daemon crash or restart would lose them. However, a worker integrates with a Job Queue like Gearman or Beanstalkd 
+	 * very naturally. 
+	 * 
+	 * @param String $name			The name of the worker -- Will be instantiated at $this->{$name}
+	 * @param Function $function	A valid callback or closure
+	 * @return Core_Worker			Returns a Core_Worker class that can be used to interact with the Worker
+	 */
+    protected function worker($name, $function)
+    {
+    	// get_called_class is a PHP 5.3 function that uses late static binding to return the 
+    	// name of the superclass this is being run in
+    	$this->worker->{$name} = new Core_Worker($function, $name, get_called_class());
+    }
+	
 	/**
 	 * Log the $message to the $this->log_file and possibly print to stdout. 
 	 * Multi-Line messages will be handled nicely.
 	 * @param string $message
+	 * @param boolean $send_alert	When true, a copy of this message will be sent to the email list
 	 */
 	public function log($message, $send_alert = false)
 	{
@@ -392,47 +444,47 @@ abstract class Core_Daemon
 		
 		try
 		{
-			$header	= "Date                   PID   Message\n";
-		        $date 		= date("Y-m-d H:i:s");
-			$pid 		= str_pad($this->pid, 5, " ", STR_PAD_LEFT);
-			$prefix 	= "[$date] $pid";
+			$header		= "Date                  PID   Message\n";
+	        $date 		= date("Y-m-d H:i:s");
+	        $pid 		= str_pad($this->pid, 5, " ", STR_PAD_LEFT);
+	        $prefix 	= "[$date] $pid";
 	        			
-        		if($handle === false)
-	        	{
-	        		if (strlen($this->log_file()) > 0)
+        	if($handle === false)
+	        {
+	        	if (strlen($this->log_file()) > 0)
 					$handle = @fopen($this->log_file(), 'a+');
 	        	
-	           		if($handle === false) 
-	           	 	{
-	            			// If the log file can't be written-to, dump the errors to stdout with the explination... 
-	            			if ($raise_logfile_error) {
-	            				$raise_logfile_error = false;
-	            				$this->log('Unable to write logfile at ' . $this->log_file() . '. Redirecting messages to stdout.');
-		            		}
+	            if($handle === false) 
+	            {
+	            	// If the log file can't be written-to, dump the errors to stdout with the explination... 
+	            	if ($raise_logfile_error) {
+	            		$raise_logfile_error = false;
+	            		$this->log('Unable to write logfile at ' . $this->log_file() . '. Redirecting errors to stdout.');
+	            	}
 	            	
 					throw new Exception("$prefix $message");	                
-	        	    	}
+	            }
 	            
-	            		fwrite($handle, $header);
+	            fwrite($handle, $header);
 				
 				if ($this->verbose)
 					echo $header;
-	        	}
+	        }
 	        
-		        $message = $prefix . ' ' . str_replace("\n", "\n$prefix ", trim($message)) . "\n";
-        	    	fwrite($handle, $message);
+	        $message = $prefix . ' ' . str_replace("\n", "\n$prefix ", trim($message)) . "\n";
+            fwrite($handle, $message);
             
-           		 if ($this->verbose)
-            			echo $message;
+            if ($this->verbose)
+            	echo $message;
 		}
-	        catch(Exception $e)
-		{
-        		echo PHP_EOL . $e->getMessage();
-        	}
+        catch(Exception $e)
+        {
+        	echo PHP_EOL . $e->getMessage();
+        }
         
-		// Optionally distribute this error message to anyboady on the ->email_distribution_list
-		if ($send_alert && $message)
-        		$this->send_alert($message);
+        // Optionally distribute this error message to anyboady on the ->email_distribution_list
+        if ($send_alert && $message)
+        	$this->send_alert($message);
 	}
 	
 	/**
@@ -486,7 +538,7 @@ abstract class Core_Daemon
 				
 			case SIGINT:
 			case SIGTERM:
-            	$this->log("Shutdown Signal Received\n");
+            	$this->log("Shutdown Signal Received");
                 $this->shutdown = true;
                 break;
 
@@ -495,24 +547,6 @@ abstract class Core_Daemon
 		}
     }	
 	
-    /**
-     * Get the fully qualified command used to start (and restart) the daemon
-     * 
-     * @return string
-     */
-    private function getFilename()
-    {
-    	$command = 'php ' . self::$filename . ' -d';
-		
-		if ($this->pid_file)
-			$command .= ' -p ' . $this->pid_file;
-			
-		// We have to explicitely redirect output to /dev/null to prevent the exec() call from hanging
-		$command .= ' > /dev/null';
-		
-		return $command;
-    }
-    
 	/**
 	 * Register Signal Handlers
 	 * @return void
@@ -545,6 +579,7 @@ abstract class Core_Daemon
     	$x[] = "Verbose Mode: " 	. (int)$this->verbose();
     	$x[] = "Email On Error: " 	. implode(', ', $this->email_distribution_list);
     	$x[] = "Loaded Plugins: " 	. implode(', ', $this->plugins);
+    	$x[] = "Named Workers: " 	. implode(', ', array_keys((array)$this->workers));
     	$x[] = "Memory Usage: " 	. memory_get_usage(true);
     	$x[] = "Memory Peak Usage: ". memory_get_peak_usage(true);
     	$x[] = "Current User: " 	. get_current_user();
@@ -633,6 +668,15 @@ abstract class Core_Daemon
 					
 		$this->log('Restart Happening Now...');
 			
+		// Build the QS to execute
+		$command = 'php ' . self::$filename . ' -d';
+		
+		if ($this->pid_file)
+			$command .= ' -p ' . $this->pid_file;
+			
+		// We have to explicitely redirect output to /dev/null to prevent the exec() call from hanging
+		$command .= ' > /dev/null';
+		
 		// Then remove the existing lock that we set so the new process doesn't see it and auto-kill itself.
 		$this->lock->teardown();
 		 
@@ -640,7 +684,7 @@ abstract class Core_Daemon
 		// Close the resource handles to prevent this process from hanging on the exec() output.
 		if (is_resource(STDOUT)) fclose(STDOUT);
 		if (is_resource(STDERR)) fclose(STDERR); 
-		exec($this->getFilename());
+		exec($command);
 		exit();
 	}	
 
@@ -677,15 +721,11 @@ abstract class Core_Daemon
      */
 	protected function getopt()
 	{
-        $opts = getopt("Hidvp:");
+        $opts = getopt("Hdvp:");
 
         if(isset($opts["H"]))
             $this->show_help();
         
-
-        if(isset($opts["i"]))
-            $this->show_install_instructions();            
-            
         if(isset($opts['d']))
         {			  
         	$pid = pcntl_fork();      	
@@ -728,28 +768,14 @@ abstract class Core_Daemon
         
         echo get_class($this) . "\n\n";
         echo "USAGE:\n";
-        echo " # " . basename(self::$filename) . " -H | -i | [-d] [-v] [-p PID_FILE]\n\n";
+        echo " # " . basename(self::$filename) . " -H | [-d] [-v] [-p PID_FILE]\n\n";
         echo "OPTIONS:\n";
-        echo " -i Print any daemon install instructions to the screen\n";
         echo " -d Daemon, detach and run in the background\n";
         echo " -v Verbose, echo any logged messages. Ignored in Daemon mode.\n";
         echo " -H Shows this help\n";
         echo " -p PID_FILE File to write process ID out to\n";
         echo "\n";
         exit();
-    }
-    
-    /**
-     * Print any install instructions to the screen. 
-     * Could be anything from copying init.d scripts, setting crontab entries, creating executable or writable directories, etc. 
-     * Add instructions from your daemon by adding them one by one: $this->install_instructions[] = 'Do foo'
-     * @return void
-     */
-    protected function show_install_instructions() {
-    	echo get_class($this) . " Installation Instructions:\n\n - ";
-    	echo implode("\n - ", $this->install_instructions);
-    	echo "\n";
-    	exit();
     }
     
 	/**
@@ -761,6 +787,19 @@ abstract class Core_Daemon
 		return (time() - $this->start_time);
 	}    
     
+    /**
+     * Combination getter/setter for the $is_parent property. Can be called manually inside a forked process. 
+     * Used automatically when creating named workers. 
+     * @param boolean $set_value
+     */
+    protected function is_parent($set_value = null)
+    {
+    	if ($set_value === false || $set_value === true)
+    		$this->is_parent = $set_value;
+    		
+    	return $this->is_parent;
+    }
+       
     /**
      * Combination getter/setter for the $shutdown property. This is needed because $this->shutdown is a private member. 
      * @param boolean $set_value

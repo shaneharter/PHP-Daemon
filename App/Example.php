@@ -16,14 +16,16 @@ class App_Example extends Core_Daemon
 	 */
 	protected function __construct()
 	{
-		// We want to our daemon to loop once every 5 seconds.
-		$this->loop_interval = 5.00;
+		// We want to our daemon to loop once per second.
+		$this->loop_interval = 1.00;
 				
 		// Set our Lock Provider
-		$this->lock = new Core_Lock_File;
-		$this->lock->daemon_name = __CLASS__;
-		$this->lock->ttl = $this->loop_interval;
-        
+		$this->lock = new Core_Lock_Null();
+		
+		
+		$pluyg$this->load_plugin('Lock_File');
+		$this->plugins['']
+		
 		// Load our email-on-error queue into the daemon. It will use it when it logs caught/user-defined errors.
 		$this->email_distribution_list = email_on_error();
 		
@@ -48,10 +50,23 @@ class App_Example extends Core_Daemon
 		
 		if ($this->is_parent)
 		{
-			// Use the INI plugin to provide an easy way to include config settings
-			$this->load_plugin('Ini');
-			$this->Ini->filename = 'config.ini';
-			$this->Ini->required_sections = array('example_section');
+			// Create a Named Worker. 
+			// Workers run in their own process, in the background, and will not slow down your Daemon. Once your worker is created you can call it like 
+			// a function. In this case it would be: $this->ImpressionsHourly(). You can even pass arguments to it: $this->ImpressionsHourly($foo, $bar). 
+			// It will return immediately. Each worker must finish or timeout before you can run it again, so when you call it,
+			// if it's already running, it will return False. Otherwise it'll return True.  
+
+			$this->worker('ImpressionsHourly', function() {
+				echo "WORKER BITCH!";
+			});
+			
+			// Tell the Worker API to kill the worker process after 60 seconds. If you set this value too low, 
+			// you're going to get a lot of error reports and you'll have to manually run worker processes to complete your task. 
+			$this->ImpressionsHourly->timeout(60);
+			
+			// Tell the Worker API to run this setup method when the worker process is created -- 
+			// Do this if you connect to a database in this setup() method and the worker needs access to the DB connection.
+			$this->ImpressionsHourly->run_setup(true);
 		}
 	}
 	
@@ -64,17 +79,33 @@ class App_Example extends Core_Daemon
 	 */
 	protected function execute()
 	{
-                // The Ini plugin implements the SPL ArrayAccess interface, so in your execute() method you can access the data like this:
-                $example_key = $this->Ini['example_section']['example_key'];
-                $this->log("Reading value from INI file using the Ini plugin: $example_key");
+		// If it's currently running, this won't do anything. If it's idle, this will run it. 
+		// All error and status info from the prior running will be reset
+		$this->ImpressionsHourly();	
 
-		$this->log('Executing this stuff every ' . $this->loop_interval . ' seconds. The next 2 messages will be coming from forked children that will exit once they log their message.');
-
+		// Or you can do it manually
+		if ($this->ImpressionsHourly->state() <> Core_Worker::Core_Worker_Running)
+			$this->ImpressionsHourly();	// Or $this->ImpressionsHourly->execute();
+			
+		// You can pass args directly into your callback or closure: 
+		$this->ImpressionsHourly($arg1, $arg2);
+		
+		
+		
+		$this->log('The current worker timeout is: ' . $this->ImpressionsHourly->timeout());
+		
+		return;
+		
+		// The Ini plugin implements the SPL ArrayAccess interface, so in your execute() method you can access the data like this: 
+		$example_key = $this->Ini['example_section']['example_key'];
+					
+		$this->log($example_key);
+		
 		// If you do have a specific long-running task, maybe emailing a bunch of people or using an external API, you can
 		// easily fork a child process: 
 		$callback = array($this, 'some_forked_task');
 		
-		if ($this->fork($callback, array('Hello from the first fork() call. Notice my unique PID?')))
+		if ($this->fork($callback, array('Hello from the first fork() call')))
 		{
 			// If we are here, it means the child process was created just fine. However, we have no idea
 			// if some_long_running_task() will run successfully. The fork() method returns as soon as the fork is attempted. 
@@ -86,12 +117,12 @@ class App_Example extends Core_Daemon
 		// after the fork. If you create the connection here in the setup() method, It will LOOK like the child has a valid MySQL
 		// resource after forking, but in reality it's dead. To fix that, you can easily re-run the setup() method in the child
 		// process by passing "true" as the 3rd param: 
-		$this->fork($callback, array('Hello from the second fork() call. Notice MY unique PID?'), true);
+		$this->fork($callback, array('Hello from the second fork() call'), true);
 	}
 	
-	protected function some_forked_task($param)
+	protected function some_forked_task($param_one)
 	{
-		$this->log($param);
+		$this->log('This is logging from a child process');
 	}
 	
 	/**
