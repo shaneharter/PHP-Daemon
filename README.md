@@ -1,4 +1,4 @@
-# PHP Simple Daemon by Shane Harter #
+# PHP Simple Daemon #
 
 Create solid, long-running PHP daemon processes by extending this Core_Daemon base class. A unique feature and a key idiom of PHP Simple Daemon is a built-in timer. Your subclass contains an execute() method that is called by the internal timer at the interval you specify -- whether that's one hour, one second, or 1/10 of a second. 
 
