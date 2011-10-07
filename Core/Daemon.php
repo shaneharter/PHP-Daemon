@@ -267,8 +267,8 @@ abstract class Core_Daemon
 	}
 	
 	/**
-	 * Call the daemons setup() method, Call setup() of any loaded plugins, and
-	 * check and set the lock provider. 
+	 * Check and set the lock provider, Load plugins, Call setup() of any loaded plugins, Call the daemons setup() method.
+	 * .
 	 * 
 	 * @return void
 	 */
