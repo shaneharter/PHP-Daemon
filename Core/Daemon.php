@@ -181,6 +181,7 @@ abstract class Core_Daemon
     	try
     	{
     		$o = new static;
+			$o->load_plugins();
     		$o->check_environment();
     		$o->init();
     	}
@@ -267,7 +268,7 @@ abstract class Core_Daemon
 	}
 	
 	/**
-	 * Check and set the lock provider, Load plugins, Call setup() of any loaded plugins, Call the daemons setup() method.
+	 * Check and set the lock provider, Call setup() of any loaded plugins, Call the daemons setup() method.
 	 * .
 	 * 
 	 * @return void
@@ -281,9 +282,6 @@ abstract class Core_Daemon
 			exit(0);
 		}
 		$this->lock->set();
-
-		// Load plugins
-		$this->load_plugins();
 
 		// Setup any registered plugins
 		foreach($this->plugins as $plugin)
