@@ -151,7 +151,8 @@ abstract class Core_Daemon
 
 	/**
 	 * The load plugins method will contain any code required to load any plugins your daemon uses.
-	 * It will be called as part of the built-in init() method before the plugin's setup and daemon's setup are called
+	 * It will be called as part of the built-in init() method just after the lock has been satisfied and before the
+	 * plugin's setup and daemon's setup are called
 	 * @return void
 	 */
 	abstract protected function load_plugins();
@@ -273,6 +274,14 @@ abstract class Core_Daemon
 	 */
 	private function init()
 	{
+		// Set the initial lock and gracefully exit if another lock is detected
+		if ($lock = $this->lock->check())
+		{
+			$this->log('Shutting Down: Lock Detected. Details: ' . $lock);
+			exit(0);
+		}
+		$this->lock->set();
+
 		// Load plugins
 		$this->load_plugins();
 
@@ -282,14 +291,6 @@ abstract class Core_Daemon
 
 		// Run the per-daemon setup 
 		$this->setup();
-		
-		// Set the initial lock and gracefully exit if another lock is detected
-		if ($lock = $this->lock->check())
-		{
-			$this->log('Shutting Down: Lock Detected. Details: ' . $lock);
-			exit(0);
-		}
-		$this->lock->set();
 		
 		// We're all Done. Print some info to the screen and be on our way. 
 		if ($this->daemon == false)
