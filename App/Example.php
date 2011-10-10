@@ -29,6 +29,14 @@ class App_Example extends Core_Daemon
 		
 		parent::__construct();
 	}
+
+	protected function load_plugins()
+	{
+		// Use the INI plugin to provide an easy way to include config settings
+		$this->load_plugin('Ini');
+		$this->Ini->filename = 'config.ini';
+		$this->Ini->required_sections = array('example_section');
+	}
 	
 	/**
 	 * This is where you implement any once-per-execution setup code. 
@@ -48,10 +56,6 @@ class App_Example extends Core_Daemon
 		
 		if ($this->is_parent)
 		{
-			// Use the INI plugin to provide an easy way to include config settings
-			$this->load_plugin('Ini');
-			$this->Ini->filename = 'config.ini';
-			$this->Ini->required_sections = array('example_section');
 		}
 	}
 	

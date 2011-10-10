@@ -148,6 +148,14 @@ abstract class Core_Daemon
 	 * @throws Exception
 	 */
 	abstract protected function setup();
+
+	/**
+	 * The load plugins method will contain any code required to load any plugins your daemon uses.
+	 * It will be called as part of the built-in init() method just after the lock has been satisfied and before the
+	 * plugin's setup and daemon's setup are called
+	 * @return void
+	 */
+	abstract protected function load_plugins();
 	
 	/**
 	 * Return a log file name that will be used by the log() method. 
@@ -173,6 +181,7 @@ abstract class Core_Daemon
     	try
     	{
     		$o = new static;
+			$o->load_plugins();
     		$o->check_environment();
     		$o->init();
     	}
@@ -259,20 +268,13 @@ abstract class Core_Daemon
 	}
 	
 	/**
-	 * Call the daemons setup() method, Call setup() of any loaded plugins, and
-	 * check and set the lock provider. 
+	 * Check and set the lock provider, Call setup() of any loaded plugins, Call the daemons setup() method.
+	 * .
 	 * 
 	 * @return void
 	 */
 	private function init()
 	{
-		// Run the per-daemon setup 
-		$this->setup();		
-			
-		// Setup any registered plugins
-		foreach($this->plugins as $plugin)
-			$this->{$plugin}->setup();
-			
 		// Set the initial lock and gracefully exit if another lock is detected
 		if ($lock = $this->lock->check())
 		{
@@ -280,6 +282,13 @@ abstract class Core_Daemon
 			exit(0);
 		}
 		$this->lock->set();
+
+		// Setup any registered plugins
+		foreach($this->plugins as $plugin)
+			$this->{$plugin}->setup();
+
+		// Run the per-daemon setup 
+		$this->setup();
 		
 		// We're all Done. Print some info to the screen and be on our way. 
 		if ($this->daemon == false)
