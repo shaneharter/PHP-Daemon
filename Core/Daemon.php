@@ -150,14 +150,6 @@ abstract class Core_Daemon
 	abstract protected function setup();
 
 	/**
-	 * The load plugins method will contain any code required to load any plugins your daemon uses.
-	 * It will be called as part of the built-in init() method just after the lock has been satisfied and before the
-	 * plugin's setup and daemon's setup are called
-	 * @return void
-	 */
-	abstract protected function load_plugins();
-	
-	/**
 	 * Return a log file name that will be used by the log() method. 
 	 * You could hard-code a string like './log', create a simple log rotator using the date() method, etc, etc
 	 * 
@@ -165,7 +157,13 @@ abstract class Core_Daemon
 	 */
 	abstract protected function log_file();	
 	
-	
+    /**
+     * The load plugins method will contain any code required to load any plugins your daemon uses.
+     * It will be called as part of the built-in init() method just after the lock has been satisfied and before the
+     * plugin's setup and daemon's setup are called
+     * @return void
+     */
+    protected function load_plugins() {}  
     
     /**
      * Return an instance of the Core_Daemon signleton
@@ -507,15 +505,22 @@ abstract class Core_Daemon
     /**
      * Get the fully qualified command used to start (and restart) the daemon
      * 
+     * @param string $options	An options string to use in place of whatever options were present when the daemon was started.
      * @return string
      */
-    private function getFilename()
+    private function getFilename($options = false)
     {
-    	$command = 'php ' . self::$filename . ' -d';
-		
-		if ($this->pid_file)
-			$command .= ' -p ' . $this->pid_file;
-			
+    	$command = 'php ' . self::$filename;
+
+    	if ($options === false) {
+    		$command .= ' -d';
+			if ($this->pid_file)
+				$command .= ' -p ' . $this->pid_file;
+    	} 
+    	else {
+			$command .= ' ' . trim($options);    		
+    	}
+    	
 		// We have to explicitely redirect output to /dev/null to prevent the exec() call from hanging
 		$command .= ' > /dev/null';
 		
@@ -686,7 +691,7 @@ abstract class Core_Daemon
      */
 	protected function getopt()
 	{
-        $opts = getopt("Hidvp:");
+        $opts = getopt("HiIdvp:");
 
         if(isset($opts["H"]))
             $this->show_help();
@@ -694,6 +699,9 @@ abstract class Core_Daemon
 
         if(isset($opts["i"]))
             $this->show_install_instructions();            
+            
+        if(isset($opts["I"]))
+            $this->create_init_script();            
             
         if(isset($opts['d']))
         {			  
@@ -740,6 +748,7 @@ abstract class Core_Daemon
         echo " # " . basename(self::$filename) . " -H | -i | [-d] [-v] [-p PID_FILE]\n\n";
         echo "OPTIONS:\n";
         echo " -i Print any daemon install instructions to the screen\n";
+        echo " -I Create init script in /etc/init.d\n";
         echo " -d Daemon, detach and run in the background\n";
         echo " -v Verbose, echo any logged messages. Ignored in Daemon mode.\n";
         echo " -H Shows this help\n";
@@ -757,6 +766,60 @@ abstract class Core_Daemon
     protected function show_install_instructions() {
     	echo get_class($this) . " Installation Instructions:\n\n - ";
     	echo implode("\n - ", $this->install_instructions);
+    	echo "\n";
+    	exit();
+    }
+    
+    protected function create_init_script() {
+    	
+    	$script = '/etc/init.d/' . get_class($this);
+    	$script_contents = sprintf(
+'#!/bin/bash
+#
+# %1$s
+#
+# chkconfig: - 85 15
+# description: start, stop, restart %1$s
+#
+
+RETVAL=0
+
+case "$1" in
+    start)
+      %2$s
+      RETVAL=$?
+  ;;
+    stop)
+      kill `cat /var/run/%1$s.pid`
+      RETVAL=$?
+  ;;
+    restart)
+      kill `cat /var/run/%1$s.pid`
+      %2$s
+      RETVAL=$?
+  ;;
+    status)
+      RETVAL=$?
+  ;;
+    *)
+      echo "Usage: %1$s {start|stop|restart}"
+      exit 1
+  ;;
+esac
+
+exit $RETVAL', 
+    	get_class($this),
+    	$this->getFilename(sprintf('-d -p /var/run/%s.pid', get_class($this)))
+    	);
+
+    	file_put_contents($script, $script_contents);
+    	chmod($script, 0755);
+    	
+    	if (file_exists($script) == false || is_executable($script) == false)
+    		$this->show_help("* Must Be Run as Sudo\n * Could Not Write to init.d Directory");
+    	
+    	echo "Init Scripts Created Successfully!";
+    	echo "\n - To run on startup on RedHat/CentOS:  sudo chkconfig --add {$script}";
     	echo "\n";
     	exit();
     }
