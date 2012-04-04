@@ -325,7 +325,7 @@ abstract class Core_Daemon
      */
     public function __get($name)
     {
-    	if (isset($this->workers->{$name}) is_object($this->workers->{$name}) && $this->workers->{$name} instanceof Core_Worker) 
+    	if (isset($this->workers->{$name}) && is_object($this->workers->{$name}) && $this->workers->{$name} instanceof Core_Worker)
     		return $this->workers->{$name};
     }
     
@@ -336,7 +336,7 @@ abstract class Core_Daemon
      */    
     public function __call($name, $args)
     {
-    	if (isset($this->workers->{$name}) is_object($this->workers->{$name}) && $this->workers->{$name} instanceof Core_Worker) 
+    	if (isset($this->workers->{$name}) && is_object($this->workers->{$name}) && $this->workers->{$name} instanceof Core_Worker)
     		return call_user_func_array(array($this->workers->{$name}, 'execute'), $args);
     }    
     
