@@ -85,7 +85,7 @@ class Core_Worker
 	
 	private function daemon()
 	{
-		return $this->daemon_name::getInstance()
+		return $this->daemon_name::getInstance();
 	}
 	
 	public function execute()
