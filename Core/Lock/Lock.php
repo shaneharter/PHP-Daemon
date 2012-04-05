@@ -1,5 +1,11 @@
 <?php
 
+/**
+ * Lock provider base class
+ *
+ * @todo Create Redis lock provider
+ * @todo Create APC lock provider
+ */
 abstract class Core_Lock_Lock implements Core_PluginInterface
 {
 	public static $LOCK_TTL_PADDING_SECONDS = 2.0;
@@ -13,42 +19,73 @@ abstract class Core_Lock_Lock implements Core_PluginInterface
 	public $pid;
 
 	/**
-	 * The name of the current domain -- set when the lock provider is instantiated. 
+	 * The name of the current domain -- set when the lock provider is instantiated.
 	 * @var string
 	 */
 	public $daemon_name;
 
 	/**
-	 * This is added to the const LOCK_TTL_SECONDS to determine how long the lock should last -- any lock provider should be 
-	 * self-expiring using these TTL's. If a lock doesn't self expire you're just asking for crash to leave an errant lock behind that has to be 
-	 * manually cleared.
+	 * This is added to the const LOCK_TTL_SECONDS to determine how long the lock should last -- any lock provider should be
+	 * self-expiring using these TTL's. This is done to minimize liklihood of errant locks being left behind after a kill or crash that
+     * would have to be manually removed.
+     *
 	 * @var decimal 	Number of seconds the lock should be active -- padded with Core_Lock_Lock::LOCK_TTL_PADDING_SECONDS
 	 */
 	public $ttl = 0;
-	
-	public function __construct(Core_Daemon $daemon)
+
+    /**
+     * The array of args passed-in at instantiation
+     * @var Array
+     */
+    protected $args = array();
+
+	public function __construct(Core_Daemon $daemon, Array $args = array())
 	{
 		$this->pid = getmypid();
         $this->daemon_name = get_called_class($daemon);
         $this->ttl = $daemon->loop_interval();
+        $this->args = $args;
 
         $daemon->on(Core_Daemon::ON_INIT, array($this, 'check'));
         $daemon->on(Core_Daemon::ON_RUN,  array($this, 'check'));
+
+        $that = $this;
+        $daemon->on(Core_Daemon::ON_NEWPID, function($args) use($that) {
+            if ($args[0])
+                $that->pid = $args[0];
+        });
 	}
 
+    /**
+     * Write the lock to the shared medium.
+     * @abstract
+     * @return void
+     */
 	abstract public function set();
+
+    /**
+     * Read the lock from whatever shared medium it's written to.
+     * Should return false if the lock was set by the current process (use $this->pid).
+     * Should return false if the lock has exceeded it's TTL+LOCK_TTL_PADDING_SECONDS
+     * If a lock is valid, it should return the PID that set it.
+     * @abstract
+     * @return int|falsey
+     */
 	abstract protected function get();
 
 	/**
-	 * Check for the existence of a lock. 
+	 * Check for the existence of a lock.
 	 * Cache results of get() check for 1/10 a second.
-	 *  
+	 *
 	 * @return false OR the PID of a conflicting lock
 	 */
 	public function check()
 	{
 		static $get = false;
 		static $get_time = false;
+
+        //if ($get_time && (microtime(true) - $get_time) < 0.10)
+        //	return $get;
 
 		$get = $this->get();
 		$get_time = microtime(true);

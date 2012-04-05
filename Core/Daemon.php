@@ -11,8 +11,6 @@ declare(ticks = 5) ;
  * @abstract
  *
  *
- * @todo Remove send_alert && email_distribution_list in favor of on_restart, on_error etc
- * @todo 0 as an acceptable loop interval meaning: instantly loop
  */
 abstract class Core_Daemon
 {
@@ -32,8 +30,10 @@ abstract class Core_Daemon
     const ON_INIT       = 2;
     const ON_RUN        = 3;
     const ON_FORK       = 4;
-    const ON_RESTART    = 5;
-    const ON_SHUTDOWN   = 6;
+    const ON_NEWPID     = 5;
+    const ON_RESTART    = 9;
+    const ON_SHUTDOWN   = 10;
+
 
     /**
      * A stdClass array of all Workers created by the worker() method
@@ -49,14 +49,14 @@ abstract class Core_Daemon
 
     /**
      * An array of instructions that's displayed when the -i param is passed into the daemon.
-     * Help's sysadmins and users of your daemons get installation correct. Guide them to set
-     * correct permissions, crontab entries, init.d scripts, etc
+     * Helps sysadmins and users of your daemons get installation correct. Guide them to set
+     * correct permissions, supervisor/monit setup, crontab entries, init.d scripts, etc
      * @var Array
      */
     protected $install_instructions = array();
 
     /**
-     * The frequency at which the run() loop will run (and execute() method will called). After exectute() is called, any remaining time in that
+     * The frequency at which the run() loop will run (and execute() method will called). After execute() is called, any remaining time in that
      * interval will be spent in a sleep state. If there is no remaining time, that will be logged as an error condition.
      * @example $this->loop_interval = 300; // execute() will be called once every 5 minutes
      * @example $this->loop_interval = 0.1; // execute() will be called 10 times every second
@@ -171,18 +171,20 @@ abstract class Core_Daemon
      */
     protected function load_plugins()
     {
+
     }
 
+
+
     /**
-     * Return an instance of the Core_Daemon signleton
+     * Return an instance of the Core_Daemon singleton
      * @return Core_Daemon
      */
     public static function getInstance()
     {
-        static $o = false;
+        static $o = null;
 
-        if ($o)
-            return $o;
+        if ($o) return $o;
 
         try
         {
@@ -210,17 +212,18 @@ abstract class Core_Daemon
     }
 
 
+
     protected function __construct()
     {
-        // We have to set any installaton instructions before we call getopt()
-        $this->install_instructions[] = "Add to Supervisor, Monit or add Crontab Entry:\n   * * * * * " . $this->getFilename();
+        // We have to set any installation instructions before we call getopt()
+        $this->install_instructions[] = "Add to Supervisor or Monit, or add a Crontab Entry:\n   * * * * * " . $this->getFilename();
 
         $this->start_time = time();
         $this->pid = getmypid();
         $this->getopt();
         $this->register_signal_handlers();
 
-        $this->worker = new stdClass;
+        $this->worker = new stdClass; // @todo yeah, probably not
     }
 
     /**
@@ -235,7 +238,7 @@ abstract class Core_Daemon
         if (empty(self::$filename))
             $errors[] = 'Filename is Missing: setFilename Must Be Called Before an Instance can be Initialized';
 
-        if (empty($this->loop_interval) || is_numeric($this->loop_interval) == false)
+        if (is_numeric($this->loop_interval) == false)
             $errors[] = "Invalid Loop Interval: $this->loop_interval";
 
         if (empty($this->auto_restart_interval) || is_numeric($this->auto_restart_interval) == false)
@@ -250,7 +253,6 @@ abstract class Core_Daemon
         if (version_compare(PHP_VERSION, '5.3.0') < 0)
             $errors[] = "PHP 5.3 or Higher is Required";
 
-        // Poll any plugins for errors
         foreach ($this->plugins as $plugin)
             foreach ($this->{$plugin}->check_environment() as $error)
                 $errors[] = "[$plugin] $error";
@@ -269,16 +271,15 @@ abstract class Core_Daemon
      */
     private function init()
     {
-        $this->dispatch(array(self::ON_INIT));
-
-        // Setup any registered plugins
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->setup();
 
-        // Run the per-daemon setup
-        $this->setup();
+        // Our current use of the ON_INIT event is in the Lock provider plugins -- so we can prevent a duplicate daemon
+        // process from starting-up. In that case, we want to do that check as early as possible. To accomplish that,
+        // the plugin setup has to happen first -- to ensure the Lock provider plugins have a chance to load.
+        $this->dispatch(array(self::ON_INIT));
 
-        // We're all Done. Print some info to the screen and be on our way.
+        $this->setup();
         if ($this->daemon == false)
             $this->log('Note: Auto-Restart feature is disabled when not run in Daemon mode (using -d).');
 
@@ -330,11 +331,8 @@ abstract class Core_Daemon
                 $this->timer(true);
                 $this->auto_restart();
                 $this->dispatch(array(self::ON_RUN));
-
-                foreach ($this->workers as &$worker) $worker->run();
                 $this->execute();
                 $this->timer();
-
                 pcntl_wait($status, WNOHANG);
             }
         }
@@ -379,7 +377,6 @@ abstract class Core_Daemon
             unset($this->callbacks[$event[0]][$event[1]]);
             return $cb;
         }
-
         return null;
     }
 
@@ -418,10 +415,10 @@ abstract class Core_Daemon
      * If the task uses MySQL or certain other outside resources, the connection will have to be re-established in the child process
      * so in those cases, set the run_setup flag.
      *
-     * @param Function $callback        A valid PHP callback or closure.
-     * @param Array $params                The params that will be passed into the Callback when it's called.
+     * @param callable $callback        A valid PHP callback or closure.
+     * @param Array $params             The params that will be passed into the Callback when it's called.
      * @param boolean $run_setup        After the child process is created, it will re-run the setup() method.
-     * @return boolean                    Cannot know if the callback worked or not, but returns true if the fork was successful.
+     * @return boolean                  Cannot know if the callback worked or not, but returns true if the fork was successful.
      */
     public function fork($callback, array $params = array(), $run_setup = false)
     {
@@ -430,6 +427,7 @@ abstract class Core_Daemon
         switch ($pid)
         {
             case -1:
+                // Parent Process - Fork Failed
                 if ($callback instanceof Closure)
                     $msg = 'Fork Request Failed. Uncalled Closure';
                 else
@@ -444,9 +442,9 @@ abstract class Core_Daemon
                 $this->is_parent = false;
                 $this->pid = getmypid();
 
-                // Trunc the plugins array, so that way
+                // Truncate the plugins array, so that way
                 // when this fork dies and the __destruct runs, it will only shut down
-                // plugins that were added to the fork explicitely in the setup() call below
+                // plugins that were added to this forked instance explicitly
                 $this->plugins = array();
 
                 if ($run_setup) {
@@ -516,7 +514,7 @@ abstract class Core_Daemon
                     $handle = @fopen($this->log_file(), 'a+');
 
                 if ($handle === false) {
-                    // If the log file can't be written-to, dump the errors to stdout with the explination...
+                    // If the log file can't be written-to, dump the errors to stdout with the explanation...
                     if ($raise_logfile_error) {
                         $raise_logfile_error = false;
                         $this->log('Unable to write logfile at ' . $this->log_file() . '. Redirecting errors to stdout.');
@@ -555,7 +553,7 @@ abstract class Core_Daemon
     {
         // Log the Error
         $this->log($log_message, true);
-        $this->log(get_class($this) . ' is Shutting Down...');
+        $this->log(get_called_class($this) . ' is Shutting Down...');
 
         // If this process has just started, we have to just log and exit. However, if it was running
         // for a while, we will try to sleep for just a moment in hopes that, if an external resource caused the
@@ -600,6 +598,27 @@ abstract class Core_Daemon
     }
 
     /**
+     * Register Signal Handlers
+     * Note that SIGKILL is missing -- afaik this is uncapturable in a PHP script, which makes sense.
+     * @return void
+     */
+    private function register_signal_handlers()
+    {
+        $signals = array(
+            // Handled by Core_Daemon:
+            SIGTERM, SIGINT, SIGUSR1, SIGHUP,
+
+            // Ignored by Core_Daemon -- register callback ON_SIGNAL to listen for them:
+            SIGUSR2, SIGCONT, SIGQUIT, SIGILL, SIGTRAP, SIGABRT, SIGIOT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGALRM,
+            SIGCHLD, SIGCONT, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF,
+            SIGWINCH, SIGPOLL, SIGIO, SIGPWR, SIGSYS, SIGBABY, SIGSTKFLT, SIGCLD
+        );
+
+        foreach($signals as $signal)
+            pcntl_signal($signal, array($this, 'signal'));
+    }
+
+    /**
      * Get the fully qualified command used to start (and restart) the daemon
      *
      * @param string $options    An options string to use in place of whatever options were present when the daemon was started.
@@ -625,20 +644,6 @@ abstract class Core_Daemon
     }
 
     /**
-     * Register Signal Handlers
-     * @return void
-     */
-    private function register_signal_handlers()
-    {
-        pcntl_signal(SIGTERM, array($this, "signal"));
-        pcntl_signal(SIGINT,  array($this, "signal"));
-        pcntl_signal(SIGUSR1, array($this, "signal"));
-        pcntl_signal(SIGUSR2, array($this, "signal"));
-        pcntl_signal(SIGCONT, array($this, "signal"));
-        pcntl_signal(SIGHUP,  array($this, "signal"));
-    }
-
-    /**
      * This will dump various runtime details to the log.
      * @return void
      */
@@ -654,8 +659,7 @@ abstract class Core_Daemon
         $x[] = "Daemon Mode: " . (int)$this->daemon();
         $x[] = "Shutdown Signal: " . (int)$this->shutdown();
         $x[] = "Verbose Mode: " . (int)$this->verbose();
-        $x[] = "Email On Error: " . implode(', ', $this->email_distribution_list);
-        $x[] = "Loaded Plugin: " . implode(', ', $this->plugins);
+        $x[] = "Loaded Plugins: " . implode(', ', $this->plugins);
         $x[] = "Named Workers: " . implode(', ', array_keys((array)$this->workers));
         $x[] = "Memory Usage: " . memory_get_usage(true);
         $x[] = "Memory Peak Usage: " . memory_get_peak_usage(true);
@@ -690,11 +694,12 @@ abstract class Core_Daemon
             usleep(2000);
             if ($this->loop_interval > 0)
                 $this->log('Run Loop Taking Too Long. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);
+
             return;
         }
 
         if ($duration > ($this->loop_interval * 0.9))
-            $this->log('Warning: Run Loop Near Max Allowed Duration. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);
+            $this->log('Warning: Run Loop Near Max Allowed Duration. Duration: ' . $duration . ' Interval: ' . $this->loop_interval);
 
         // usleep accepts microseconds, 1 second in microseconds = 1,000,000
         usleep(($this->loop_interval - $duration) * 1000000);
@@ -726,7 +731,7 @@ abstract class Core_Daemon
     private function restart()
     {
         if ($this->is_parent == false)
-            return false;
+            return;
 
         $this->dispatch(array(self::ON_RESTART));
         $this->log('Restart Happening Now...');
@@ -751,12 +756,14 @@ abstract class Core_Daemon
      *
      * @example load_plugin('Plugin_SomeClass')
      * @example load_plugin('Lock_File')
-     * @example load_plugin('SomeDirectory_SomeClass')
+     * @example load_plugin('SomeDirectory_SomeClass', array(), 'SomeClass')
      * @param string $class
-     * @return void
+     * @param array $args   Optional array of arguments passed to the Plugin constructor
+     * @param bool $alias   Optional alias you can give to the plugin.
+     * @return mixed
      * @throws Exception
      */
-    protected function load_plugin($class, $alias = false)
+    protected function load_plugin($class, Array $args = array(), $alias = false)
     {
         $qualified_class = 'Core_' . $class;
 
@@ -764,10 +771,10 @@ abstract class Core_Daemon
             $interfaces = class_implements($qualified_class, true);
             if (is_array($interfaces) && isset($interfaces['Core_PluginInterface'])) {
                 if ($alias) {
-                    $this->{$alias} = new $qualified_class($this->getInstance());
+                    $this->{$alias} = new $qualified_class($this->getInstance(), $args);
                     $this->plugins[] = $alias;
                 } else {
-                    $this->{$class} = new $qualified_class($this->getInstance());
+                    $this->{$class} = new $qualified_class($this->getInstance(), $args);
                     $this->plugins[] = $class;
                 }
                 return;
@@ -801,7 +808,7 @@ abstract class Core_Daemon
             $this->daemon = true;
 
             $this->pid = getmypid(); // We have a new pid now
-            $this->lock->pid = getmypid();
+            $this->dispatch(array(self::ON_NEWPID), array(getmypid()));
         }
 
         if (isset($opts['v']) && $this->daemon == false)

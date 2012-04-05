@@ -1,9 +1,9 @@
 <?php
 
 /**
- * This is the Lock Provider that isn't.
- * It doesn't actually do anything. It's great for development or for running any daemons
- * where you are indifferent to multiple running instances
+ * Implements the lock provider and plugin interfaces to make development easier.
+ * Before version 2.0 of PHP Simple Daemon a lock provider was required, so this was used to satisfy that requirement
+ * during development.
  *  
  * @author Shane Harter
  * @since 2011-07-28

@@ -18,22 +18,18 @@ class App_Example extends Core_Daemon
 	{
 		// We want to our daemon to loop once per second.
 		$this->loop_interval = 1.00;
-				
-		// Set our Lock Provider
-		$this->load_plugin('Lock_File');
-
-		// Load our email-on-error queue into the daemon. It will use it when it logs caught/user-defined errors.
-		$this->email_distribution_list = email_on_error();
-		
 		parent::__construct();
 	}
 
 	protected function load_plugins()
 	{
+        // Set our Lock Provider
+        $this->load_plugin('Lock_File');
+
 		// Use the INI plugin to provide an easy way to include config settings
-		$this->load_plugin('Plugin_Ini');
-		$this->Plugin_Ini->filename = 'config.ini';
-		$this->Plugin_Ini->required_sections = array('example_section');
+		$this->load_plugin('Plugin_Ini', array(), 'ini');
+		$this->ini->filename = 'config.ini';
+		$this->ini->required_sections = array('example_section');
 	}
 	
 	/**
@@ -46,7 +42,7 @@ class App_Example extends Core_Daemon
 		// Use setup() to load any libraries your job needs, make a database connection, etc. 
 		// If you have any troubles, throw an exception.
 		
-		// If you use the fork() method to parallelize tasks, note that fork() includes an optional third true/false paramter 
+		// If you use the fork() method to parallelize tasks, note that fork() includes an optional third true/false parameter
 		// used to have the daemon re-run this setup() method after the fork. You should do this if you want to setup resources here
 		// that will then be available in the child process. 
 			
@@ -96,7 +92,7 @@ class App_Example extends Core_Daemon
 		return;
 		
 		// The Ini plugin implements the SPL ArrayAccess interface, so in your execute() method you can access the data like this: 
-		$example_key = $this->Ini['example_section']['example_key'];
+		$example_key = $this->ini['example_section']['example_key'];
 					
 		$this->log($example_key);
 		
