@@ -10,7 +10,7 @@ class App_Example extends Core_Daemon
 	 * Use the constructor only to set runtime settings, anything else you need to prepare your 
 	 * daemon should should go in the setup() method. 
 	 * 
-	 * Any Plugins should be loaded in the setup() method.
+	 * Any Plugin should be loaded in the setup() method.
 	 * 
 	 * IMPORTANT to remember to always invoke the parent constructor.  
 	 */
@@ -20,10 +20,8 @@ class App_Example extends Core_Daemon
 		$this->loop_interval = 1.00;
 				
 		// Set our Lock Provider
-		$this->lock = new Core_Lock_File;
-		$this->lock->daemon_name = __CLASS__;
-		$this->lock->ttl = $this->loop_interval;
-        
+		$this->load_plugin('Lock_File');
+
 		// Load our email-on-error queue into the daemon. It will use it when it logs caught/user-defined errors.
 		$this->email_distribution_list = email_on_error();
 		
@@ -33,9 +31,9 @@ class App_Example extends Core_Daemon
 	protected function load_plugins()
 	{
 		// Use the INI plugin to provide an easy way to include config settings
-		$this->load_plugin('Ini');
-		$this->Ini->filename = 'config.ini';
-		$this->Ini->required_sections = array('example_section');
+		$this->load_plugin('Plugin_Ini');
+		$this->Plugin_Ini->filename = 'config.ini';
+		$this->Plugin_Ini->required_sections = array('example_section');
 	}
 	
 	/**
