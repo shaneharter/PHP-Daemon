@@ -22,9 +22,10 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 
     public function __construct(Core_Daemon $daemon, Array $args = array()) {
         parent::__construct($daemon, $args);
-        if (isset($args['path'])) {
+        if (isset($args['path']))
             $this->path = $args['path'];
-        }
+        else
+            $this->path = dirname($daemon->filename());
     }
 
 	public function setup()

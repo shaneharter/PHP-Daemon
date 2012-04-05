@@ -24,10 +24,10 @@ class App_Example extends Core_Daemon
 	protected function load_plugins()
 	{
         // Set our Lock Provider
-        $this->load_plugin('Lock_File');
+        $this->plugin('Lock_File');
 
 		// Use the INI plugin to provide an easy way to include config settings
-		$this->load_plugin('Plugin_Ini', array(), 'ini');
+		$this->plugin('Plugin_Ini', array(), 'ini');
 		$this->ini->filename = 'config.ini';
 		$this->ini->required_sections = array('example_section');
 	}

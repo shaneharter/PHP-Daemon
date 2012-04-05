@@ -160,6 +160,10 @@ abstract class Core_Daemon
      * Return a log file name that will be used by the log() method.
      * You could hard-code a string like './log', create a simple log rotator using the date() method, etc, etc
      *
+     * Note: For performance, the log file handle is kept open until the daemon shuts down. So this method will only
+     * be called once, during daemon setup. If you want to rotate logs every hour, for example, you can either
+     * overload the log() method or use the auto_restart_interval to restart the daemon every hour.
+     *
      * @return string
      */
     abstract protected function log_file();
@@ -194,7 +198,7 @@ abstract class Core_Daemon
             $o->init();
         }
         catch (Exception $e)
-        {
+        {~
             $o->fatal_error($e->getMessage());
         }
 
@@ -754,16 +758,16 @@ abstract class Core_Daemon
      * passed to the plugin constructor. If an alias is given, it will be used to instantiate the class as
      * $this->{$alias} = $plugin. If no alias is given, it uses the value passed in as $class, eg $this->{$class}
      *
-     * @example load_plugin('Plugin_SomeClass')
-     * @example load_plugin('Lock_File')
-     * @example load_plugin('SomeDirectory_SomeClass', array(), 'SomeClass')
+     * @example plugin('Plugin_SomeClass')
+     * @example plugin('Lock_File')
+     * @example plugin('SomeDirectory_SomeClass', array(), 'SomeClass')
      * @param string $class
      * @param array $args   Optional array of arguments passed to the Plugin constructor
      * @param bool $alias   Optional alias you can give to the plugin.
      * @return mixed
      * @throws Exception
      */
-    protected function load_plugin($class, Array $args = array(), $alias = false)
+    protected function plugin($class, Array $args = array(), $alias = false)
     {
         $qualified_class = 'Core_' . $class;
 
@@ -937,6 +941,15 @@ exit $RETVAL',
     public function loop_interval()
     {
         return ($this->loop_interval);
+    }
+
+    /**
+     * Return the daemon's filename
+     * @return integer
+     */
+    public function filename()
+    {
+        return self::$filename;
     }
 
     /**

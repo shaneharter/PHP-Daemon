@@ -82,12 +82,12 @@ class Core_Worker
 	{
 		
 	}
-	
+	~
 	private function daemon()
 	{
 		return $this->daemon_name::getInstance();
 	}
-	
+
 	public function execute()
 	{
 		if ($this->state == Core_Worker::Core_Worker_Running)
