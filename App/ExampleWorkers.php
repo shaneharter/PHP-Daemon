@@ -24,6 +24,9 @@ class App_ExampleWorkers extends Core_Daemon
     protected function execute()
     {
         $this->log('Look, Ma! I did it.');
+
+        if ($this->runtime() > 10)
+            $this->restart();
     }
 
     protected function log_file()

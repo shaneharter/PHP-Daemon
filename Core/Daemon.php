@@ -31,7 +31,6 @@ abstract class Core_Daemon
     const ON_RUN        = 3;
     const ON_FORK       = 4;
     const ON_PIDCHANGE  = 5;
-    const ON_RESTART    = 9;
     const ON_SHUTDOWN   = 10;
 
 
@@ -290,6 +289,7 @@ abstract class Core_Daemon
 
     public function __destruct()
     {
+        $this->dispatch(array(self::ON_SHUTDOWN));
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->teardown();
 
@@ -467,7 +467,7 @@ abstract class Core_Daemon
      * very naturally.
      *
      * @param String $name            The name of the worker -- Will be instantiated at $this->{$name}
-     * @param Function $function    A valid callback or closure
+     * @param Function $function      A valid callback or closure
      * @return Core_Worker            Returns a Core_Worker class that can be used to interact with the Worker
      */
     protected function worker($name, $function)
@@ -504,6 +504,7 @@ abstract class Core_Daemon
                     // If the log file can't be written-to, dump the errors to stdout with the explanation...
                     if ($raise_logfile_error) {
                         $raise_logfile_error = false;
+                        echo $header;
                         $this->log('Unable to write logfile at ' . $this->log_file() . '. Redirecting errors to stdout.');
                     }
 
@@ -542,9 +543,6 @@ abstract class Core_Daemon
         $this->log($log_message, true);
         $this->log(get_class($this) . ' is Shutting Down...');
 
-        // If this process has just started, we have to just log and exit. However, if it was running
-        // for a while, we will try to sleep for just a moment in hopes that, if an external resource caused the
-        // error, it'll free itself. Then we try to restart.
         $delay = 2;
         if (($this->runtime() + $delay) > self::MIN_RESTART_SECONDS) {
             sleep($delay);
@@ -608,7 +606,6 @@ abstract class Core_Daemon
 
     /**
      * Get the fully qualified command used to start (and restart) the daemon
-     *
      * @param string $options    An options string to use in place of whatever options were present when the daemon was started.
      * @return string
      */
@@ -633,6 +630,7 @@ abstract class Core_Daemon
 
     /**
      * This will dump various runtime details to the log.
+     * @example $ kill -10 [pid]
      * @return void
      */
     private function dump()
@@ -669,8 +667,7 @@ abstract class Core_Daemon
             return $start_time = microtime(true);
 
         // End the Stop Watch
-        // Calculate the duration. We want to run the code once for every $this->loop_interval. We should sleep for any part of
-        // the loop_interval that's left over. If it took longer than the loop_interval, log it and return immediately.
+        // Calculate the duration. If it took longer than the loop_interval, log it and return immediately.
         if (is_float($start_time) == false)
             $this->fatal_error('An Error Has Occurred: The timer() method Failed. Invalid Start Time: ' . $start_time);
 
@@ -704,7 +701,6 @@ abstract class Core_Daemon
         if ($this->daemon == false)
             return false;
 
-        // We have an Auto Kill mechanism to allow the system to restart itself when in daemon mode
         if ($this->runtime() < $this->auto_restart_interval || $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
             return false;
 
@@ -716,18 +712,15 @@ abstract class Core_Daemon
      * is encountered after it's been running for a while, it will attempt to re-start.
      * @return void;
      */
-    private function restart()
+    public function restart()
     {
         if ($this->is_parent == false)
             return;
 
-        $this->dispatch(array(self::ON_RESTART));
         $this->log('Restart Happening Now...');
+        foreach($this->plugins as $plugin)
+            $this->{$plugin}->teardown();
 
-        // Then remove the existing lock that we set so the new process doesn't see it and auto-kill itself.
-        $this->lock->teardown();
-
-        // Now do the restart and die
         // Close the resource handles to prevent this process from hanging on the exec() output.
         if (is_resource(STDOUT)) fclose(STDOUT);
         if (is_resource(STDERR)) fclose(STDERR);
