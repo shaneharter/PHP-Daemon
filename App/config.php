@@ -20,22 +20,3 @@ function __autoload($className)
     $classFile = str_replace("_", "/", $className) . ".php";
     require_once $classFile;
 }
-
-
-/**
- * Pass as many email addresses as you want as individual arguments. 
- * When you call the function without any params, all stored email addresses will be returned.  
- * @return Array
- */
-function email_on_error()
-{
-	static $queue = array();
-
-	if (func_num_args() == 0)
-		return $queue;
-
-	$foo = $queue;
-	$queue = func_get_args();
-		
-	return $foo;
-}

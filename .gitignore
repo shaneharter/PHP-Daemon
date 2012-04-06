@@ -26,3 +26,5 @@ node_modules/
 tmp/
 .idea
 test.php
+example_logs
+*.daemon_lock

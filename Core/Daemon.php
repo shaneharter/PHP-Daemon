@@ -30,7 +30,7 @@ abstract class Core_Daemon
     const ON_INIT       = 2;
     const ON_RUN        = 3;
     const ON_FORK       = 4;
-    const ON_NEWPID     = 5;
+    const ON_PIDCHANGE  = 5;
     const ON_RESTART    = 9;
     const ON_SHUTDOWN   = 10;
 
@@ -223,9 +223,8 @@ abstract class Core_Daemon
         $this->install_instructions[] = "Add to Supervisor or Monit, or add a Crontab Entry:\n   * * * * * " . $this->getFilename();
 
         $this->start_time = time();
-        $this->pid = getmypid();
+        $this->pid(getmypid());
         $this->getopt();
-        $this->register_signal_handlers();
 
         $this->worker = new stdClass; // @todo yeah, probably not
     }
@@ -275,6 +274,8 @@ abstract class Core_Daemon
      */
     private function init()
     {
+        $this->register_signal_handlers();
+
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->setup();
 
@@ -361,7 +362,7 @@ abstract class Core_Daemon
         if (!is_callable($callback))
             throw new Exception(__METHOD__ . ' Failed. Second Argument Must be Callable.');
 
-        if (!is_array($this->callbacks[$event]))
+        if (!isset($this->callbacks[$event]))
             $this->callbacks[$event] = array();
 
         $this->callbacks[$event][] = $callback;
@@ -393,25 +394,10 @@ abstract class Core_Daemon
     protected function dispatch(Array $event, Array $args = array())
     {
         if (isset($event[0]) && isset($event[1]) && isset($this->callbacks[$event[0]][$event[1]]))
-            try {
-                call_user_func_array($this->callbacks[$event[0]][$event[1]], $args);
-            } catch (Exception $e) {
-                $this->log(sprintf(
-                    'Exception thrown in callback "%s" for event type "%s": %s - File: %s Line: %s',
-                    $event[1], $event[0], $e->getMessage(), $e->getFile(), $e->getLine()
-                ));
-            }
-
-        elseif (isset($event[0]) && !isset($event[1]))
+            call_user_func_array($this->callbacks[$event[0]][$event[1]], $args);
+        elseif (isset($event[0]) && !isset($event[1]) && isset($this->callbacks[$event[0]]))
             foreach($this->callbacks[$event[0]] as $id => $callback)
-                try {
-                    call_user_func_array($callback, $args);
-                } catch (Exception $e) {
-                    $this->log(sprintf(
-                        'Exception thrown in callback "%s"  for event type "%s": %s - File: %s Line: %s',
-                        $id, $event[0], $e->getMessage(), $e->getFile(), $e->getLine()
-                    ));
-                }
+                call_user_func_array($callback, $args);
     }
 
     /**
@@ -557,7 +543,7 @@ abstract class Core_Daemon
     {
         // Log the Error
         $this->log($log_message, true);
-        $this->log(get_called_class($this) . ' is Shutting Down...');
+        $this->log(get_class($this) . ' is Shutting Down...');
 
         // If this process has just started, we have to just log and exit. However, if it was running
         // for a while, we will try to sleep for just a moment in hopes that, if an external resource caused the
@@ -614,12 +600,13 @@ abstract class Core_Daemon
 
             // Ignored by Core_Daemon -- register callback ON_SIGNAL to listen for them:
             SIGUSR2, SIGCONT, SIGQUIT, SIGILL, SIGTRAP, SIGABRT, SIGIOT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGALRM,
-            SIGCHLD, SIGCONT, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF,
+            SIGCHLD, SIGCONT, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF,
             SIGWINCH, SIGPOLL, SIGIO, SIGPWR, SIGSYS, SIGBABY, SIGSTKFLT, SIGCLD
         );
 
-        foreach($signals as $signal)
+        foreach($signals as $signal) {
             pcntl_signal($signal, array($this, 'signal'));
+        }
     }
 
     /**
@@ -772,6 +759,7 @@ abstract class Core_Daemon
         $qualified_class = 'Core_' . $class;
 
         if (class_exists($qualified_class, true)) {
+
             $interfaces = class_implements($qualified_class, true);
             if (is_array($interfaces) && isset($interfaces['Core_PluginInterface'])) {
                 if ($alias) {
@@ -793,16 +781,16 @@ abstract class Core_Daemon
      */
     protected function getopt()
     {
-        $opts = getopt("HiIdvp:");
+        $opts = getopt('HiI:o:dvp:', array('install'));
 
-        if (isset($opts["H"]))
+        if (isset($opts['H']))
             $this->show_help();
 
-        if (isset($opts["i"]))
+        if (isset($opts['i']))
             $this->show_install_instructions();
 
-        if (isset($opts["I"]))
-            $this->create_init_script();
+        if (isset($opts['I']))
+            $this->create_init_script($opts['I'], isset($opts['install']));
 
         if (isset($opts['d'])) {
             $pid = pcntl_fork();
@@ -810,9 +798,7 @@ abstract class Core_Daemon
                 exit();
 
             $this->daemon = true;
-
-            $this->pid = getmypid(); // We have a new pid now
-            $this->dispatch(array(self::ON_NEWPID), array(getmypid()));
+            $this->pid(getmypid()); // We have a new pid now
         }
 
         if (isset($opts['v']) && $this->daemon == false)
@@ -835,7 +821,7 @@ abstract class Core_Daemon
      * @param string $msg
      * @return void
      */
-    protected function show_help($msg = "")
+    protected function show_help($msg = '')
     {
         if ($msg) {
             echo "ERROR:\n";
@@ -844,10 +830,10 @@ abstract class Core_Daemon
 
         echo get_class($this) . "\n\n";
         echo "USAGE:\n";
-        echo " # " . basename(self::$filename) . " -H | -i | [-d] [-v] [-p PID_FILE]\n\n";
+        echo " # " . basename(self::$filename) . " -H | -i | -I TEMPLATE_NAME | [-d] [-v] [-p PID_FILE]\n\n";
         echo "OPTIONS:\n";
         echo " -i Print any daemon install instructions to the screen\n";
-        echo " -I Create init script in /etc/init.d\n";
+        echo " -I Create init/config script from a template in the /Templates directory\n";
         echo " -d Daemon, detach and run in the background\n";
         echo " -v Verbose, echo any logged messages. Ignored in Daemon mode.\n";
         echo " -H Shows this help\n";
@@ -870,57 +856,49 @@ abstract class Core_Daemon
         exit();
     }
 
-    protected function create_init_script()
+    /**
+     * Create and output an init script for this daemon to provide start/stop/restart functionality.
+     * Uses templates in the /Templates directory to produce scripts for different process managers and linux distros.
+     * When you create an init script, you should chmod it to 0755.
+     *
+     * @param string $template The name of a template from the /Templates directory
+     * @param bool $install When true, the script will be created in the init.d directory and final setup instructions will be printed to stdout
+     * @return void
+     */
+    protected function create_init_script($template_name, $install = false)
     {
+        $template = dirname($this->filename()) . '/Templates/' . $template_name;
 
-        $script = '/etc/init.d/' . get_class($this);
-        $script_contents = sprintf(
-            '#!/bin/bash
-#
-# %1$s
-#
-# chkconfig: - 85 15
-# description: start, stop, restart %1$s
-#
+        if (!file_exists($template))
+            $this->show_help("Invalid Template Name '{$template_name}'");
 
-RETVAL=0
-
-case "$1" in
-    start)
-      %2$s
-      RETVAL=$?
-  ;;
-    stop)
-      kill `cat /var/run/%1$s.pid`
-      RETVAL=$?
-  ;;
-    restart)
-      kill `cat /var/run/%1$s.pid`
-      %2$s
-      RETVAL=$?
-  ;;
-    status)
-      RETVAL=$?
-  ;;
-    *)
-      echo "Usage: %1$s {start|stop|restart}"
-      exit 1
-  ;;
-esac
-
-exit $RETVAL',
-            get_class($this),
-            $this->getFilename(sprintf('-d -p /var/run/%s.pid', get_class($this)))
+        $daemon = get_class($this);
+        $script = sprintf(
+            file_get_contents($template),
+            $daemon,
+            $this->getFilename("-d -p /var/run/{$daemon}.pid")
         );
 
-        file_put_contents($script, $script_contents);
-        chmod($script, 0755);
+        if (!$install) {
+            echo $script;
+            exit;
+        }
 
-        if (file_exists($script) == false || is_executable($script) == false)
+        $filename = '/etc/init.d/' . $daemon;
+        @file_put_contents($filename, $script);
+        @chmod($filename, 0755);
+
+        if (file_exists($filename) == false || is_executable($filename) == false)
             $this->show_help("* Must Be Run as Sudo\n * Could Not Write to init.d Directory");
 
         echo "Init Scripts Created Successfully!";
-        echo "\n - To run on startup on RedHat/CentOS:  sudo chkconfig --add {$script}";
+
+        // Print out template-specific setup instructions
+        switch($template_name) {
+            case 'ubuntu':
+                echo "\n - To run on startup on RedHat/CentOS:  sudo chkconfig --add {$script}";
+                break;
+        }
         echo "\n";
         exit();
     }
@@ -931,7 +909,7 @@ exit $RETVAL',
      */
     public function runtime()
     {
-        return (time() - $this->start_time);
+        return time() - $this->start_time;
     }
 
     /**
@@ -940,7 +918,7 @@ exit $RETVAL',
      */
     public function loop_interval()
     {
-        return ($this->loop_interval);
+        return $this->loop_interval;
     }
 
     /**
@@ -959,7 +937,7 @@ exit $RETVAL',
      */
     protected function is_parent($set_value = null)
     {
-        if ($set_value === false || $set_value === true)
+        if (is_bool($set_value))
             $this->is_parent = $set_value;
 
         return $this->is_parent;
@@ -971,7 +949,7 @@ exit $RETVAL',
      */
     protected function shutdown($set_value = null)
     {
-        if ($set_value === false || $set_value === true)
+        if (is_bool($set_value))
             $this->shutdown = $set_value;
 
         return $this->shutdown;
@@ -983,7 +961,7 @@ exit $RETVAL',
      */
     protected function daemon($set_value = null)
     {
-        if ($set_value === false || $set_value === true)
+        if (is_bool($set_value))
             $this->daemon = $set_value;
 
         return $this->daemon;
@@ -995,7 +973,7 @@ exit $RETVAL',
      */
     protected function verbose($set_value = null)
     {
-        if ($set_value === false || $set_value === true)
+        if (is_bool($set_value))
             $this->verbose = $set_value;
 
         return $this->verbose;
@@ -1007,10 +985,11 @@ exit $RETVAL',
      */
     protected function pid($set_value = null)
     {
-        if (is_integer($set_value))
+        if (is_integer($set_value)) {
             $this->pid = $set_value;
+            $this->dispatch(array(self::ON_PIDCHANGE), array($set_value));
+        }
 
         return $this->pid;
     }
-
 }

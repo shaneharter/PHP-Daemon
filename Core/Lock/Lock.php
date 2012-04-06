@@ -26,7 +26,7 @@ abstract class Core_Lock_Lock implements Core_PluginInterface
 
 	/**
 	 * This is added to the const LOCK_TTL_SECONDS to determine how long the lock should last -- any lock provider should be
-	 * self-expiring using these TTL's. This is done to minimize liklihood of errant locks being left behind after a kill or crash that
+	 * self-expiring using these TTL's. This is done to minimize likelihood of errant locks being left behind after a kill or crash that
      * would have to be manually removed.
      *
 	 * @var decimal 	Number of seconds the lock should be active -- padded with Core_Lock_Lock::LOCK_TTL_PADDING_SECONDS
@@ -42,16 +42,16 @@ abstract class Core_Lock_Lock implements Core_PluginInterface
 	public function __construct(Core_Daemon $daemon, Array $args = array())
 	{
 		$this->pid = getmypid();
-        $this->daemon_name = get_called_class($daemon);
+        $this->daemon_name = get_class($daemon);
         $this->ttl = $daemon->loop_interval();
         $this->args = $args;
 
-        $daemon->on(Core_Daemon::ON_INIT, array($this, 'check'));
-        $daemon->on(Core_Daemon::ON_RUN,  array($this, 'check'));
+        $daemon->on(Core_Daemon::ON_INIT, array($this, 'set'));
+        $daemon->on(Core_Daemon::ON_RUN,  array($this, 'set'));
 
         $that = $this;
-        $daemon->on(Core_Daemon::ON_NEWPID, function($args) use($that) {
-            if ($args[0])
+        $daemon->on(Core_Daemon::ON_PIDCHANGE, function($args) use($that) {
+            if (!empty($args[0]))
                 $that->pid = $args[0];
         });
 	}

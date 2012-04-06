@@ -38,8 +38,8 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 
 	public function teardown()
 	{
-		// If the lockfile was set by this process, remove it 
-		if ($this->pid == file_get_contents($this->filename))
+		// If the lockfile was set by this process, remove it. If filename is empty, this is being called before setup()
+		if (!empty($this->filename) && $this->pid == @file_get_contents($this->filename))
 			@unlink($this->filename);
 	}
 	
@@ -47,8 +47,8 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 	{
 		$errors = array();
 		
-		if (is_writable(dirname($this->filename)) == false)
-			$errors[] = 'Lock File "' . $this->filename . '" Not Writable.';
+		if (is_writable($this->path) == false)
+			$errors[] = 'Lock File Path ' . $this->path . ' Not Writable.';
 			
 		return $errors;
 	}
@@ -56,8 +56,8 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_PluginInterface
 	public function set()
 	{
 		$lock = $this->check();
-		
-		if ($lock)
+
+        if ($lock)
 			throw new Exception('Core_Lock_File::set Failed. Additional Lock Detected. PID: ' . $lock);
 
 		// The lock value will contain the process PID

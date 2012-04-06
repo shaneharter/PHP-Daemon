@@ -12,7 +12,7 @@
  * @since 2011/7/30
  *
  */
-class Core_Plugins_Ini implements Core_PluginInterface, ArrayAccess
+class Core_Plugin_Ini implements Core_PluginInterface, ArrayAccess
 {
     /**
      * This is the config file accessed by self::__construct
