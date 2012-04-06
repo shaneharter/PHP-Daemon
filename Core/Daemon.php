@@ -187,7 +187,6 @@ abstract class Core_Daemon
     public static function getInstance()
     {
         static $o = null;
-
         if ($o) return $o;
 
         try
@@ -198,7 +197,7 @@ abstract class Core_Daemon
             $o->init();
         }
         catch (Exception $e)
-        {~
+        {
             $o->fatal_error($e->getMessage());
         }
 
@@ -267,9 +266,7 @@ abstract class Core_Daemon
     }
 
     /**
-     * Check and set the lock provider, Call setup() of any loaded plugins, Call the daemons setup() method.
-     * .
-     *
+     * Call Plugin and Daemon setup methods
      * @return void
      */
     private function init()
@@ -823,22 +820,35 @@ abstract class Core_Daemon
      */
     protected function show_help($msg = '')
     {
+        $out = array('');
+
         if ($msg) {
-            echo "ERROR:\n";
-            echo " " . wordwrap($msg, 72, "\n ") . "\n\n";
+            $out[] =  '';
+            $out[] = 'ERROR:';
+            $out[] = ' ' . wordwrap($msg, 72, "\n ");
         }
 
-        echo get_class($this) . "\n\n";
-        echo "USAGE:\n";
-        echo " # " . basename(self::$filename) . " -H | -i | -I TEMPLATE_NAME | [-d] [-v] [-p PID_FILE]\n\n";
-        echo "OPTIONS:\n";
-        echo " -i Print any daemon install instructions to the screen\n";
-        echo " -I Create init/config script from a template in the /Templates directory\n";
-        echo " -d Daemon, detach and run in the background\n";
-        echo " -v Verbose, echo any logged messages. Ignored in Daemon mode.\n";
-        echo " -H Shows this help\n";
-        echo " -p PID_FILE File to write process ID out to\n";
-        echo "\n";
+        echo get_class($this);
+        $out[] =  'USAGE:';
+        $out[] =  ' # ' . basename(self::$filename) . ' -H | -i | -I TEMPLATE_NAME | [-d] [-v] [-p PID_FILE]';
+        $out[] =  '';
+        $out[] =  'OPTIONS:';
+        $out[] =  ' -H Shows this help';
+        $out[] =  '';
+        $out[] =  ' -i Print any daemon install instructions to the screen';
+        $out[] =  '';
+        $out[] =  ' -I Create init/config script';
+        $out[] =  '    You must pass in a name of a template in the /Templates directory';
+        $out[] =  '    OPTIONS:';
+        $out[] =  '     --install Install the script to /etc/init.d. Otherwise just output the script to stdout.';
+        $out[] =  '';
+        $out[] =  ' -d Daemon, detach and run in the background';
+        $out[] =  ' -v Verbose, echo any logged messages. Ignored in Daemon mode.';
+        $out[] =  ' -p PID_FILE File to write process ID out to';
+        $out[] =  '';
+        $out[] =  '';
+
+        echo implode("\n", $out);
         exit();
     }
 
@@ -867,7 +877,7 @@ abstract class Core_Daemon
      */
     protected function create_init_script($template_name, $install = false)
     {
-        $template = dirname($this->filename()) . '/Templates/' . $template_name;
+        $template = dirname($this->filename()) . '/Core/Templates/' . $template_name;
 
         if (!file_exists($template))
             $this->show_help("Invalid Template Name '{$template_name}'");
@@ -881,6 +891,7 @@ abstract class Core_Daemon
 
         if (!$install) {
             echo $script;
+            echo "\n\n";
             exit;
         }
 
@@ -895,11 +906,11 @@ abstract class Core_Daemon
 
         // Print out template-specific setup instructions
         switch($template_name) {
-            case 'ubuntu':
-                echo "\n - To run on startup on RedHat/CentOS:  sudo chkconfig --add {$script}";
+            case 'init_ubuntu':
+                echo "\n - To run on startup on RedHat/CentOS:  sudo chkconfig --add {$filename}";
                 break;
         }
-        echo "\n";
+        echo "\n\n";
         exit();
     }
 
