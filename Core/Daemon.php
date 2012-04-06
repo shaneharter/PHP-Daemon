@@ -6,11 +6,10 @@ declare(ticks = 5) ;
  * Daemon Base Class - Extend this to build daemons.
  * @uses PHP 5.3 or Higher
  * @author Shane Harter
- * @see https://github.com/shaneharter/PHP-Daemon
+ * @link https://github.com/shaneharter/PHP-Daemon
+ * @see https://github.com/shaneharter/PHP-Daemon/wiki/Daemon-Startup-Order-Explained
  * @singleton
  * @abstract
- *
- *
  */
 abstract class Core_Daemon
 {
@@ -41,12 +40,6 @@ abstract class Core_Daemon
     private $workers;
 
     /**
-     * A lock provider object that extends the Core_Lock_Lock abstract class.
-     * @var Core_Lock_Lock
-     */
-    protected $lock;
-
-    /**
      * An array of instructions that's displayed when the -i param is passed into the daemon.
      * Helps sysadmins and users of your daemons get installation correct. Guide them to set
      * correct permissions, supervisor/monit setup, crontab entries, init.d scripts, etc
@@ -62,7 +55,7 @@ abstract class Core_Daemon
      * @example $this->loop_interval = 0;   // execute() will be called immediately -- There will be no sleep.
      * @var float    The interval in Seconds
      */
-    protected $loop_interval = 0.00;
+    protected $loop_interval = null;
 
     /**
      * The frequency (in seconds) at which the timer will automatically restart the daemon.
@@ -136,6 +129,25 @@ abstract class Core_Daemon
 
 
     /**
+     * Implement this method to load plugins -- including a Lock provider plugin. Called very early in Daemon
+     * instantiation, before the setup() code is called.
+     * @return void
+     */
+    protected function load_plugins()
+    {
+
+    }
+
+    /**
+     * The setup method will contain the one-time setup needs of the daemon.
+     * It will be called as part of the built-in init() method.
+     * Any exceptions thrown from setup() will be logged as Fatal Errors and result in the daemon shutting down.
+     * @return void
+     * @throws Exception
+     */
+    abstract protected function setup();
+
+    /**
      * The execute method will contain the actual function of the daemon.
      * It can be called directly if needed but its intention is to be called every iteration by the ->run() method.
      * Any exceptions thrown from execute() will be logged as Fatal Errors and result in the daemon attempting to restart or shut down.
@@ -145,15 +157,6 @@ abstract class Core_Daemon
      */
     abstract protected function execute();
 
-    /**
-     * The setup method will contain the one-time setup needs of the daemon.
-     * It will be called as part of the built-in init() method.
-     * Any exceptions thrown from setup() will be logged as Fatal Errors and result in the daemon shutting down.
-     *
-     * @return void
-     * @throws Exception
-     */
-    abstract protected function setup();
 
     /**
      * Return a log file name that will be used by the log() method.
@@ -167,15 +170,6 @@ abstract class Core_Daemon
      */
     abstract protected function log_file();
 
-    /**
-     * Implement this method to load plugins -- including a Lock provider plugin. Called very early in Daemon
-     * instantiation, before the setup() code is called.
-     * @return void
-     */
-    protected function load_plugins()
-    {
-
-    }
 
 
 
@@ -846,7 +840,7 @@ abstract class Core_Daemon
     }
 
     /**
-     * Print any install instructions to the screen.
+     * Print any install instructions and Exit.
      * Could be anything from copying init.d scripts, setting crontab entries, creating executable or writable directories, etc.
      * Add instructions from your daemon by adding them one by one: $this->install_instructions[] = 'Do foo'
      * @return void
