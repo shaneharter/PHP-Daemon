@@ -1,5 +1,7 @@
 <?php
 
+ini_set('error_log', '/var/log/phpcli');
+
 date_default_timezone_set('America/New_York');
 
 // Define path to project root directory
@@ -20,3 +22,4 @@ function __autoload($className)
     $classFile = str_replace("_", "/", $className) . ".php";
     require_once $classFile;
 }
+

@@ -1,16 +1,14 @@
 <?php
 
-error_reporting(E_WARNING);
-
-/**
- * You can obviously implement your own error handling strategy and code any way you'd like. But some important points: 
- * 
- * 1. We want a daemon to be very resilient and hard to crash, but when it does crash, we need it to crash loudly. Silent
+/*
+ * A good error handling strategy is important.
+ * 1. We want a daemon to be very resilient and hard to fail fatally, but when it does fail, we need it to fail loudly. Silent
  * failures are my biggest fear. 
  * 
- * 2. You should implement your error handlers as close to line 1 of your app as possible. 
+ * 2. Error handlers are implemented as close to line 1 of your app as possible.
  * 
- * 3. You should implement an error handler, exception handler, and a global shutdown handler. 
+ * 3. We use all the tools PHP gives us: an error handler, an exception handler, and a global shutdown handler.
+ *
  */
 
 /**
@@ -27,7 +25,7 @@ function daemon_error($errno, $errstr, $errfile, $errline)
 	// Respect the error_reporting Level
 	if(($errno & error_reporting()) == 0) 
 		return;
-	
+
 	$is_fatal = false;
 		
     switch ($errno) {
@@ -54,13 +52,11 @@ function daemon_error($errno, $errstr, $errfile, $errline)
     if (ini_get('display_errors'))
     	echo "\n", $message, "\n";
 
-    if (ini_get('log_errors'))
+    if (ini_get('log_errors')) {
         error_log($message);
+    }
         
     if ($is_fatal) {
-    	foreach(email_on_error() as $email_address)
-			mail($email_address, 'Fatal Daemon Error', $message);    	
-    	
     	exit(1);
     }	
 	
@@ -68,7 +64,7 @@ function daemon_error($errno, $errstr, $errfile, $errline)
 }
 
 /**
- * When the process ends check to make sure it wasn't caused by an un-handled error. 
+ * When the process exits, check to make sure it wasn't caused by an un-handled error.
  * This will help us catch nearly all types of php errors. 
  * @return void
  */
@@ -91,5 +87,7 @@ function daemon_shutdown_function()
     }
 }
 
+error_reporting(E_WARNING | E_USER_ERROR);
+error_reporting(E_ALL);
 set_error_handler('daemon_error');
 register_shutdown_function('daemon_shutdown_function');

@@ -69,7 +69,7 @@ abstract class Core_Daemon
      * If the process is forked, this will indicate whether we're still in the parent or not.
      * @var boolean
      */
-    protected $is_parent = true;
+    private $is_parent = true;
 
     /**
      * Timestamp when was this pid started?
@@ -396,6 +396,8 @@ abstract class Core_Daemon
      * If the task uses MySQL or certain other outside resources, the connection will have to be re-established in the child process
      * so in those cases, set the run_setup flag.
      *
+     * @link https://github.com/shaneharter/PHP-Daemon/wiki/Forking-Example
+     *
      * @param callable $callback        A valid PHP callback or closure.
      * @param Array $params             The params that will be passed into the Callback when it's called.
      * @param boolean $run_setup        After the child process is created, it will re-run the setup() method.
@@ -421,7 +423,7 @@ abstract class Core_Daemon
             case 0:
                 // Child Process
                 $this->is_parent = false;
-                $this->pid = getmypid();
+                $this->pid(getmypid());
 
                 // Truncate the plugins array, so that way
                 // when this fork dies and the __destruct runs, it will only shut down
@@ -578,22 +580,25 @@ abstract class Core_Daemon
 
     /**
      * Register Signal Handlers
-     * Note that SIGKILL is missing -- afaik this is uncapturable in a PHP script, which makes sense.
+     * Note: SIGKILL is missing -- afaik this is uncapturable in a PHP script, which makes sense.
+     * Note: Some of these signals have special meaning and use in POSIX systems like Linux. Use with care.
      * @return void
      */
     private function register_signal_handlers()
     {
+        json
         $signals = array(
             // Handled by Core_Daemon:
             SIGTERM, SIGINT, SIGUSR1, SIGHUP,
 
-            // Ignored by Core_Daemon -- register callback ON_SIGNAL to listen for them:
+            // Ignored by Core_Daemon -- register callback ON_SIGNAL to listen for them.
+            // Some of these are duplicated/aliased, listed here for completeness
             SIGUSR2, SIGCONT, SIGQUIT, SIGILL, SIGTRAP, SIGABRT, SIGIOT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGALRM,
             SIGCHLD, SIGCONT, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF,
             SIGWINCH, SIGPOLL, SIGIO, SIGPWR, SIGSYS, SIGBABY, SIGSTKFLT, SIGCLD
         );
 
-        foreach($signals as $signal) {
+        foreach(array_unique($signals) as $signal) {
             pcntl_signal($signal, array($this, 'signal'));
         }
     }
@@ -629,22 +634,22 @@ abstract class Core_Daemon
      */
     private function dump()
     {
-        $x = array();
-        $x[] = "Dump Signal Recieved";
-        $x[] = "Loop Interval: " . $this->loop_interval;
-        $x[] = "Restart Interval: " . $this->auto_restart_interval;
-        $x[] = "Start Time: " . $this->start_time;
-        $x[] = "Duration: " . $this->runtime();
-        $x[] = "Log File: " . $this->log_file();
-        $x[] = "Daemon Mode: " . (int)$this->daemon();
-        $x[] = "Shutdown Signal: " . (int)$this->shutdown();
-        $x[] = "Verbose Mode: " . (int)$this->verbose();
-        $x[] = "Loaded Plugins: " . implode(', ', $this->plugins);
-        $x[] = "Named Workers: " . implode(', ', array_keys((array)$this->workers));
-        $x[] = "Memory Usage: " . memory_get_usage(true);
-        $x[] = "Memory Peak Usage: " . memory_get_peak_usage(true);
-        $x[] = "Current User: " . get_current_user();
-        $this->log(implode("\n", $x));
+        $out = array();
+        $out[] = "Dump Signal Recieved";
+        $out[] = "Loop Interval: " . $this->loop_interval;
+        $out[] = "Restart Interval: " . $this->auto_restart_interval;
+        $out[] = "Start Time: " . $this->start_time;
+        $out[] = "Duration: " . $this->runtime();
+        $out[] = "Log File: " . $this->log_file();
+        $out[] = "Daemon Mode: " . (int)$this->daemon();
+        $out[] = "Shutdown Signal: " . (int)$this->shutdown();
+        $out[] = "Verbose Mode: " . (int)$this->verbose();
+        $out[] = "Loaded Plugins: " . implode(', ', $this->plugins);
+        $out[] = "Named Workers: " . implode(', ', array_keys((array)$this->workers));
+        $out[] = "Memory Usage: " . memory_get_usage(true);
+        $out[] = "Memory Peak Usage: " . memory_get_peak_usage(true);
+        $out[] = "Current User: " . get_current_user();
+        $this->log(implode("\n", $out));
     }
 
     /**
@@ -729,9 +734,14 @@ abstract class Core_Daemon
      * passed to the plugin constructor. If an alias is given, it will be used to instantiate the class as
      * $this->{$alias} = $plugin. If no alias is given, it uses the value passed in as $class, eg $this->{$class}
      *
+     * The plugin loader will always look in the Core/Plugin directory for classes. All 3 of these load the same class:
+     * @example plugin('SomeClass')
      * @example plugin('Plugin_SomeClass')
+     * @example plugin('Core_Plugin_SomeClass')
+     *
      * @example plugin('Lock_File')
-     * @example plugin('SomeDirectory_SomeClass', array(), 'SomeClass')
+     * @example plugin('MyDaemon_Plugin_SomeClass', array(), 'SomeClass')
+     *
      * @param string $class
      * @param array $args   Optional array of arguments passed to the Plugin constructor
      * @param bool $alias   Optional alias you can give to the plugin.
@@ -740,13 +750,20 @@ abstract class Core_Daemon
      */
     protected function plugin($class, Array $args = array(), $alias = false)
     {
-        $qualified_class = 'Core_' . $class;
+        $prefix = '';
+        $qualified_class = $class;
+        foreach(array('Core', 'Plugin') as $part) {
+            $qualified_class = $prefix . $qualified_class;
+            if (class_exists($qualified_class, true))
+                break;
+
+            $prefix .= "{$part}_";
+        }
 
         if (class_exists($qualified_class, true)) {
-
             $interfaces = class_implements($qualified_class, true);
             if (is_array($interfaces) && isset($interfaces['Core_PluginInterface'])) {
-                if ($alias) {
+                if (!empty($alias) && is_scalar($alias)) {
                     $this->{$alias} = new $qualified_class($this->getInstance(), $args);
                     $this->plugins[] = $alias;
                 } else {
@@ -911,21 +928,21 @@ abstract class Core_Daemon
     }
 
     /**
-     * Return the daemon's loop_interval
-     * @return integer
-     */
-    public function loop_interval()
-    {
-        return $this->loop_interval;
-    }
-
-    /**
      * Return the daemon's filename
      * @return integer
      */
     public function filename()
     {
         return self::$filename;
+    }
+
+    /**
+     * Is this run as a daemon or within a shell?
+     * @param boolean $set_value
+     */
+    public function is_daemon()
+    {
+        return $this->daemon;
     }
 
     /**
@@ -942,7 +959,7 @@ abstract class Core_Daemon
     }
 
     /**
-     * Combination getter/setter for the $shutdown property. This is needed because $this->shutdown is a private member.
+     * Combination getter/setter for the $shutdown property.
      * @param boolean $set_value
      */
     protected function shutdown($set_value = null)
@@ -954,19 +971,7 @@ abstract class Core_Daemon
     }
 
     /**
-     * Combination getter/setter for the $daemon property. This is needed because $this->daemon is a private member.
-     * @param boolean $set_value
-     */
-    protected function daemon($set_value = null)
-    {
-        if (is_bool($set_value))
-            $this->daemon = $set_value;
-
-        return $this->daemon;
-    }
-
-    /**
-     * Combination getter/setter for the $verbose property. This is needed because $this->verbose is a private member.
+     * Combination getter/setter for the $verbose property.
      * @param boolean $set_value
      */
     protected function verbose($set_value = null)
@@ -978,13 +983,33 @@ abstract class Core_Daemon
     }
 
     /**
-     * Combination getter/setter for the $pid property. This is needed because $this->pid is a private member.
+     * Combination getter/setter for the $loop_interval property.
+     * @param boolean $set_value
+     */
+    protected function loop_interval($set_value = null)
+    {
+        if ($set_value !== null) {
+            if (is_numeric($set_value))
+                $this->loop_interval = $set_value;
+            else
+                throw new Exception(__METHOD__ . ' Failed. Could not set loop interval. Number Expected. Given: ' . $set_value);
+        }
+
+        return $this->loop_interval;
+    }
+
+    /**
+     * Combination getter/setter for the $pid property.
      * @param boolean $set_value
      */
     protected function pid($set_value = null)
     {
-        if (is_integer($set_value)) {
-            $this->pid = $set_value;
+        if ($set_value !== null) {
+            if (is_integer($set_value))
+                $this->pid = $set_value;
+            else
+                throw new Exception(__METHOD__ . ' Failed. Could not set pid. Integer Expected. Given: ' . $set_value);
+
             $this->dispatch(array(self::ON_PIDCHANGE), array($set_value));
         }
 
