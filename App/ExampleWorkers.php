@@ -2,7 +2,7 @@
 
 class App_ExampleWorkers extends Core_Daemon
 {
-    protected $loop_interval = .1;
+    protected $loop_interval = .5;
     public $message_queue = 90210124545;
     public $queue;
 
@@ -44,8 +44,42 @@ class App_ExampleWorkers extends Core_Daemon
 
             $this->on(Core_Daemon::ON_SIGNAL, function($signal) use($that) {
                 if ($signal == SIGBUS) {
-                    $that->log('Status Of Message Queue:');
-                    $that->log(msg_stat_queue($that->queue));
+//                    $that->log('Status Of Message Queue:');
+//                    $that->log(msg_stat_queue($that->queue));
+
+                    $out = '';
+                    foreach($that->stats as $stat) {
+                        $out .= PHP_EOL . implode("\t\t", $stat);
+                    }
+                    $that->log($out);
+
+                    foreach ($that->stats as $key => $row) {
+                        $duration[$key]  = $row['duration'];
+                        $idle[$key] = $row['idle'];
+                    }
+
+                    // Sort the data with volume descending, edition ascending
+                    // Add $data as the last parameter, to sort by the common key
+                    array_multisort($duration, SORT_DESC, $that->stats);
+
+                    echo ">>>";
+                    print_r($duration);
+                    echo "<<<";
+
+                    $that->log('----');
+                    $out = '';
+                    foreach($that->stats as $stat) {
+                        $out .= PHP_EOL . implode("\t\t", $stat);
+                    }
+                    $that->log($out);
+
+
+                    $out = '';
+                    foreach($duration as $stat) {
+                        $out .= PHP_EOL . implode("\t\t", $stat);
+                    }
+                    $that->log($out);
+
                 }
             });
 

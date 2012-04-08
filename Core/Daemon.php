@@ -120,11 +120,19 @@ abstract class Core_Daemon
     private $callbacks = array();
 
     /**
+     * Runtime statistics for a recent window of execution
+     * @var Array
+     */
+    public $stats = array();
+
+
+    /**
      * This has to be set using the Core_Daemon::setFilename before init.
      * It's used as part of the auto-restart mechanism. Probably a way to figure it out programatically tho.
      * @var string
      */
     private static $filename = false;
+
 
 
 
@@ -650,6 +658,7 @@ abstract class Core_Daemon
         $out[] = "Memory Peak Usage: " . memory_get_peak_usage(true);
         $out[] = "Current User: " . get_current_user();
         $out[] = "Priority: " . pcntl_getpriority();
+        $out[] = "Stats (mean): " . implode(', ', $this->stats_mean());
         $this->log(implode("\n", $out));
     }
 
@@ -667,31 +676,31 @@ abstract class Core_Daemon
             return $start_time = microtime(true);
 
         // End the Stop Watch
-        // Calculate the duration. If it took longer than the loop_interval, log it and return immediately.
-        if (is_float($start_time) == false)
-            $this->fatal_error('An Error Has Occurred: The timer() method Failed. Invalid Start Time: ' . $start_time);
+        $stats = array();
+        $stats['duration']  = microtime(true) - $start_time;
+        $stats['idle']      = $this->loop_interval - $stats['duration'];
 
-        $duration = microtime(true) - $start_time;
-
-        if ($duration > $this->loop_interval) {
+        if ($stats['idle'] > 0) {
+            // usleep accepts microseconds, 1 second in microseconds = 1,000,000
+            usleep($stats['idle'] * 1000000);
+        } else {
             // There is no time to sleep between intervals -- but we still need to give the CPU a break
             // Sleep for 1/500 a second.
             usleep(2000);
             if ($this->loop_interval > 0)
-                $this->log('Run Loop Taking Too Long. Duration: ' . $duration . ' Interval: ' . $this->loop_interval, true);
-
-            return;
+                $this->log('Run Loop Taking Too Long. Duration: ' . $stats['duration'] . ' Interval: ' . $this->loop_interval, true);
         }
 
-        if ($duration > ($this->loop_interval * 0.9))
-            $this->log('Warning: Run Loop Near Max Allowed Duration. Duration: ' . $duration . ' Interval: ' . $this->loop_interval);
+        // Need to keep stats array from getting too large. Trim it back about once every 100 iterations
+        if (mt_rand(1,100) == 50 ) {
+            $this->stats = array_slice($this->stats, -100, 100);
+        }
 
-        // usleep accepts microseconds, 1 second in microseconds = 1,000,000
-        usleep(($this->loop_interval - $duration) * 1000000);
-        $start_time = false;
+        $this->stats[] = $stats;
+        return $stats;
     }
 
-    /**
+    /**`
      * If this is in daemon mode, provide an auto-restart feature.
      * This is designed to allow us to get a fresh stack, fresh memory allocation, etc.
      * @return boolean
@@ -944,6 +953,45 @@ abstract class Core_Daemon
     public function is_daemon()
     {
         return $this->daemon;
+    }
+
+    /**
+     * Return a tuple containing the mean duration and idle time of the daemons event loop, ignoring the longest and shortest 5%
+     * Note: Stats data is trimmed periodically and is not likely to have more than 200 rows.
+     * @param int $last  Limit the working set to the last n iteration
+     * @return Array A tuple as array(duration,idle) averages.
+     */
+    public function stats_mean($last = 100)
+    {
+        if (count($this->stats) < $last) {
+            $data = $this->stats;
+        } else {
+            $data = array_slice($this->stats, -$last);
+        }
+
+        $count = count($data);
+        $n = ceil($count * 0.05);
+
+        // Sort the $data by duration asc and remove the top and bottom $n rows
+        $duration = array();
+        for($i=0; $i<$count; $i++) {
+            $duration[$i] = $data[$i]['duration'];
+        }
+        array_multisort($duration, SORT_ASC, $data);
+
+        $count -= ($n * 2);
+        $data = array_slice($data, $n, $count);
+
+        // Now compute the corrected mean
+        $tuple = array(0,0);
+        for($i=0; $i<$count; $i++) {
+            $tuple[0] += $data[$i]['duration'];
+            $tuple[1] += $data[$i]['idle'];
+        }
+
+        $tuple[0] /= $count;
+        $tuple[1] /= $count;
+        return $tuple;
     }
 
     /**
