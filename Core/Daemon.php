@@ -264,6 +264,7 @@ abstract class Core_Daemon
      */
     private function init()
     {
+        $this->loop_interval($this->loop_interval);
         $this->register_signal_handlers();
 
         foreach ($this->plugins as $plugin)
@@ -586,7 +587,6 @@ abstract class Core_Daemon
      */
     private function register_signal_handlers()
     {
-        json
         $signals = array(
             // Handled by Core_Daemon:
             SIGTERM, SIGINT, SIGUSR1, SIGHUP,
@@ -649,6 +649,7 @@ abstract class Core_Daemon
         $out[] = "Memory Usage: " . memory_get_usage(true);
         $out[] = "Memory Peak Usage: " . memory_get_peak_usage(true);
         $out[] = "Current User: " . get_current_user();
+        $out[] = "Priority: " . pcntl_getpriority();
         $this->log(implode("\n", $out));
     }
 
@@ -989,10 +990,38 @@ abstract class Core_Daemon
     protected function loop_interval($set_value = null)
     {
         if ($set_value !== null) {
-            if (is_numeric($set_value))
+            if (is_numeric($set_value)) {
                 $this->loop_interval = $set_value;
-            else
+                switch(true) {
+                    case $set_value >= 5.0 || $set_value <= 0.0:
+                        $priority = 0; break;
+                    case $set_value > 2.0:
+                        $priority = -1; break;
+                    case $set_value > 1.0:
+                        $priority = -2; break;
+                    case $set_value > 0.5:
+                        $priority = -3; break;
+                    case $set_value > 0.1:
+                        $priority = -4; break;
+                    default:
+                        $priority = -5;
+                }
+
+                if ($priority <> pcntl_getpriority()) {
+                    pcntl_setpriority($priority);
+                    if (pcntl_getpriority() == $priority) {
+                        $this->log('Adjusting Process Priority to ' . $priority);
+                    } else {
+                        $this->log(
+                            "Warning: At configured loop_interval a process priorty of `{$priority}` is suggested but this process does not have setpriority privileges." . PHP_EOL .
+                            "         Consider running the daemon with `CAP_SYS_RESOURCE` privileges or set it manually using: sudo renice -n {$priority} -p {$this->pid}"
+                        );
+                    }
+                }
+
+            } else {
                 throw new Exception(__METHOD__ . ' Failed. Could not set loop interval. Number Expected. Given: ' . $set_value);
+            }
         }
 
         return $this->loop_interval;

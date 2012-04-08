@@ -2,7 +2,7 @@
 
 class App_ExampleWorkers extends Core_Daemon
 {
-    protected $loop_interval = 5;
+    protected $loop_interval = .1;
     public $message_queue = 90210124545;
     public $queue;
 
@@ -42,6 +42,12 @@ class App_ExampleWorkers extends Core_Daemon
                 }
             });
 
+            $this->on(Core_Daemon::ON_SIGNAL, function($signal) use($that) {
+                if ($signal == SIGBUS) {
+                    $that->log('Status Of Message Queue:');
+                    $that->log(msg_stat_queue($that->queue));
+                }
+            });
 
 
             if (msg_send($that->queue, 1, "Hello, from setup() in " . $this->pid(), true, true, $err))

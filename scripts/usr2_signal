@@ -1,1 +1,1 @@
-kill -12 `cat ./pid`
+kill -12 `cat ./../pid`
