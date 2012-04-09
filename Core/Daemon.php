@@ -34,12 +34,6 @@ abstract class Core_Daemon
 
 
     /**
-     * A stdClass array of all Workers created by the worker() method
-     * @var stdClass
-     */
-    private $workers;
-
-    /**
      * An array of instructions that's displayed when the -i param is passed into the daemon.
      * Helps sysadmins and users of your daemons get installation correct. Guide them to set
      * correct permissions, supervisor/monit setup, crontab entries, init.d scripts, etc
@@ -108,7 +102,19 @@ abstract class Core_Daemon
     private $verbose = false;
 
     /**
-     * A simple stack of plugins that are enabled. Set from load_plugin() method.
+     * Array of worker aliases
+     * @var Array
+     */
+    private $workers = array();
+
+    /**
+     * Map of PID's to Worker aliases
+     * @var array
+     */
+    private $worker_map = array();
+
+    /**
+     * Array of plugin aliases
      * @var Array
      */
     private $plugins = array();
@@ -123,7 +129,7 @@ abstract class Core_Daemon
      * Runtime statistics for a recent window of execution
      * @var Array
      */
-    public $stats = array();
+    private $stats = array();
 
 
     /**
@@ -137,11 +143,19 @@ abstract class Core_Daemon
 
 
     /**
-     * Implement this method to load plugins -- including a Lock provider plugin. Called very early in Daemon
-     * instantiation, before the setup() code is called.
+     * Implement this method to load plugins
      * @return void
      */
     protected function load_plugins()
+    {
+
+    }
+
+    /**
+     * Implement this method to load workers
+     * @return void
+     */
+    protected function load_workers()
     {
 
     }
@@ -194,6 +208,7 @@ abstract class Core_Daemon
         {
             $o = new static;
             $o->load_plugins();
+            $o->load_workers();
             $o->check_environment();
             $o->init();
         }
@@ -278,6 +293,9 @@ abstract class Core_Daemon
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->setup();
 
+        foreach ($this->workers as $worker)
+            $this->{$worker}->setup();
+
         // Our current use of the ON_INIT event is in the Lock provider plugins -- so we can prevent a duplicate daemon
         // process from starting-up. In that case, we want to do that check as early as possible. To accomplish that,
         // the plugin setup has to happen first -- to ensure the Lock provider plugins have a chance to load.
@@ -335,10 +353,10 @@ abstract class Core_Daemon
             {
                 $this->timer(true);
                 $this->auto_restart();
+                $this->reap();
                 $this->dispatch(array(self::ON_RUN));
                 $this->execute();
                 $this->timer();
-                pcntl_wait($status, WNOHANG);
             }
         }
         catch (Exception $e)
@@ -412,7 +430,7 @@ abstract class Core_Daemon
      * @param boolean $run_setup        After the child process is created, it will re-run the setup() method.
      * @return boolean                  Cannot know if the callback worked or not, but returns true if the fork was successful.
      */
-    public function fork($callback, array $params = array(), $run_setup = false)
+    public function fork($callback, array $params = array(), $run_setup = false, $worker = false)
     {
         $this->dispatch(array(self::ON_FORK));
         $pid = pcntl_fork();
@@ -458,29 +476,18 @@ abstract class Core_Daemon
 
             default:
                 // Parent Process
-                return true;
+
+                if ($worker) {
+                    if (in_array($worker, $this->workers)) {
+                        $this->worker_map[$pid] = $worker;
+                    }
+                }
+
+                return $pid;
                 break;
         }
     }
 
-
-    /**
-     * Create a persistent Worker process. Essentially a managed Fork, the daemon can apply
-     * timeouts, keep the worker running, restart the worker when it's complete, etc.
-     * What you CANNOT do is queue jobs to a worker: It can only do one at a time. Queuing jobs in memory is volatile
-     * and a daemon crash or restart would lose them. However, a worker integrates with a Job Queue like Gearman or Beanstalkd
-     * very naturally.
-     *
-     * @param String $name            The name of the worker -- Will be instantiated at $this->{$name}
-     * @param Function $function      A valid callback or closure
-     * @return Core_Worker            Returns a Core_Worker class that can be used to interact with the Worker
-     */
-    protected function worker($name, $function)
-    {
-        // get_called_class is a PHP 5.3 function that uses late static binding to return the
-        // name of the superclass this is being run in
-        $this->worker->{$name} = new Core_Worker($function, $name, get_called_class());
-    }
 
     /**
      * Log the $message to the $this->log_file and possibly print to stdout.
@@ -700,7 +707,7 @@ abstract class Core_Daemon
         return $stats;
     }
 
-    /**`
+    /**
      * If this is in daemon mode, provide an auto-restart feature.
      * This is designed to allow us to get a fresh stack, fresh memory allocation, etc.
      * @return boolean
@@ -714,6 +721,17 @@ abstract class Core_Daemon
             return false;
 
         $this->restart();
+    }
+
+    private function reap()
+    {
+        do {
+            $pid = pcntl_wait($status, WNOHANG);
+            if (isset($this->worker_map[$pid])) {
+                $alias = $this->worker_map[$pid];
+                $this->{$alias}->reap($pid);
+            }
+        } while($pid);
     }
 
     /**
@@ -738,7 +756,7 @@ abstract class Core_Daemon
     }
 
     /**
-     * Load any plugin that implements the Core_PluginInterface.
+     * Load any plugin that implements the Core_IPluginInterface.
      * All Plugin classes must be named Core_ClassNameHere. To select and use a plugin, just provide any path and
      * classname using Zend Framework naming conventions. A reference to this daemon instance will be
      * passed to the plugin constructor. If an alias is given, it will be used to instantiate the class as
@@ -760,6 +778,11 @@ abstract class Core_Daemon
      */
     protected function plugin($class, Array $args = array(), $alias = false)
     {
+        if (!$alias)
+            $alias = $class;
+
+        $this->check_alias($alias);
+
         $prefix = '';
         $qualified_class = $class;
         foreach(array('Core', 'Plugin') as $part) {
@@ -772,18 +795,60 @@ abstract class Core_Daemon
 
         if (class_exists($qualified_class, true)) {
             $interfaces = class_implements($qualified_class, true);
-            if (is_array($interfaces) && isset($interfaces['Core_PluginInterface'])) {
-                if (!empty($alias) && is_scalar($alias)) {
-                    $this->{$alias} = new $qualified_class($this->getInstance(), $args);
-                    $this->plugins[] = $alias;
-                } else {
-                    $this->{$class} = new $qualified_class($this->getInstance(), $args);
-                    $this->plugins[] = $class;
-                }
+            if (is_array($interfaces) && isset($interfaces['Core_IPluginInterface'])) {
+                $this->{$alias} = new $qualified_class($this->getInstance(), $args);
+                $this->plugins[] = $alias;
                 return;
             }
         }
         throw new Exception(__METHOD__ . ' Failed. Could Not Load Plugin: ' . $class);
+    }
+
+    /**
+     * Create a persistent Worker process.
+     * @param String $alias  The name of the worker -- Will be instantiated at $this->{$alias}
+     * @param mixed $worker An object of type Core_Worker OR a callable (function, callback, closure)
+     * @return Core_Worker_Mediator  Returns a Core_Worker class that can be used to interact with the Worker
+     */
+    protected function worker($alias, $worker)
+    {
+        $this->check_alias($alias);
+
+        switch (true) {
+            case is_object($worker):
+                $mediator = new Core_Worker_ObjectMediator($alias, $this);
+                $mediator->setObject($worker);
+                break;
+
+            case is_callable($worker):
+                $mediator = new Core_Worker_Mediator();
+                $mediator->setFunction($worker);
+                break;
+
+            default:
+                throw new Exception(__METHOD__ . ' Failed. Could Not Load Worker: ' . $alias);
+        }
+
+        $this->workers[] = $alias;
+        $this->{$alias} = $mediator;
+        return $this->{$alias};
+    }
+
+    /**
+     * Simple function to validate that alises for Plugins or Workers won't interfere with each other or with existing daemon properties.
+     * @param $alias
+     * @throws Exception
+     */
+    private function check_alias($alias) {
+        if (empty($alias) && !is_scalar($alias)) {
+            throw new Exception("Invalid Alias. Identifiers must be scalar.");
+        }
+
+        $is_class_var = in_array($alias, array_keys(get_class_vars(get_called_class())));
+        $is_obj_var = in_array($alias, array_keys(get_object_vars($this)));
+        if ($is_class_var || $is_obj_var) {
+            throw new Exception("Invalid Alias. The identifier `{$alias}` is already in use or is reserved");
+        }
     }
 
     /**
@@ -972,7 +1037,7 @@ abstract class Core_Daemon
         $count = count($data);
         $n = ceil($count * 0.05);
 
-        // Sort the $data by duration asc and remove the top and bottom $n rows
+        // Sort the $data by duration and remove the top and bottom $n rows
         $duration = array();
         for($i=0; $i<$count; $i++) {
             $duration[$i] = $data[$i]['duration'];

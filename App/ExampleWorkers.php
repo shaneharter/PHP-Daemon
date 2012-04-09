@@ -6,6 +6,8 @@ class App_ExampleWorkers extends Core_Daemon
     public $message_queue = 90210124545;
     public $queue;
 
+    public $auction_watcher;
+
     protected function load_plugins()
     {
         $this->plugin('Lock_File');
@@ -15,14 +17,14 @@ class App_ExampleWorkers extends Core_Daemon
         $this->ini->required_sections = array('example_section');
     }
 
+    protected function worker(){}
+
     protected function setup()
     {
         $this->queue = msg_get_queue($this->message_queue, 0777);
-
+        $that = $this;
         if ($this->is_parent())
         {
-            $that = $this;
-
             $this->on(Core_Daemon::ON_SIGNAL, function($signal) use($that) {
                 $err = null;
                 $that->queue = msg_get_queue($that->message_queue, 0777);
@@ -35,79 +37,50 @@ class App_ExampleWorkers extends Core_Daemon
                 }
             });
 
-            $this->on(Core_Daemon::ON_SIGNAL, function($signal) use($that) {
-                if ($signal == SIGIO) {
-                    $that->log('Starting Up a Child...');
-                    $that->fork(array($that, 'child'), array(), true);
-                }
+            $this->auction_watcher = new AuctionWatcher();
+            $this->auction_watcher->key = $this->ini['example_section']['example_key'];
+            $this->auction_watcher->connect();
+
+            $this->worker('MailChimp', false);
+
+            $this->worker('Watcher', new AuctionWatcher);
+
+
+
+            $this->workerClass('MailChimp');
+
+            $this->workerFunction('mailer');
+            $this->mailer->function = array($this, 'mailer');
+            $this->mailer->timeout = 30;
+            $this->mailer->on(self::ON_ERROR, array($this, 'mailer_error'));
+            $this->mailer->on(self::ON_SHUTDOWN, function() use($that) {
+                $that->log('Mailer Worker Shutting Down...');
             });
 
-            $this->on(Core_Daemon::ON_SIGNAL, function($signal) use($that) {
-                if ($signal == SIGBUS) {
-//                    $that->log('Status Of Message Queue:');
-//                    $that->log(msg_stat_queue($that->queue));
+            // ...
 
-                    $out = '';
-                    foreach($that->stats as $stat) {
-                        $out .= PHP_EOL . implode("\t\t", $stat);
-                    }
-                    $that->log($out);
-
-                    foreach ($that->stats as $key => $row) {
-                        $duration[$key]  = $row['duration'];
-                        $idle[$key] = $row['idle'];
-                    }
-
-                    // Sort the data with volume descending, edition ascending
-                    // Add $data as the last parameter, to sort by the common key
-                    array_multisort($duration, SORT_DESC, $that->stats);
-
-                    echo ">>>";
-                    print_r($duration);
-                    echo "<<<";
-
-                    $that->log('----');
-                    $out = '';
-                    foreach($that->stats as $stat) {
-                        $out .= PHP_EOL . implode("\t\t", $stat);
-                    }
-                    $that->log($out);
+            $this->mailer()
+                 ->on(self::ERROR, array($this, log_error))
+                 ->on();
 
 
-                    $out = '';
-                    foreach($duration as $stat) {
-                        $out .= PHP_EOL . implode("\t\t", $stat);
-                    }
-                    $that->log($out);
 
-                }
-            });
+            // When you call that, it should actually call the mediator. Which will push work in the queue
+
+            // or
+            $this->workers->mailer();
 
 
-            if (msg_send($that->queue, 1, "Hello, from setup() in " . $this->pid(), true, true, $err))
-                $that->log('Message Enqueued for Child');
-            else {
-                $that->log('Shitcock! Message Not Enqueued! Error: ' . $err);
-
-            }
         }
     }
 
+
+
+
     protected function execute()
     {
-        $this->log('Hola');
-    }
+        foreach($this->auction_watcher->load() as $item) {
 
-    protected function child()
-    {
-        $this->log('here i iz');
-        $message = '';
-        $message_type = null;
-        if (msg_receive($this->queue, 1, $message_type, 1024000, $message)) {
-            $this->log("Message from the future received: " . $message);
-            $this->log("That was it. Amazing, right?");
-        } else {
-            $this->log('Shitballs! Nothing But Static');
         }
     }
 
@@ -122,4 +95,14 @@ class App_ExampleWorkers extends Core_Daemon
 
         return $dir . '/log_' . date('Ymd');
     }
+}
+
+class AuctionWatcher {
+
+    public $key;
+    public function connect() {}
+    public function load() {
+        return range(1, mt_rand(1,5));
+    }
+
 }

@@ -6,7 +6,7 @@
  * @todo Create Redis lock provider
  * @todo Create APC lock provider
  */
-abstract class Core_Lock_Lock implements Core_PluginInterface
+abstract class Core_Lock_Lock implements Core_IPluginInterface
 {
 	public static $LOCK_TTL_PADDING_SECONDS = 2.0;
 	public static $LOCK_UNIQUE_ID = 'daemon_lock';

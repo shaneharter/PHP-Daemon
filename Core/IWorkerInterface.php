@@ -1,6 +1,6 @@
 <?php
 
-interface Core_PluginInterface
+interface Core_IWorkerInterface
 {
 	/**
 	 * Called on Construct or Init

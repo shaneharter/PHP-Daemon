@@ -53,7 +53,7 @@ In your subclass you must implement the log_file() method to return a filename -
     When run in Verbose mode, the contents of the log file are also written to STDOUT. This is also the case if the supplied filename cannot be open and written-to. 
  
 * ###Simple Plugin Loader
-A plugin can be created very easily by implementing the Core_PluginInterface. Currently, you must save your plugins in /Core/Plugins and they must be named using Zend Framework conventions (Core_Plugins_{ClassName}). The advantage of writing code as a Plugin, in addition to it being obviously reusable, is the ability to hook into the check_environment, setup, and destructor. The primary reason the Plugin interface was developed for v1.1.0 was to devise a way to simplify Core_Daemon and move INI file and Memcached dependence out of the core.  
+A plugin can be created very easily by implementing the Core_IPluginInterface. Currently, you must save your plugins in /Core/Plugins and they must be named using Zend Framework conventions (Core_Plugins_{ClassName}). The advantage of writing code as a Plugin, in addition to it being obviously reusable, is the ability to hook into the check_environment, setup, and destructor. The primary reason the Plugin interface was developed for v1.1.0 was to devise a way to simplify Core_Daemon and move INI file and Memcached dependence out of the core.
 
 * ###Simple Config Loading
 A simple Plugin loader is included, and the first plugin created will help you use and validate Ini files. This functionality was moved from the daemon core into a Plugin for the 1.1.0 release to simplify daemon core. 
