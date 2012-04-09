@@ -69,6 +69,7 @@ class Core_Worker_ObjectMediator
             $this->fork();
         } else {
             $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'signal'));
+            $this->log('Worker Process Started...');
         }
     }
 
@@ -191,6 +192,7 @@ class Core_Worker_ObjectMediator
 
         if (msg_send($this->queue, $queue_lookup[$call->status], $message, true, false, $message_error)) {
             return true;
+            $this->log("Message Sent to Queue " . $queue_lookup[$call->status]);
         }
 
         $this->log(__METHOD__ . " Failed. Error: {$message_error}");
@@ -213,7 +215,7 @@ class Core_Worker_ObjectMediator
 
 
     private function log($message, $is_error = false) {
-        $this->daemon->log("Worker [{$this->alias}] $message}\n", $is_error);
+        $this->daemon->log("Worker [{$this->alias}] $message\n", $is_error);
     }
 
 
@@ -263,5 +265,13 @@ class Core_Worker_ObjectMediator
             throw new Exception(__METHOD__ . " Failed. Numeric timeout value expected.");
 
         $this->timeout = $timeout;
+    }
+
+    public function workers($workers)
+    {
+        if (!is_numeric($workers))
+            throw new Exception(__METHOD__ . " Failed. Numeric workers value expected.");
+
+        $this->workers = $workers;
     }
 }

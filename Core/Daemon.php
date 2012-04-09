@@ -428,6 +428,7 @@ abstract class Core_Daemon
      * @param callable $callback        A valid PHP callback or closure.
      * @param Array $params             The params that will be passed into the Callback when it's called.
      * @param boolean $run_setup        After the child process is created, it will re-run the setup() method.
+     * @param string $worker            Used by Named Workers to track forked workers. Do not use in any other situation.
      * @return boolean                  Cannot know if the callback worked or not, but returns true if the fork was successful.
      */
     public function fork($callback, array $params = array(), $run_setup = false, $worker = false)
@@ -808,7 +809,7 @@ abstract class Core_Daemon
      * Create a persistent Worker process.
      * @param String $alias  The name of the worker -- Will be instantiated at $this->{$alias}
      * @param mixed $worker An object of type Core_Worker OR a callable (function, callback, closure)
-     * @return Core_Worker_Mediator  Returns a Core_Worker class that can be used to interact with the Worker
+     * @return Core_Worker_ObjectMediator  Returns a Core_Worker class that can be used to interact with the Worker
      */
     protected function worker($alias, $worker)
     {
