@@ -3,10 +3,7 @@
 class App_ExampleWorkers extends Core_Daemon
 {
     protected $loop_interval = 3;
-    public $queue;
-    public $count;
-
-    public $auction_watcher;
+    public $count = 0;
 
     protected function load_plugins()
     {
@@ -19,7 +16,7 @@ class App_ExampleWorkers extends Core_Daemon
 
     protected function load_workers()
     {
-        $this->worker('example', new App_MyWorker($this));
+        $this->worker('example', new App_MyWorker());
         $this->example->timeout(5);
         $this->example->workers(3);
 
@@ -33,23 +30,24 @@ class App_ExampleWorkers extends Core_Daemon
 
     protected function setup()
     {
-        $this->count = 0;
-        $this->queue = msg_get_queue($this->message_queue, 0777);
-        $that = $this;
+
         if ($this->is_parent())
         {
+
+            // Call the worker when you pass the SIGUSR2 signal to the daemon.
+            // You can use the script in /scripts/usr2_signal or just do:  kill -12 [pid]
+
+            $that = $this; // PHP 5.3 closure hack. Fixed in 5.4
+
             $this->on(Core_Daemon::ON_SIGNAL, function($signal) use($that) {
 
-                $array = array(1, true, "beagle!");
+                $array = array(1001, true, "I like beagles!");
 
                 $that->count++;
-                if ($signal == SIGBUS) {
+                if ($signal == SIGUSR2) {
                     $that->example->doooit($that->count, $array);
                 }
             });
-
-            //I like this idea:
-            //$this->mailer->on(self::ERROR, array($this, log_error))
         }
     }
 
@@ -65,19 +63,9 @@ class App_ExampleWorkers extends Core_Daemon
         if (@file_exists($dir) == false)
             @mkdir($dir, 0777, true);
 
-        if (@is_writable($dir) == false)
+        if (@is_writable($dir) == false)x
             $dir = BASE_PATH . '/example_logs';
 
         return $dir . '/log_' . date('Ymd');
     }
-}
-
-class AuctionWatcher {
-
-    public $key;
-    public function connect() {}
-    public function load() {
-        return range(1, mt_rand(1,5));
-    }
-
 }

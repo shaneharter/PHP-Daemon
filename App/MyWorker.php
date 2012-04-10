@@ -8,10 +8,7 @@
  */
 class App_MyWorker implements Core_IWorkerInterface
 {
-    private $daemon;
-    public function __construct($d) {
-        $this->daemon = $d;
-    }
+    public $mediator;
 
     /**
      * Called on Construct or Init
@@ -42,11 +39,11 @@ class App_MyWorker implements Core_IWorkerInterface
 
 
     public function doooit($count, $value) {
-        $this->daemon->log("So TyTy... Going to Sleep. Job Number $count. You know what I love? $value[2]");
+        $this->daemon->log("So Tired... Going to Sleep. Job Number $count. Give me something from the args: $value[2]");
         for ($i=0; $i<10000000; $i++) {
 
         }
-        $this->daemon->log("Awake!");
+        $this->mediator->log("Awake!");
     }
 
 }
