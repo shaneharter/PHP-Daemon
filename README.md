@@ -13,13 +13,14 @@ I've built and deployed a large number of mission-critical daemons using this li
 * A Beta version 2.0 is now available: Checkout the `named-workers` branch and start submitting Issues and Pull Requests!
 * The primary feature of this release is **persistant, interactive, asynchronous background workers**
   * Create classes or functions that automatically detach themselves from your Daemon and run in their own background process. 
-  * Easily pass arguments to these functions/methods, and return work back to the daemon process using `return $foo` like normal.
+  * Easily pass arguments to these functions/methods, and return work back to the daemon process. 
   * Create common async patterns by implementing onReturn and onTimeout callbacks so you know when work was done (or not).
   * Create worker pools: Run 5 simultaneous worker objects as easily as $this->myWorker->workers(5). Work will be assigned to idle workers automatically. 
   * If all workers are busy, calls are buffered and are handed-out to workers as they become available. 
   * Set timeouts on workers as easily as $this->myWorker->timeout(30); // 30 Seconds. 
   * For a very brief example, try out the /App/ExampleWorkers.php daemon in the named-workers checkout. 
   * Note: The latest builds include a bug that leaves the daemon and child processes hanging on shutdown and it requires a `kill -9 [pid]`. I hope to have this fixed in the next day or so. 
+  * Note: This will be explained better in the Wiki, but when workers are busy, calls are *buffered* not *queued*. If the daemon is killed, buffered calls *may* be lost. There is no processing guarantee. For that, there are fantastic message queues that work really well with PHP Simple Daemon workers. 
 * The version also includes dozens of enhancements to existing daemon features, such as: 
   * The Locking mechanism is now optional and is implemented entirely using the Plugin architecture 
   * You can easily choose to use the classic, clock-based event loop (eg 'run this every 1.5 seconds') or a lighter-weight event loop that iterates immediately. 
