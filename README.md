@@ -11,7 +11,7 @@ I've built and deployed a large number of mission-critical daemons using this li
  
 #### VERSION 2.0 BETA AVAILABLE
 * A Beta version 2.0 is now available: Checkout the `named-workers` branch and start submitting Issues and Pull Requests!
-* The primary feature of this release is *persistant, interactive Background Workers*
+* The primary feature of this release is **persistant, interactive, asynchronous background workers**
   * Create classes or functions that automatically detach themselves from your Daemon and run in their own background process. 
   * Easily pass arguments to these functions/methods, and return work back to the daemon process using `return $foo` like normal.
   * Create common async patterns by implementing onReturn and onTimeout callbacks so you know when work was done (or not).
