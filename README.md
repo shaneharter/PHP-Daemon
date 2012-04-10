@@ -8,6 +8,28 @@ I've built and deployed a large number of mission-critical daemons using this li
 #### Requires: ###
 * PHP 5.3 or Higher
 * POSIX and PCNTL Extensions for PHP
+ 
+#### VERSION 2.0 BETA AVAILABLE
+* A Beta version 2.0 is now available: Checkout the `named-workers` branch and start submitting Issues and Pull Requests!
+* The primary feature of this release is *persistant, interactive Background Workers*
+  * Create classes or functions that automatically detach themselves from your Daemon and run in their own background process. 
+  * Easily pass arguments to these functions/methods, and return work back to the daemon process using `return $foo` like normal.
+  * Create common async patterns by implementing onReturn and onTimeout callbacks so you know when work was done (or not).
+  * Create worker pools: Run 5 simultaneous worker objects as easily as $this->myWorker->workers(5). Work will be assigned to idle workers automatically. 
+  * If all workers are busy, calls are buffered and are handed-out to workers as they become available. 
+  * Set timeouts on workers as easily as $this->myWorker->timeout(30); // 30 Seconds. 
+  * For a very brief example, try out the /App/ExampleWorkers.php daemon in the named-workers checkout. 
+  * Note: The latest builds include a bug that leaves the daemon and child processes hanging on shutdown and it requires a `kill -9 [pid]`. I hope to have this fixed in the next day or so. 
+* The version also includes dozens of enhancements to existing daemon features, such as: 
+  * The Locking mechanism is now optional and is implemented entirely using the Plugin architecture 
+  * You can easily choose to use the classic, clock-based event loop (eg 'run this every 1.5 seconds') or a lighter-weight event loop that iterates immediately. 
+  * You can attach to Daemon state events using the familiar on(SOME_EVENT, $callback) syntax. 
+  * Use the Event system to capture and handle custom Signals in your code. 
+  * Self-adjusting process priority to be more reliable when used with short loop_intevals (1 second and below)
+  * Automatically generate and install init.d scripts to easily install your daemon 
+  * Track and report runtime stats, such as mean interval duration. 
+  * Documentation improvements on the Wiki.
+* This is certainly BETA quality software. I hope to have a thoroughly-tested, production-ready version by May 1st. 
 
 #### Changes in 1.1.1:
 * Several Bugfixes
