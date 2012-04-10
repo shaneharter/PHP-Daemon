@@ -2,7 +2,7 @@
 
 class App_ExampleWorkers extends Core_Daemon
 {
-    protected $loop_interval = 1;
+    protected $loop_interval = 3;
     public $queue;
     public $count;
 
@@ -20,8 +20,14 @@ class App_ExampleWorkers extends Core_Daemon
     protected function load_workers()
     {
         $this->worker('example', new App_MyWorker($this));
-        $this->example->timeout(30);
+        $this->example->timeout(5);
         $this->example->workers(3);
+
+        $that = $this;
+        $this->example->onTimeout(function($call) use($that) {
+            $that->log("Job Timed Out!");
+            $that->log("Method: " . $call->method);
+        });
     }
 
 

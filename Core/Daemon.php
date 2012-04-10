@@ -293,8 +293,11 @@ abstract class Core_Daemon
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->setup();
 
+        // Setup each worker pool. If the loop interval is > 1 second, we will use a lazy forking strategy
+        // where workers will not be created until they're called.
+        $lazy_forking = ($this->loop_interval > 1);
         foreach ($this->workers as $worker)
-            $this->{$worker}->setup();
+            $this->{$worker}->setup($lazy_forking);
 
         // Our current use of the ON_INIT event is in the Lock provider plugins -- so we can prevent a duplicate daemon
         // process from starting-up. In that case, we want to do that check as early as possible. To accomplish that,
@@ -314,6 +317,7 @@ abstract class Core_Daemon
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->teardown();
 
+        $this->reap(true);
         if (!empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
             unlink($this->pid_file);
     }
@@ -452,6 +456,7 @@ abstract class Core_Daemon
                 // Child Process
                 $this->is_parent = false;
                 $this->pid(getmypid());
+                pcntl_setpriority(1);
 
                 // Truncate the plugins array, so that way
                 // when this fork dies and the __destruct runs, it will only shut down
@@ -724,15 +729,20 @@ abstract class Core_Daemon
         $this->restart();
     }
 
-    private function reap()
+    /**
+     * Maintain the worker process map and notify the worker of an exited process.
+     * @param bool $block   When true, method will block waiting for an exit signal
+     */
+    private function reap($block = false)
     {
         do {
-            $pid = pcntl_wait($status, WNOHANG);
+            $pid = pcntl_wait($status, ($block) ? null : WNOHANG);
             if (isset($this->worker_map[$pid])) {
                 $alias = $this->worker_map[$pid];
-                $this->{$alias}->reap($pid);
+                $this->{$alias}->reap($pid, $status);
+                unset($this->worker_map[$pid]);
             }
-        } while($pid);
+        } while($pid && count($this->worker_map) > 0);
     }
 
     /**
@@ -1019,6 +1029,15 @@ abstract class Core_Daemon
     public function is_daemon()
     {
         return $this->daemon;
+    }
+
+    /**
+     * Get the current loop interval
+     * @return float|null
+     */
+    public function interval()
+    {
+        return $this->loop_interval;
     }
 
     /**

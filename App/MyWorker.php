@@ -43,7 +43,9 @@ class App_MyWorker implements Core_IWorkerInterface
 
     public function doooit($count, $value) {
         $this->daemon->log("So TyTy... Going to Sleep. Job Number $count. You know what I love? $value[2]");
-        sleep(mt_rand(5, 15));
+        for ($i=0; $i<10000000; $i++) {
+
+        }
         $this->daemon->log("Awake!");
     }
 

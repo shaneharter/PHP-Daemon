@@ -1,0 +1,2 @@
+killall -9 -v /usr/bin/php
+
