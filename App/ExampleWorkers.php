@@ -27,11 +27,11 @@ class App_ExampleWorkers extends Core_Daemon
         });
 
 
-        $this->worker('functionWorker', function($count_really_high)  {
+        $this->worker('functionWorker', function($count_really_high = 9876543)  {
             for ($i=0; $i<$count_really_high; $i++) {
             }
 
-            return 'Look! I counted Really High! All the way to: ' . $count_really_high;
+            return 'Look! ' . 'Rah!' . ' ' . $count_really_high;
         });
 
         $this->functionWorker->timeout(20);
@@ -47,7 +47,6 @@ class App_ExampleWorkers extends Core_Daemon
 
         if ($this->is_parent())
         {
-
             // Call the worker when you pass the SIGUSR2 signal to the daemon.
             // You can use the script in /scripts/usr2_signal or just do:  kill -12 [pid]
 
@@ -65,7 +64,7 @@ class App_ExampleWorkers extends Core_Daemon
                 if ($signal == SIGBUS) {
                     $cnt = mt_rand(1000000, 9000000);
                     $that->log("Starting New FunctionWorker Job to Count to $cnt");
-                    $that->functionWorker($cnt);
+                    $that->functionWorker();
                 }
             });
         }

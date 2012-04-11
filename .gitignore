@@ -28,3 +28,4 @@ tmp/
 test.php
 example_logs
 *.daemon_lock
+pid

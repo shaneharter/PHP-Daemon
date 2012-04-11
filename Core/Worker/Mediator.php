@@ -281,8 +281,10 @@ abstract class Core_Worker_Mediator
             $call = $this->calls[$call_id];
 
             unset($this->running_calls[$call_id]);
-            if (is_callable($this->on_return))
-                $this->on_return($call->return);
+
+            $on_return = $this->on_return; // Callbacks have to be in a local variable...
+            if (is_callable($on_return))
+                call_user_func($on_return, $call);
 
             $this->log('Job ' . $call_id . ' Is Complete');
         } else {
@@ -298,8 +300,9 @@ abstract class Core_Worker_Mediator
                     unset($this->running_calls[$call_id]);
                     $call->status = self::TIMEOUT;
 
-                    if (is_callable($this->on_timeout))
-                        call_user_func($this->on_timeout, $call);
+                    $on_timeout = $this->on_timeout;
+                    if (is_callable($on_timeout))
+                        call_user_func($on_timeout, $call);
 
                 }
             }
@@ -515,9 +518,9 @@ abstract class Core_Worker_Mediator
      * @param $args
      * @return bool
      */
-    public function __invoke($args)
+    public function __invoke()
     {
-        return $this->__call('execute', $args);
+        return $this->__call('execute', func_get_args());
     }
 
     /**
