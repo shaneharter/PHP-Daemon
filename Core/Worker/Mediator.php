@@ -8,7 +8,7 @@
  * @todo use ftok to create IPC id's
  * @todo graceful handling when forking fails for some reason
  * @todo add cli argument to daemon that will let us restart the daemon and re-attach the same message queues. Maybe give workers a way to turn this off tho.
- * @todo
+ * @todo retry limits?
  */
 abstract class Core_Worker_Mediator
 {
@@ -236,7 +236,7 @@ abstract class Core_Worker_Mediator
      * fork as-needed. In the middle we will avoid forking until the first call, then do all the forks in one go.
      * @return mixed
      */
-    public function fork() {
+    private function fork() {
         $processes = count($this->processes);
         if ($this->workers <= $processes)
             return;
@@ -407,7 +407,7 @@ abstract class Core_Worker_Mediator
      * Handle Message Queue errors
      * @param $error_code
      */
-    protected function message_error($error_code) {
+    private  function message_error($error_code) {
         $ignored_errors = array(
             4,  // System Interrupt
             42, // No message of desired type
@@ -424,7 +424,7 @@ abstract class Core_Worker_Mediator
      * @param $call_id
      * @return bool
      */
-    protected function message_encode($call_id) {
+    private function message_encode($call_id) {
 
         $call = $this->calls[$call_id];
 
@@ -456,7 +456,7 @@ abstract class Core_Worker_Mediator
      * @return mixed
      * @throws Exception
      */
-    protected function message_decode(Array $message) {
+    private function message_decode(Array $message) {
 
         $call = null;
         if ($call_id = $message['call'])
