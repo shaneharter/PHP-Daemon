@@ -25,6 +25,20 @@ class App_ExampleWorkers extends Core_Daemon
             $that->log("Job Timed Out!");
             $that->log("Method: " . $call->method);
         });
+
+
+        $this->worker('functionWorker', function($count_really_high)  {
+            for ($i=0; $i<$count_really_high; $i++) {
+            }
+
+            return 'Look! I counted Really High! All the way to: ' . $count_really_high;
+        });
+
+        $this->functionWorker->timeout(20);
+        $this->functionWorker->onReturn(function($call) use($that) {
+            $that->log("WTG! My Function Worker Completed!");
+            $that->log("Return: " . $call->return);
+        });
     }
 
 
@@ -47,6 +61,12 @@ class App_ExampleWorkers extends Core_Daemon
                 if ($signal == SIGUSR2) {
                     $that->example->doooit($that->count, $array);
                 }
+
+                if ($signal == SIGBUS) {
+                    $cnt = mt_rand(1000000, 9000000);
+                    $that->log("Starting New FunctionWorker Job to Count to $cnt");
+                    $that->functionWorker($cnt);
+                }
             });
         }
     }
@@ -63,7 +83,7 @@ class App_ExampleWorkers extends Core_Daemon
         if (@file_exists($dir) == false)
             @mkdir($dir, 0777, true);
 
-        if (@is_writable($dir) == false)x
+        if (@is_writable($dir) == false)
             $dir = BASE_PATH . '/example_logs';
 
         return $dir . '/log_' . date('Ymd');

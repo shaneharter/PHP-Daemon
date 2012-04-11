@@ -39,7 +39,7 @@ class App_MyWorker implements Core_IWorkerInterface
 
 
     public function doooit($count, $value) {
-        $this->daemon->log("So Tired... Going to Sleep. Job Number $count. Give me something from the args: $value[2]");
+        $this->mediator->log("So Tired... Going to Sleep. Job Number $count. Give me something from the args: $value[2]");
         for ($i=0; $i<10000000; $i++) {
 
         }

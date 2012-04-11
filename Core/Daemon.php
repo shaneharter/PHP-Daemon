@@ -323,26 +323,16 @@ abstract class Core_Daemon
     }
 
     /**
-     * Allow named workers to be accessed as a local property
-     * @example $this->WorkerName->timeout = 30;
-     * @example $this->WorkerName->execute();
-     * @param string $name    The name of the worker to access
-     */
-    public function __get($name)
-    {
-        if (isset($this->workers->{$name}) && is_object($this->workers->{$name}) && $this->workers->{$name} instanceof Core_Worker)
-            return $this->workers->{$name};
-    }
-
-    /**
      * Allow named workers to be accessed as a local method
      * @example $this->WorkerName();
      * @param string $name    The name of the worker to access
      */
     public function __call($name, $args)
     {
-        if (isset($this->workers->{$name}) && is_object($this->workers->{$name}) && $this->workers->{$name} instanceof Core_Worker)
-            return call_user_func_array(array($this->workers->{$name}, 'execute'), $args);
+        $this->log("Daemon __call with " . $name);
+        if (in_array($name, $this->workers)) {
+            return call_user_func_array($this->$name, $args);
+        }
     }
 
     /**
@@ -826,13 +816,13 @@ abstract class Core_Daemon
         $this->check_alias($alias);
 
         switch (true) {
-            case is_object($worker):
+            case is_object($worker) && !is_a($worker, 'Closure'):
                 $mediator = new Core_Worker_ObjectMediator($alias, $this);
                 $mediator->setObject($worker);
                 break;
 
             case is_callable($worker):
-                $mediator = new Core_Worker_Mediator();
+                $mediator = new Core_Worker_FunctionMediator($alias, $this);
                 $mediator->setFunction($worker);
                 break;
 
