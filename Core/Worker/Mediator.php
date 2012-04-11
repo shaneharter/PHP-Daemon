@@ -1,19 +1,23 @@
 <?php
 /**
- * Created by JetBrains PhpStorm.
- * User: shane
- * Date: 4/10/12
- * Time: 2:37 PM
- * To change this template use File | Settings | File Templates.
+ * Create and run worker processes.
+ * Use message queues and shared memory to coordinate worker processes and return work product to the daemon.
+ * Uses system v mq's because afaik there's no existing PHP implementation of posix message queues.
+ * @author Shane Harter
+ *
+ * @todo use ftok to create IPC id's
+ * @todo graceful handling when forking fails for some reason
+ * @todo add cli argument to daemon that will let us restart the daemon and re-attach the same message queues. Maybe give workers a way to turn this off tho.
+ * @todo
  */
 abstract class Core_Worker_Mediator
 {
     /**
-     * IPC Message Queue message types
+     * Message Types
      */
-    const WORKER_CALL = 1;
+    const WORKER_CALL = 3;
     const WORKER_RUNNING = 2;
-    const WORKER_RETURN = 3;
+    const WORKER_RETURN = 1;
 
     /**
      * Call Statuses
@@ -187,6 +191,12 @@ abstract class Core_Worker_Mediator
         }
     }
 
+    public function __destruct() {
+        @shm_remove($this->shm);
+        @shm_detach($this->shm);
+        @msg_remove_queue($this->queue);
+    }
+
     public function setup() {
 
         if ($this->is_parent) {
@@ -205,6 +215,12 @@ abstract class Core_Worker_Mediator
 
         $this->queue = msg_get_queue($this->id, 0666);
         $this->shm = shm_attach($this->id, $this->memory_limit, 0666);
+
+        if (!is_resource($this->queue))
+            throw new Exception(__METHOD__ . " Failed. Could not attach message queue id {$this->id}");
+
+        if (!is_resource($this->shm))
+            throw new Exception(__METHOD__ . " Failed. Could not address shared memory block {$this->id}");
     }
 
     public function check_environment(Array $errors = array()) {
@@ -266,27 +282,31 @@ abstract class Core_Worker_Mediator
      */
     public function run() {
 
-        $message_type = $message = $message_error = null;
-        if (msg_receive($this->queue, self::WORKER_RUNNING, $message_type, $this->memory_limit, $message, true, MSG_IPC_NOWAIT, $message_error)) {
-            $call_id = $this->message_decode($message);
-            $this->running_calls[$call_id] = true;
-            $this->log('Job ' . $call_id . ' Is Running');
-        } else {
-            $this->message_error($message_error);
-        }
+        if (empty($this->calls))
+            return;
 
         $message_type = $message = $message_error = null;
-        if (msg_receive($this->queue, self::WORKER_RETURN, $message_type, $this->memory_limit, $message, true, MSG_IPC_NOWAIT, $message_error)) {
-            $call_id = $this->message_decode($message);
-            $call = $this->calls[$call_id];
+        if (msg_receive($this->queue, -self::WORKER_RUNNING, $message_type, $this->memory_limit, $message, true, MSG_IPC_NOWAIT, $message_error)) {
+            switch($message_type) {
+                case self::WORKER_RUNNING:
+                    $call_id = $this->message_decode($message);
+                    $this->running_calls[$call_id] = true;
+                    $this->log('Job ' . $call_id . ' Is Running');
+                    break;
 
-            unset($this->running_calls[$call_id]);
+                case self::WORKER_RETURN:
+                    $call_id = $this->message_decode($message);
+                    $call = $this->calls[$call_id];
 
-            $on_return = $this->on_return; // Callbacks have to be in a local variable...
-            if (is_callable($on_return))
-                call_user_func($on_return, $call);
+                    unset($this->running_calls[$call_id]);
 
-            $this->log('Job ' . $call_id . ' Is Complete');
+                    $on_return = $this->on_return; // Callbacks have to be in a local variable...
+                    if (is_callable($on_return))
+                        call_user_func($on_return, $call);
+
+                    $this->log('Job ' . $call_id . ' Is Complete');
+                    break;
+            }
         } else {
             $this->message_error($message_error);
         }
@@ -298,6 +318,7 @@ abstract class Core_Worker_Mediator
                 if ($now > ($call->time[self::RUNNING] + $this->timeout)) {
                     posix_kill($call->pid, SIGKILL);
                     unset($this->running_calls[$call_id]);
+                    unset($this->processes[$call->pid]);
                     $call->status = self::TIMEOUT;
 
                     $on_timeout = $this->on_timeout;
@@ -342,11 +363,12 @@ abstract class Core_Worker_Mediator
                 catch (Exception $e) {
                     $this->log($e->getMessage());
                 }
-
             } else {
                 $this->message_error($message_error);
             }
 
+            // Give the CPU a break - Sleep for 1/50 a second.
+            usleep(20000);
         }
     }
 
@@ -457,42 +479,15 @@ abstract class Core_Worker_Mediator
         $this->daemon->log("Worker [{$this->alias}] $message\n", $is_error);
     }
 
-
-    /**
-     * Re-run a previous call by passing in the call's struct.
-     * Note: When calls are re-run a retry=1 property is added, and that is incremented for each re-call. You should check
-     * that value to avoid re-calling failed methods in an infinite loop.
-     *
-     * @example You set a timeout handler using onTimeout. The worker will pass the timed-out call to the handler as a
-     * stdClass object. You can re-run it by passing the object here.
-     * @param stdClass $call
-     */
-    public function retry(stdClass $call) {
-        if (empty($call->method))
-            throw new Exception(__METHOD__ . " Failed. A valid call struct is required.");
-
-        return $this->__call($call->method, $call->args, ++$call->retries);
-    }
-
     /**
      * Mediate all calls to methods on the contained $object and pass them to instances of $object running in the background.
-     * @param $method
-     * @param $args
+     * @param string $method
+     * @param array $args
+     * @param int $retries
      * @return bool
      * @throws Exception
      */
-    public function __call($method, $args) {
-
-        $retries = 0;
-
-        // Horrible hack to support retries. Would be better if we could just add an optional 3rd param to this method
-        // to indicate a retry but we can't. And we need the struct to have a retry count so implementations can avoid
-        // infinite loops. So we hack this all by having the retry() method pass an entire stdClass call struct as $method
-        if (is_object($method) && !empty($method->method)) {
-            $args    = $method->args;
-            $retries = $method->retries;
-            $method  = $method->method;
-        }
+    private function call($method, Array $args, $retries=0) {
 
         if (!in_array($method, $this->methods))
             throw new Exception(__METHOD__ . " Failed. Method `{$method}` is not callable.");
@@ -513,14 +508,42 @@ abstract class Core_Worker_Mediator
         return $this->message_encode($call->id) === true;
     }
 
+
+    /**
+     * Re-run a previous call by passing in the call's struct.
+     * Note: When calls are re-run a retry=1 property is added, and that is incremented for each re-call. You should check
+     * that value to avoid re-calling failed methods in an infinite loop.
+     *
+     * @example You set a timeout handler using onTimeout. The worker will pass the timed-out call to the handler as a
+     * stdClass object. You can re-run it by passing the object here.
+     * @param stdClass $call
+     */
+    public function retry(stdClass $call) {
+        if (empty($call->method))
+            throw new Exception(__METHOD__ . " Failed. A valid call struct is required.");
+
+        $this->log("Retrying Call {$call->id} To `{$call->method}``");
+        return $this->call($call->method, $call->args, ++$call->retries);
+    }
+
+    /**
+     * Intercept method calls on worker objects and pass them to the call mediator
+     * @param $method
+     * @param $args
+     * @return bool
+     * @throws Exception
+     */
+    public function __call($method, $args) {
+        return $this->call($method, $args);
+    }
+
     /**
      * If your worker object implements an execute() method, it can be called in the daemon using $this->MyAlias()
      * @param $args
      * @return bool
      */
-    public function __invoke()
-    {
-        return $this->__call('execute', func_get_args());
+    public function __invoke() {
+        return $this->call('execute', func_get_args());
     }
 
     /**

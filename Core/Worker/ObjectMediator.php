@@ -22,6 +22,7 @@ final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
     public function __destruct() {
         if (is_object($this->object))
             $this->object->teardown();
+        parent::__destruct();
     }
 
     public function setObject($o) {

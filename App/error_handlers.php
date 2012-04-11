@@ -47,7 +47,7 @@ function daemon_error($errno, $errstr, $errfile, $errline)
             break;
 	}
 	
-	$message = sprintf('PHP %s: %s in %s on line %d', $errors, $errstr, $errfile, $errline);
+	$message = sprintf('PHP %s: %s in %s on line %d pid %s', $errors, $errstr, $errfile, $errline, getmypid());
 	
     if (ini_get('display_errors'))
     	echo "\n", $message, "\n";

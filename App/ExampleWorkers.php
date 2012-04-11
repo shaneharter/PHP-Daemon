@@ -24,6 +24,8 @@ class App_ExampleWorkers extends Core_Daemon
         $this->example->onTimeout(function($call) use($that) {
             $that->log("Job Timed Out!");
             $that->log("Method: " . $call->method);
+            $that->log("Retrying...");
+            $that->example->retry($call);
         });
 
 
