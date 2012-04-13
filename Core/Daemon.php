@@ -547,14 +547,16 @@ abstract class Core_Daemon
      */
     public function fatal_error($log_message)
     {
-        // Log the Error
         $this->log($log_message, true);
-        $this->log(get_class($this) . ' is Shutting Down...');
 
-        $delay = 2;
-        if (($this->runtime() + $delay) > self::MIN_RESTART_SECONDS) {
-            sleep($delay);
-            $this->restart();
+        if ($this->is_parent) {
+            $this->log(get_class($this) . ' is Shutting Down...');
+
+            $delay = 2;
+            if (($this->runtime() + $delay) > self::MIN_RESTART_SECONDS) {
+                sleep($delay);
+                $this->restart();
+            }
         }
 
         // If we get here, it means we couldn't try a re-start or we tried and it just didn't work.
@@ -725,8 +727,11 @@ abstract class Core_Daemon
      */
     private function reap($block = false)
     {
+        if ($block)
+            $this->log("Reaping. Block: " . (int) $block);
+
         do {
-            $pid = pcntl_wait($status, ($block) ? null : WNOHANG);
+            $pid = pcntl_wait($status, ($block && $this->is_parent) ? WNOHANG : WNOHANG);
             if (isset($this->worker_map[$pid])) {
                 $alias = $this->worker_map[$pid];
                 $this->{$alias}->reap($pid, $status);

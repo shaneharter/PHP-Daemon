@@ -9,6 +9,7 @@
  * @todo graceful handling when forking fails for some reason
  * @todo add cli argument to daemon that will let us restart the daemon and re-attach the same message queues. Maybe give workers a way to turn this off tho.
  * @todo retry limits?
+ * @todo more/better logging, maybe a debug/verbose mode..
  */
 abstract class Core_Worker_Mediator
 {
@@ -192,9 +193,11 @@ abstract class Core_Worker_Mediator
     }
 
     public function __destruct() {
-        @shm_remove($this->shm);
-        @shm_detach($this->shm);
-        @msg_remove_queue($this->queue);
+        if ($this->is_parent) {
+            @shm_remove($this->shm);
+            @shm_detach($this->shm);
+            @msg_remove_queue($this->queue);
+        }
     }
 
     public function setup() {
@@ -298,12 +301,11 @@ abstract class Core_Worker_Mediator
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
 
-                    unset($this->running_calls[$call_id]);
-
                     $on_return = $this->on_return; // Callbacks have to be in a local variable...
                     if (is_callable($on_return))
                         call_user_func($on_return, $call);
 
+                    unset($this->running_calls[$call_id], $this->calls[$call_id]);
                     $this->log('Job ' . $call_id . ' Is Complete');
                     break;
             }
@@ -317,8 +319,7 @@ abstract class Core_Worker_Mediator
                 $call = $this->calls[$call_id];
                 if ($now > ($call->time[self::RUNNING] + $this->timeout)) {
                     posix_kill($call->pid, SIGKILL);
-                    unset($this->running_calls[$call_id]);
-                    unset($this->processes[$call->pid]);
+                    unset($this->running_calls[$call_id], $this->processes[$call->pid]);
                     $call->status = self::TIMEOUT;
 
                     $on_timeout = $this->on_timeout;
@@ -361,7 +362,7 @@ abstract class Core_Worker_Mediator
                     }
                 }
                 catch (Exception $e) {
-                    $this->log($e->getMessage());
+                    $this->log($e->getMessage(), true);
                 }
             } else {
                 $this->message_error($message_error);
@@ -476,7 +477,11 @@ abstract class Core_Worker_Mediator
      * @param bool $is_error
      */
     public function log($message, $is_error = false) {
-        $this->daemon->log("Worker [{$this->alias}] $message\n", $is_error);
+        $this->daemon->log("Worker [{$this->alias}] $message", $is_error);
+    }
+
+    public function fatal_error($message) {
+        $this->daemon->fatal_error("Worker [{$this->alias}] $message\nWorker [{$this->alias}] Is Shutting Down...");
     }
 
     /**
@@ -487,12 +492,10 @@ abstract class Core_Worker_Mediator
      * @return bool
      * @throws Exception
      */
-    private function call($method, Array $args, $retries=0) {
+    private function call($method, Array $args, $retries=0, $errors=0) {
 
         if (!in_array($method, $this->methods))
             throw new Exception(__METHOD__ . " Failed. Method `{$method}` is not callable.");
-
-        $this->fork();
 
         $call = new stdClass();
         $call->method        = $method;
@@ -502,10 +505,15 @@ abstract class Core_Worker_Mediator
         $call->pid           = null;
         $call->id            = count($this->calls) + 1; // We use this ID for shm keys which cannot be 0
         $call->retries       = $retries;
+        $call->errors        = $errors;
         $this->calls[$call->id] = $call;
 
-        // @todo handle call errors intelligently...
-        return $this->message_encode($call->id) === true;
+        try {
+            $this->fork();
+            return $this->message_encode($call->id) === true;
+        } catch (Exception $e) {
+            $this->log('Call Failed: ' . $e->getMessage(), true);
+        }
     }
 
 
@@ -550,7 +558,7 @@ abstract class Core_Worker_Mediator
      * Set a callable that will called whenever a timeout is enforced on a worker.
      * The offending $call stdClass will be passed-in. Can be passed to retry() to re-try the call. Will have a
      * `retries=N` property containing the number of times it's been sent thru retry().
-     * @param $on_timeout
+     * @param callable $on_timeout
      * @throws Exception
      */
     public function onTimeout($on_timeout)
@@ -562,9 +570,24 @@ abstract class Core_Worker_Mediator
     }
 
     /**
+     * Set a callable that will called whenever an error occurs while executing a call.
+     * The affected $call stdClass will be passed-in. Will have an `errors=N` property indicating the number of times it's errored-out.
+     * Can be passed to retry() to re-try the call. If you do it will keep a retry count in addition to the error count.
+     * @param callable $on_error
+     * @throws Exception
+     */
+    public function onError($on_error)
+    {
+        if (!is_callable($on_error))
+            throw new Exception(__METHOD__ . " Failed. Callback or Closure expected.");
+
+        $this->on_error = $on_error;
+    }
+
+    /**
      * Set a callable that will be called when a worker method completes.
      * The $call stdClass will be passed-in -- with a `return` property.
-     * @param $on_return
+     * @param callable $on_return
      * @throws Exception
      */
     public function onReturn($on_return)
