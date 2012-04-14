@@ -18,7 +18,7 @@ class Core_Plugin_Ini implements Core_IPluginInterface, ArrayAccess
      * This is the config file accessed by self::__construct
      * @var string
      */
-    public $filename = 'config.ini';
+    public $filename = 'settings.ini';
 
     /**
      * The existence of these sections in the Ini file will be validated at daemon startup.

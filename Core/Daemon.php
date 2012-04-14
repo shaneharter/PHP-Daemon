@@ -14,7 +14,7 @@ declare(ticks = 5) ;
 abstract class Core_Daemon
 {
     /**
-     * The config.ini has a setting wherein the daemon can be auto-restarted every X seconds.
+     * The settings.ini has a setting wherein the daemon can be auto-restarted every X seconds.
      * We don't want to kill the server with process spawning so any number below this constant will be ignored.
      * @var integer
      */
@@ -687,7 +687,10 @@ abstract class Core_Daemon
 
         if ($stats['idle'] > 0) {
             // usleep accepts microseconds, 1 second in microseconds = 1,000,000
-            usleep($stats['idle'] * 1000000);
+            $foo = $stats['idle'] * 1000000;
+            $this->log($foo);
+            usleep($foo * 1000000);
+            sleep(30);
         } else {
             // There is no time to sleep between intervals -- but we still need to give the CPU a break
             // Sleep for 1/500 a second.
@@ -695,12 +698,12 @@ abstract class Core_Daemon
             if ($this->loop_interval > 0)
                 $this->log('Run Loop Taking Too Long. Duration: ' . $stats['duration'] . ' Interval: ' . $this->loop_interval, true);
         }
-
+        $this->log(print_r($stats, true));
         // Need to keep stats array from getting too large. Trim it back about once every 100 iterations
         if (mt_rand(1,100) == 50 ) {
             $this->stats = array_slice($this->stats, -100, 100);
         }
-
+die('-------------');
         $this->stats[] = $stats;
         return $stats;
     }

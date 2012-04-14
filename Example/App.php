@@ -1,6 +1,6 @@
 <?php
 
-class App_Example extends Core_Daemon
+class Example_App extends Core_Daemon
 {
 
 	/**
@@ -17,7 +17,7 @@ class App_Example extends Core_Daemon
 	protected function __construct()
 	{
 		// We want to our daemon to loop once per second.
-		$this->loop_interval = 1.00;
+		$this->loop_interval = 40.00;
 		parent::__construct();
 	}
 
@@ -28,7 +28,7 @@ class App_Example extends Core_Daemon
 
 		// Use the INI plugin to provide an easy way to include config settings
 		$this->plugin('Plugin_Ini', array(), 'ini');
-		$this->ini->filename = 'config.ini';
+		$this->ini->filename = BASE_PATH . '/Example/config.ini';
 		$this->ini->required_sections = array('example_section');
 	}
 	
@@ -48,20 +48,9 @@ class App_Example extends Core_Daemon
 			
 		// Some setup stuff you only want run once, in the parent, when the daemon starts. You can use ->is_parent for that: 
 		
-		if ($this->is_parent)
+		if ($this->is_parent())
 		{
-			// Use the INI plugin to provide an easy way to include config settings
-            $this->worker('ImpressionsHourly', function() {
-                echo "WORKER BITCH!";
-            });
 
-            // Tell the Worker API to kill the worker process after 60 seconds. If you set this value too low, 
-            // you're going to get a lot of error reports and you'll have to manually run worker processes to complete your task. 
-            $this->ImpressionsHourly->timeout(60);
-
-            // Tell the Worker API to run this setup method when the worker process is created -- 
-            // Do this if you connect to a database in this setup() method and the worker needs access to the DB connection.
-            $this->ImpressionsHourly->run_setup(true);
 		}
 	}
 	
@@ -74,24 +63,7 @@ class App_Example extends Core_Daemon
 	 */
 	protected function execute()
 	{
-		// If it's currently running, this won't do anything. If it's idle, this will run it. 
-		// All error and status info from the prior running will be reset
-		$this->ImpressionsHourly();	
-
-		// Or you can do it manually
-		if ($this->ImpressionsHourly->state() <> Core_Worker::Core_Worker_Running)
-			$this->ImpressionsHourly();	// Or $this->ImpressionsHourly->execute();
-			
-		// You can pass args directly into your callback or closure: 
-		$this->ImpressionsHourly($arg1, $arg2);
-		
-		
-		
-		$this->log('The current worker timeout is: ' . $this->ImpressionsHourly->timeout());
-		
-		return;
-		
-		// The Ini plugin implements the SPL ArrayAccess interface, so in your execute() method you can access the data like this: 
+		// The Ini plugin implements the SPL ArrayAccess interface, so in your execute() method you can access the data like this:
 		$example_key = $this->ini['example_section']['example_key'];
 					
 		$this->log($example_key);
@@ -104,11 +76,11 @@ class App_Example extends Core_Daemon
 		{
 			// If we are here, it means the child process was created just fine. However, we have no idea
 			// if some_long_running_task() will run successfully. The fork() method returns as soon as the fork is attempted. 
-			// If the fork failed for some reason, it will retrun false. 
+			// If the fork failed for some reason, it will return false.
 		}
 		
 		// NOTE: 
-		// If yoru forked process requires a MySQL Connection, you need to re-establish the connection in the child process
+		// If your forked process requires a MySQL Connection, you need to re-establish the connection in the child process
 		// after the fork. If you create the connection here in the setup() method, It will LOOK like the child has a valid MySQL
 		// resource after forking, but in reality it's dead. To fix that, you can easily re-run the setup() method in the child
 		// process by passing "true" as the 3rd param: 

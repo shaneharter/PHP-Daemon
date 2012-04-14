@@ -535,10 +535,10 @@ abstract class Core_Worker_Mediator
     }
 
     /**
-     * Intercept method calls on worker objects and pass them to the call mediator
+     * Intercept method calls on worker objects and pass them to the call mediatorff
      * @param $method
      * @param $args
-     * @return bool
+     * @return booldd
      * @throws Exception
      */
     public function __call($method, $args) {
