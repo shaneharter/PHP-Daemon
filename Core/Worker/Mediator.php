@@ -477,11 +477,11 @@ abstract class Core_Worker_Mediator
      * @param bool $is_error
      */
     public function log($message, $is_error = false) {
-        $this->daemon->log("Worker [{$this->alias}] $message", $is_error);
+        $this->daemon->log("$message", $is_error, $this->alias);
     }
 
     public function fatal_error($message) {
-        $this->daemon->fatal_error("Worker [{$this->alias}] $message\nWorker [{$this->alias}] Is Shutting Down...");
+        $this->daemon->fatal_error("$message\nWorker Is Shutting Down...", $this->alias);
     }
 
     /**

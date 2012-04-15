@@ -26,7 +26,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
         // The signals themselves are defined in the settings.ini
         // We also have other various settings defined in the ini, so we validate that the ini has both [signals] and [default] section
 
-        $this->plugin('Plugin_Ini', array(), 'settings');
+        $this->plugin('settings', new Core_Plugin_Ini());
         $this->settings->filename = BASE_PATH . '/ExampleWorkers/settings.ini';
         $this->settings->required_sections = array('signals', 'default');
     }
@@ -41,7 +41,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
         // By convention, workers are named in UpperCase
         // Look at App_Prime to see the available methods. They are: sieve, is_prime, primes_among
 
-        $this->worker('PrimeNumbers', new App_Primes());
+        $this->worker('PrimeNumbers', new ExampleWorkers_Workers_Primes());
         $this->PrimeNumbers->timeout(60 * 5);
         $this->PrimeNumbers->workers(3);
 

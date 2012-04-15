@@ -49,11 +49,20 @@ function daemon_error($errno, $errstr, $errfile, $errline)
 	
 	$message = sprintf('PHP %s: %s in %s on line %d pid %s', $errors, $errstr, $errfile, $errline, getmypid());
 	
-    if (ini_get('display_errors'))
-    	echo "\n", $message, "\n";
+    if (ini_get('display_errors')) {
+    	echo PHP_EOL, $message, PHP_EOL;
+        if ($is_fatal) {
+            $e = new Exception;
+            echo $e->getTraceAsString(), PHP_EOL;
+        }
+    }
 
     if (ini_get('log_errors')) {
         error_log($message);
+        if ($is_fatal) {
+            $e = new Exception;
+            error_log(var_export($e->getTraceAsString(), true));
+        }
     }
         
     if ($is_fatal) {
@@ -88,6 +97,5 @@ function daemon_shutdown_function()
 }
 
 error_reporting(E_WARNING | E_USER_ERROR);
-error_reporting(E_ALL);
 set_error_handler('daemon_error');
 register_shutdown_function('daemon_shutdown_function');

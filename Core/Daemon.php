@@ -317,8 +317,8 @@ abstract class Core_Daemon
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->teardown();
 
-        $this->reap(true);
-        if (!empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
+        //$this->reap(true);
+        if ($this->is_parent && !empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
             unlink($this->pid_file);
     }
 
@@ -448,10 +448,11 @@ abstract class Core_Daemon
                 $this->pid(getmypid());
                 pcntl_setpriority(1);
 
-                // Truncate the plugins array, so that way
-                // when this fork dies and the __destruct runs, it will only shut down
-                // plugins that were added to this forked instance explicitly
-                $this->plugins = array();
+                // Truncate the plugins and workers lists.
+                // The instances themselves will still be available as $this->{$alias} but removing the arrays
+                // will allow the fork to have and manage it's own set of workers and plugins if desired without interfering
+                // with the parent.
+                $this->workers = $this->worker_map = $this->plugins = array();
 
                 if ($run_setup) {
                     $this->log("Running Setup in forked PID " . $this->pid);
@@ -492,17 +493,18 @@ abstract class Core_Daemon
      * @param string $message
      * @param boolean $is_error    When true, an ON_ERROR event will be dispatched.
      */
-    public function log($message, $is_error = false)
+    public function log($message, $is_error = false, $label = '')
     {
         static $handle = false;
         static $raise_logfile_error = true;
 
         try
         {
-            $header = "Date                  PID   Message\n";
+            $header = "Date                  PID   LABEL        Message\n";
             $date = date("Y-m-d H:i:s");
             $pid = str_pad($this->pid, 5, " ", STR_PAD_LEFT);
-            $prefix = "[$date] $pid";
+            $label = str_pad(substr($label, 0, 12), 12, " ", STR_PAD_RIGHT);
+            $prefix = "[$date] $pid $label";
 
             if ($handle === false) {
                 if (strlen($this->log_file()) > 0)
@@ -545,9 +547,9 @@ abstract class Core_Daemon
      * Raise a fatal error and kill-off the process. If it's been running for a while, it'll try to restart itself.
      * @param string $log_message
      */
-    public function fatal_error($log_message)
+    public function fatal_error($log_message, $label = '')
     {
-        $this->log($log_message, true);
+        $this->log($log_message, true, $label);
 
         if ($this->is_parent) {
             $this->log(get_class($this) . ' is Shutting Down...');
@@ -596,6 +598,7 @@ abstract class Core_Daemon
      * Register Signal Handlers
      * Note: SIGKILL is missing -- afaik this is uncapturable in a PHP script, which makes sense.
      * Note: Some of these signals have special meaning and use in POSIX systems like Linux. Use with care.
+     * Note: If the daemon is run with a loop_interval timer, some signals will be suppressed during usleep periods
      * @return void
      */
     private function register_signal_handlers()
@@ -607,8 +610,8 @@ abstract class Core_Daemon
             // Ignored by Core_Daemon -- register callback ON_SIGNAL to listen for them.
             // Some of these are duplicated/aliased, listed here for completeness
             SIGUSR2, SIGCONT, SIGQUIT, SIGILL, SIGTRAP, SIGABRT, SIGIOT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGALRM,
-            SIGCHLD, SIGCONT, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF,
-            SIGWINCH, SIGPOLL, SIGIO, SIGPWR, SIGSYS, SIGBABY, SIGSTKFLT, SIGCLD
+            SIGCONT, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF,
+            SIGWINCH, SIGPOLL, SIGIO, SIGPWR, SIGSYS, SIGBABY, SIGSTKFLT, SIGCHLD
         );
 
         foreach(array_unique($signals) as $signal) {
@@ -681,16 +684,24 @@ abstract class Core_Daemon
             return $start_time = microtime(true);
 
         // End the Stop Watch
+        // If we have idle time, do any housekeeping tasks
+        if (microtime(true) - $start_time > 0) {
+            if (mt_rand(1, 100) == 50 ) {
+                $this->stats = array_slice($this->stats, -100, 100);
+            }
+        }
+
         $stats = array();
         $stats['duration']  = microtime(true) - $start_time;
         $stats['idle']      = $this->loop_interval - $stats['duration'];
 
+        // usleep accepts microseconds, 1 second in microseconds = 1,000,000
+        // Suppress child signals during sleep to stop exiting forks/workers from interrupting the timer.
+        // Note: SIGCONT (-18) signals are not suppressed and can be used to "wake up" the daemon.
         if ($stats['idle'] > 0) {
-            // usleep accepts microseconds, 1 second in microseconds = 1,000,000
-            $foo = $stats['idle'] * 1000000;
-            $this->log($foo);
-            usleep($foo * 1000000);
-            sleep(30);
+            pcntl_sigprocmask(SIG_BLOCK, array(SIGCHLD));
+            usleep($stats['idle'] * 1000000);
+            pcntl_sigprocmask(SIG_UNBLOCK, array(SIGCHLD));
         } else {
             // There is no time to sleep between intervals -- but we still need to give the CPU a break
             // Sleep for 1/500 a second.
@@ -698,12 +709,7 @@ abstract class Core_Daemon
             if ($this->loop_interval > 0)
                 $this->log('Run Loop Taking Too Long. Duration: ' . $stats['duration'] . ' Interval: ' . $this->loop_interval, true);
         }
-        $this->log(print_r($stats, true));
-        // Need to keep stats array from getting too large. Trim it back about once every 100 iterations
-        if (mt_rand(1,100) == 50 ) {
-            $this->stats = array_slice($this->stats, -100, 100);
-        }
-die('-------------');
+
         $this->stats[] = $stats;
         return $stats;
     }
@@ -730,11 +736,14 @@ die('-------------');
      */
     private function reap($block = false)
     {
+//        if (!$this->is_parent)
+//            return;
+
         if ($block)
             $this->log("Reaping. Block: " . (int) $block);
 
         do {
-            $pid = pcntl_wait($status, ($block && $this->is_parent) ? WNOHANG : WNOHANG);
+            $pid = pcntl_wait($status, ($block && $this->is_parent) ? NULL : WNOHANG);
             if (isset($this->worker_map[$pid])) {
                 $alias = $this->worker_map[$pid];
                 $this->{$alias}->reap($pid, $status);
@@ -766,58 +775,64 @@ die('-------------');
 
     /**
      * Load any plugin that implements the Core_IPluginInterface.
-     * All Plugin classes must be named Core_ClassNameHere. To select and use a plugin, just provide any path and
-     * classname using Zend Framework naming conventions. A reference to this daemon instance will be
-     * passed to the plugin constructor. If an alias is given, it will be used to instantiate the class as
-     * $this->{$alias} = $plugin. If no alias is given, it uses the value passed in as $class, eg $this->{$class}
+     * A single instance of a Core plugin can be created by passing the significant-part of the class name
+     * as the $alias. It will instantiate the plugin object and assign it to the name you passed-in.
      *
-     * The plugin loader will always look in the Core/Plugin directory for classes. All 3 of these load the same class:
-     * @example plugin('SomeClass')
-     * @example plugin('Plugin_SomeClass')
-     * @example plugin('Core_Plugin_SomeClass')
+     * If you want to load custom plugins, or multiple instances of built-in plugins, you can provide any alias you want
+     * and an instance of the plugin as the 2nd argument. Plugins have to implement Core_IPluginInterface.
      *
-     * @example plugin('Lock_File')
-     * @example plugin('MyDaemon_Plugin_SomeClass', array(), 'SomeClass')
+     * Both of these examples are equivalent. In both cases, an Ini plugin will be instantiated at $this->ini
+     * @example $this->plugin('ini');
+     * @example $this->plugin('ini', new Core_Plugins_Ini());
      *
-     * @param string $class
-     * @param array $args   Optional array of arguments passed to the Plugin constructor
-     * @param bool $alias   Optional alias you can give to the plugin.
-     * @return mixed
+     * The significant part of Lock plugins must include "Lock_" so the loader can distinguish eg. Core_Plugins_File
+     * from Core_Lock_File:
+     * @example $this->plugin('Lock_File'); // Instantiated at $this->Lock_File
+     *
+     * Obviously the $alias must be unique within the class hierarchy. This will fail:
+     * @example $this->plugin('plugins', new Core_Lock_File); // plugins is reserved, this will throw an exception
+     *
+     * @param $alias
+     * @param Core_IPluginInterface|null $instance
+     * @return Core_IPluginInterface Returns an instance of the plugin
      * @throws Exception
      */
-    protected function plugin($class, Array $args = array(), $alias = false)
+    protected function plugin($alias, Core_IPluginInterface $instance = null)
     {
-        if (!$alias)
-            $alias = $class;
-
         $this->check_alias($alias);
 
-        $prefix = '';
-        $qualified_class = $class;
-        foreach(array('Core', 'Plugin') as $part) {
-            $qualified_class = $prefix . $qualified_class;
-            if (class_exists($qualified_class, true))
-                break;
+        if ($instance === null) {
+            // This if wouldn't be necessary if /Lock lived inside /Plugin.
+            // Now that Locks are plugins in every other way, maybe it should be moved. OTOH, do we really need 4
+            // levels of directory depth in a project with like 10 files...?
+            if (substr($alias, 0, 5) == 'Lock_')
+                $class = 'Core_' . ucfirst($alias);
+            else
+                $class = 'Core_Plugin_' . ucfirst($alias);
 
-            $prefix .= "{$part}_";
-        }
-
-        if (class_exists($qualified_class, true)) {
-            $interfaces = class_implements($qualified_class, true);
-            if (is_array($interfaces) && isset($interfaces['Core_IPluginInterface'])) {
-                $this->{$alias} = new $qualified_class($this->getInstance(), $args);
-                $this->plugins[] = $alias;
-                return;
+            if (class_exists($class, true)) {
+                $interfaces = class_implements($class, true);
+                if (is_array($interfaces) && isset($interfaces['Core_IPluginInterface'])) {
+                    $instance = new $class($this->getInstance());
+                }
             }
         }
-        throw new Exception(__METHOD__ . ' Failed. Could Not Load Plugin: ' . $class);
+
+        if (!is_object($instance)) {
+            throw new Exception(__METHOD__ . " Failed. Could Not Load Plugin '{$alias}'");
+        }
+
+        $this->{$alias} = $instance;
+        $this->plugins[] = $alias;
+        return $instance;
     }
 
     /**
      * Create a persistent Worker process.
      * @param String $alias  The name of the worker -- Will be instantiated at $this->{$alias}
-     * @param mixed $worker An object of type Core_Worker OR a callable (function, callback, closure)
-     * @return Core_Worker_ObjectMediator  Returns a Core_Worker class that can be used to interact with the Worker
+     * @param Callable|Core_IWorkerInterface $worker An object of type Core_Worker OR a callable (function, callback, closure)
+     * @return Core_Worker_ObjectMediator Returns a Core_Worker class that can be used to interact with the Worker
+     * @todo Use 'callable' type hinting if/when we move to a php 5.4 requirement.
      */
     protected function worker($alias, $worker)
     {

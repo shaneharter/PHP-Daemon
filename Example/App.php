@@ -2,24 +2,7 @@
 
 class Example_App extends Core_Daemon
 {
-
-	/**
-	 * We keep the constructor as simple as possible because exceptions thrown from a 
-	 * constructor are a PITA and difficult to recover from. 
-	 * 
-	 * Use the constructor only to set runtime settings, anything else you need to prepare your 
-	 * daemon should should go in the setup() method. 
-	 * 
-	 * Any Plugin should be loaded in the setup() method.
-	 * 
-	 * IMPORTANT to remember to always invoke the parent constructor.  
-	 */
-	protected function __construct()
-	{
-		// We want to our daemon to loop once per second.
-		$this->loop_interval = 40.00;
-		parent::__construct();
-	}
+    protected  $loop_interval = 2;
 
 	protected function load_plugins()
 	{
@@ -27,7 +10,9 @@ class Example_App extends Core_Daemon
         $this->plugin('Lock_File');
 
 		// Use the INI plugin to provide an easy way to include config settings
-		$this->plugin('Plugin_Ini', array(), 'ini');
+        // If the plugins are located in the /Core/Plugins directory, the name doesn't have to be qualified.
+        // In this case you can refer to the Core_Plugins_Ini class as Core_Plugins_Ini, Plugins_Ini, or just Ini
+		$this->plugin('ini');
 		$this->ini->filename = BASE_PATH . '/Example/config.ini';
 		$this->ini->required_sections = array('example_section');
 	}
@@ -63,28 +48,32 @@ class Example_App extends Core_Daemon
 	 */
 	protected function execute()
 	{
+
+
 		// The Ini plugin implements the SPL ArrayAccess interface, so in your execute() method you can access the data like this:
 		$example_key = $this->ini['example_section']['example_key'];
 					
 		$this->log($example_key);
-		
+
 		// If you do have a specific long-running task, maybe emailing a bunch of people or using an external API, you can
 		// easily fork a child process: 
 		$callback = array($this, 'some_forked_task');
-		
+
 		if ($this->fork($callback, array('Hello from the first fork() call')))
 		{
 			// If we are here, it means the child process was created just fine. However, we have no idea
 			// if some_long_running_task() will run successfully. The fork() method returns as soon as the fork is attempted. 
-			// If the fork failed for some reason, it will return false.
+			// If the fork itself failed for some reason, it will return false.
 		}
-		
-		// NOTE: 
+
 		// If your forked process requires a MySQL Connection, you need to re-establish the connection in the child process
 		// after the fork. If you create the connection here in the setup() method, It will LOOK like the child has a valid MySQL
 		// resource after forking, but in reality it's dead. To fix that, you can easily re-run the setup() method in the child
 		// process by passing "true" as the 3rd param: 
 		$this->fork($callback, array('Hello from the second fork() call'), true);
+
+        // Note that the often the output from the second fork call is logged before the first. The processes execution
+        // is entirely dependant on the kernel scheduler.
 	}
 	
 	protected function some_forked_task($param)

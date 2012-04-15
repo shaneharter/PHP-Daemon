@@ -17,9 +17,13 @@ set_include_path(implode(PATH_SEPARATOR, array(
     get_include_path(),
 )));
 
-function __autoload($className)
+function pathify($class_name) {
+    return str_replace("_", "/", $class_name) . ".php";
+}
+
+function __autoload($class_name)
 {
-    $classFile = str_replace("_", "/", $className) . ".php";
+    $classFile = str_replace("_", "/", $class_name) . ".php";
     require_once $classFile;
 }
 
