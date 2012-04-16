@@ -174,6 +174,13 @@ abstract class Core_Worker_Mediator
      */
     protected $id;
 
+    /**
+     * We use the ftok function to deterministically create worker queue IDs. The function turns a filesystem path to a token.
+     * Since the path of this file is shared among all workers, a hidden temp file is created in /tmp/phpdaemon.
+     * This var holds the variable name so the file can be removed
+     * @var string
+     */
+    protected $ftok;
 
 
     /**
@@ -213,6 +220,7 @@ abstract class Core_Worker_Mediator
                 return;
             }
 
+            @unlink($this->ftok);
             $this->reset_workers();
         }
     }
@@ -220,7 +228,10 @@ abstract class Core_Worker_Mediator
     public function setup() {
 
         if ($this->is_parent) {
-            $this->id = ftok(dirname($this->daemon->filename()) . '/' . $this->alias, substr($this->alias, 0, 1));
+            @mkdir('/tmp/phpdaemon');
+            $this->ftok = '/tmp/phpdaemon/.' . str_replace("/", "_", $this->daemon->filename()) . '_' . $this->alias;
+            touch($this->ftok);
+            $this->id = ftok($this->ftok, substr($this->alias, 0, 1));
 
             if ($this->forking_strategy == self::AGGRESSIVE)
                 $this->fork();
@@ -317,9 +328,6 @@ abstract class Core_Worker_Mediator
 
         if (!$reconnect)
             return;
-
-
-
     }
 
     /**
