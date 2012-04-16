@@ -1,12 +1,17 @@
 <?php
 /**
  * Created by JetBrains PhpStorm.
- * User: shane
+ * User: Shane Harter
  * Date: 4/15/12
  * Time: 6:06 PM
- * To change this template use File | Settings | File Templates.
  */
 
+$warning = PHP_EOL . "WARNING: This script releases all SystemV IPC resources: Shared Memory, Message Queues and Semaphores. Only run this if you want ALL resources released.
+                      Consider modifying it for partial release if you have other running systems on this server that could be using these resources.
+                      NOTE: YOU MUST EDIT THIS SCRIPT AND REMOVE THIS WARNING TO CONTINUE" . PHP_EOL . PHP_EOL;
+
+// Remove this next line to continue:
+die($warning);
 
 $ipcs = array(); exec('ipcs', $ipcs);
 foreach($ipcs as $row) {
@@ -33,6 +38,8 @@ foreach($ipcs as $row) {
     $id  = $row[0];
     if (substr($id, 0, 2) != '0x')
         continue;
+
+    // Note: Consider adding filters here if you want to selectively remove resources
 
     $id = substr($id, 2);
     $id = hexdec($id);
