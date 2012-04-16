@@ -1,12 +1,8 @@
 <?php
 
 /**
- * This config file is used in development and production environments but the daemon, plugins or workers do not
- * explicitly rely on anything here. You can integrate the Daemon library into any existing bootstrap code that you may have.
- *
- * Note: The daemon libraries are named using Zend Framework guidelines, eg `class Path_To_Classname`. The daemon does not
- * explicitly include or require anything -- it relies on the PHP class autoloader. If you want to remove the autoloader you
- * should replace it with explicit require() statements for all of the core classes and any plugins/workers you may use.
+ * This daemon, plugins or workers do not explicitly rely on anything here. You can integrate the Daemon library
+ * into any existing bootstrap code that you may have.
  *
  * Note: When you create your daemon you will certainly need to use the filesystem from time to time. It's a good practice
  * to use a BASE_PATH constant of some kind. If you use "./" or similar relative paths, you will probably have trouble if/when

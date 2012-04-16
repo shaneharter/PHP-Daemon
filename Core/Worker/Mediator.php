@@ -594,6 +594,10 @@ abstract class Core_Worker_Mediator
         $this->daemon->log("$message", $is_error, $this->alias);
     }
 
+    /**
+     * Log a fatal error and restart the worker process
+     * @param $message
+     */
     public function fatal_error($message) {
         $this->daemon->fatal_error("$message\nFatal Error: Worker process will restart", $this->alias);
     }
@@ -753,6 +757,4 @@ abstract class Core_Worker_Mediator
     public function is_idle() {
         return $this->workers > count($this->running_calls);
     }
-    
-
 }

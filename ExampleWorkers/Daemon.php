@@ -81,6 +81,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
         $this->worker('GetFactors', function($integer)  {
             if (!is_integer($integer))
                 throw new Exception('Invalid Input! Expected Integer. Given: ' . gettype($integer));
+            
             $factors = array();
             for ($i=2; $i<($integer/2); $i++)
                 if ($integer % $i == 0)
