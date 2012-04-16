@@ -24,7 +24,7 @@ function daemon_error($errno, $errstr, $errfile, $errline)
 {
 	// Respect the error_reporting Level
 	if(($errno & error_reporting()) == 0) 
-		return;
+		return true;
 
 	$is_fatal = false;
 		

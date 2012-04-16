@@ -88,6 +88,9 @@ class Core_Plugin_Ini implements Core_IPluginInterface, ArrayAccess
 
     /**
      * @see ArrayAccess::offsetSet()
+     * @param $offset
+     * @param $value
+     * @throws Exception
      */
     public function offsetSet($offset, $value)
     {
@@ -99,6 +102,8 @@ class Core_Plugin_Ini implements Core_IPluginInterface, ArrayAccess
 
     /**
      * @see ArrayAccess::offsetExists()
+     * @param $offset
+     * @return bool
      */
     public function offsetExists($offset)
     {
@@ -107,6 +112,7 @@ class Core_Plugin_Ini implements Core_IPluginInterface, ArrayAccess
 
     /**
      * @see ArrayAccess::offsetUnset()
+     * @param $offset
      */
     public function offsetUnset($offset)
     {
@@ -115,6 +121,8 @@ class Core_Plugin_Ini implements Core_IPluginInterface, ArrayAccess
 
     /**
      * @see ArrayAccess::offsetGet()
+     * @param $offset
+     * @return null
      */
     public function offsetGet($offset)
     {

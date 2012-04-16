@@ -91,7 +91,6 @@ abstract class Core_Worker_Mediator
     /**
      * All Calls (Garbage collection will occur periodically)
      * @var array
-     * @todo Garbage Collection
      */
     protected $calls = array();
 
@@ -136,21 +135,21 @@ abstract class Core_Worker_Mediator
      * Note: There may be deviation in enforcement up to the length of your loop_interval. So if you set this ot "5" and
      * your loop interval is 2.5 second, workers may be allowed to run for up to 7.5 seconds before timing out.
      * Note: You can set a callback using $this->onTimeout that will be called when a worker times-out.
-     * @var decimal
+     * @var float
      */
     protected $timeout = 0;
 
     /**
      * Callback that's called when a worker completes it's job.
      * @example set using $this->onReturn();
-     * @var Callable
+     * @var callable
      */
     protected $on_return;
 
     /**
      * Callback that's called when a worker times-out
      * @example set using $this->onTimeout();
-     * @var Callable
+     * @var callable
      */
     protected $on_timeout;
 
@@ -289,6 +288,7 @@ abstract class Core_Worker_Mediator
      * @default 1 MB
      * @param $bytes
      * @throws Exception
+     * @return int
      */
     public function malloc($bytes = null) {
 
@@ -314,7 +314,7 @@ abstract class Core_Worker_Mediator
         if (!shm_has_var($this->shm, self::HEADER_ADDRESS)) {
             $header = array(
                 'version' => self::VERSION,
-                'memory_limit' => $this->memory_limit,
+                'memory_limit' => $this->memory_allocation,
             );
 
             if (!shm_put_var($this->shm, self::HEADER_ADDRESS, $header))
@@ -322,7 +322,7 @@ abstract class Core_Worker_Mediator
         }
 
         $header = shm_get_var($this->shm, self::HEADER_ADDRESS);
-        if ($header['memory_limit'] <> $this->memory_limit) {
+        if ($header['memory_limit'] <> $this->memory_allocation) {
             $this->log('Warning: Seems you\'ve made a change to the memory_limit. To apply this change you will have to restart the daemon with the --resetworkers option. Memory limits are otherwise immutable.');
             $this->log('The existing memory_limit is ' . $header['memory_limit'] . ' bytes.');
         }
@@ -331,6 +331,7 @@ abstract class Core_Worker_Mediator
     /**
      * Remove and Reset any data in shared resources. A "Hard Reset" of the queue. In normal operation, unless the server is rebooted or a worker's alias changed,
      * you can restart a daemon process without losing buffered calls or pending return values. In some cases you may want to purge the buffer.
+     * @param bool $reconnect
      * @return void
      */
     private function reset_workers($reconnect = false) {
@@ -418,6 +419,13 @@ abstract class Core_Worker_Mediator
                         call_user_func($on_return, $call);
 
                     unset($this->running_calls[$call_id]);
+
+                    // Periodically garbage-collect call stats
+                    if (mt_rand(1, 50) == 25)
+                        foreach ($this->calls as $item_id => $item)
+                            if (in_array($item->status, array(self::TIMEOUT, self::RETURNED)))
+                                unset($this->calls[$item_id]);
+
                     $this->log('Job ' . $call_id . ' Is Complete');
                     break;
             }
@@ -508,6 +516,7 @@ abstract class Core_Worker_Mediator
      * @example [inside a worker class] $this->mediator->daemon('dbconn');
      * @example [inside a worker class] $ini = $this->mediator->daemon('ini'); $ini['database']['password']
      * @param $property
+     * @return mixed
      */
     public function daemon($property) {
         if (isset($this->daemon->{$property}) && !is_callable($this->daemon->{$property})) {
@@ -630,6 +639,8 @@ abstract class Core_Worker_Mediator
         } catch (Exception $e) {
             $this->log('Call Failed: ' . $e->getMessage(), true);
         }
+
+        return false;
     }
 
 
@@ -641,6 +652,7 @@ abstract class Core_Worker_Mediator
      * @example You set a timeout handler using onTimeout. The worker will pass the timed-out call to the handler as a
      * stdClass object. You can re-run it by passing the object here.
      * @param stdClass $call
+     * @return bool
      */
     public function retry(stdClass $call) {
         if (empty($call->method))
@@ -654,7 +666,7 @@ abstract class Core_Worker_Mediator
      * Intercept method calls on worker objects and pass them to the call mediatorff
      * @param $method
      * @param $args
-     * @return booldd
+     * @return bool
      * @throws Exception
      */
     public function __call($method, $args) {
@@ -663,7 +675,6 @@ abstract class Core_Worker_Mediator
 
     /**
      * If your worker object implements an execute() method, it can be called in the daemon using $this->MyAlias()
-     * @param $args
      * @return bool
      */
     public function __invoke() {
@@ -683,21 +694,6 @@ abstract class Core_Worker_Mediator
             throw new Exception(__METHOD__ . " Failed. Callback or Closure expected.");
 
         $this->on_timeout = $on_timeout;
-    }
-
-    /**
-     * Set a callable that will called whenever an error occurs while executing a call.
-     * The affected $call stdClass will be passed-in. Will have an `errors=N` property indicating the number of times it's errored-out.
-     * Can be passed to retry() to re-try the call. If you do it will keep a retry count in addition to the error count.
-     * @param callable $on_error
-     * @throws Exception
-     */
-    public function onError($on_error)
-    {
-        if (!is_callable($on_error))
-            throw new Exception(__METHOD__ . " Failed. Callback or Closure expected.");
-
-        $this->on_error = $on_error;
     }
 
     /**

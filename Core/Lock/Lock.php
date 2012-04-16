@@ -29,7 +29,7 @@ abstract class Core_Lock_Lock implements Core_IPluginInterface
 	 * self-expiring using these TTL's. This is done to minimize likelihood of errant locks being left behind after a kill or crash that
      * would have to be manually removed.
      *
-	 * @var decimal 	Number of seconds the lock should be active -- padded with Core_Lock_Lock::LOCK_TTL_PADDING_SECONDS
+	 * @var float 	Number of seconds the lock should be active -- padded with Core_Lock_Lock::LOCK_TTL_PADDING_SECONDS
 	 */
 	public $ttl = 0;
 
@@ -77,7 +77,7 @@ abstract class Core_Lock_Lock implements Core_IPluginInterface
 	 * Check for the existence of a lock.
 	 * Cache results of get() check for 1/10 a second.
 	 *
-	 * @return false OR the PID of a conflicting lock
+	 * @return bool|int Either false or the PID of the process that has set the lock
 	 */
 	public function check()
 	{

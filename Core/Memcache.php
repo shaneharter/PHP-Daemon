@@ -29,7 +29,8 @@ final class Core_Memcache extends Memcached
 	/**
 	 * Use if you want memcache to auto-retry if a set() call fails. 
 	 * The timeout will dicatate how long it will attempt to retry.  
-	 * @param float $auto_retry_timeout	The duration in seconds where it'll retry, must be at least 0.10 seconds. 
+	 * @param float $auto_retry_timeout	The duration in seconds where it'll retry, must be at least 0.10 seconds.
+     * @return boolean
 	 */
 	public function auto_retry($auto_retry_timeout)
 	{
@@ -47,9 +48,9 @@ final class Core_Memcache extends Memcached
 	 * @param string $namespace		Optional. If provided, it will set the namespace. 
 	 * @return boolean Returns true on Success
 	 */
-	public function ns($namespace = false)
+	public function ns($namespace = null)
 	{
-		if ($namespace !== false)
+		if ($namespace !== null)
 			if (is_scalar($namespace))
 				$this->namespace = $namespace;
 		
@@ -118,6 +119,7 @@ final class Core_Memcache extends Memcached
 	 * Return a key or keys from Memcache
 	 * @param string|array $key
 	 * @param string $flags
+     * @return mixed
 	 */
 	public function get($key, $flags = null)
 	{
@@ -146,7 +148,8 @@ final class Core_Memcache extends Memcached
 			
 	/**
 	 * Return the fully-qualified $key including namespace
-	 * @param string $key
+	 * @param string|Array $key
+     * @return mixed
 	 */
 	public function key($key)
 	{

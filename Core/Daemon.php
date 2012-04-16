@@ -253,6 +253,7 @@ abstract class Core_Daemon
      * Ensure that essential runtime conditions are met.
      * To easily add rules to this, overload this method, build yourself an array of error messages,
      * and then call parent::check_environment($my_errors)
+     * @param Array $errors
      * @return void
      * @throws Exception
      */
@@ -346,6 +347,8 @@ abstract class Core_Daemon
 
             return call_user_func_array(array($this, $method), array());
         }
+
+        throw new Exception("Invalid Method Call '$method'");
     }
 
     /**
@@ -421,7 +424,7 @@ abstract class Core_Daemon
         if (isset($event[0]) && isset($event[1]) && isset($this->callbacks[$event[0]][$event[1]]))
             call_user_func_array($this->callbacks[$event[0]][$event[1]], $args);
         elseif (isset($event[0]) && !isset($event[1]) && isset($this->callbacks[$event[0]]))
-            foreach($this->callbacks[$event[0]] as $id => $callback)
+            foreach($this->callbacks[$event[0]] as $callback)
                 call_user_func_array($callback, $args);
     }
 
@@ -505,6 +508,7 @@ abstract class Core_Daemon
      * forcing another dependency for logging.
      * @param string $message
      * @param boolean $is_error    When true, an ON_ERROR event will be dispatched.
+     * @param string $label
      */
     public function log($message, $is_error = false, $label = '')
     {
@@ -559,6 +563,7 @@ abstract class Core_Daemon
     /**
      * Raise a fatal error and kill-off the process. If it's been running for a while, it'll try to restart itself.
      * @param string $log_message
+     * @param string $label
      */
     public function fatal_error($log_message, $label = '')
     {
@@ -670,7 +675,7 @@ abstract class Core_Daemon
         $out[] = "Start Time: " . $this->start_time;
         $out[] = "Duration: " . $this->runtime();
         $out[] = "Log File: " . $this->log_file();
-        $out[] = "Daemon Mode: " . (int)$this->daemon();
+        $out[] = "Daemon Mode: " . (int)$this->is_daemon();
         $out[] = "Shutdown Signal: " . (int)$this->shutdown();
         $out[] = "Verbose Mode: " . (int)$this->verbose();
         $out[] = "Loaded Plugins: " . implode(', ', $this->plugins);
@@ -730,7 +735,7 @@ abstract class Core_Daemon
     /**
      * If this is in daemon mode, provide an auto-restart feature.
      * This is designed to allow us to get a fresh stack, fresh memory allocation, etc.
-     * @return boolean
+     * @return boolean|void
      */
     private function auto_restart()
     {
@@ -746,6 +751,7 @@ abstract class Core_Daemon
     /**
      * Maintain the worker process map and notify the worker of an exited process.
      * @param bool $block   When true, method will block waiting for an exit signal
+     * @return void
      */
     private function reap($block = false)
     {
@@ -843,7 +849,7 @@ abstract class Core_Daemon
     /**
      * Create a persistent Worker process.
      * @param String $alias  The name of the worker -- Will be instantiated at $this->{$alias}
-     * @param Callable|Core_IWorkerInterface $worker An object of type Core_Worker OR a callable (function, callback, closure)
+     * @param callable|Core_IWorkerInterface $worker An object of type Core_Worker OR a callable (function, callback, closure)
      * @return Core_Worker_ObjectMediator Returns a Core_Worker class that can be used to interact with the Worker
      * @todo Use 'callable' type hinting if/when we move to a php 5.4 requirement.
      */
@@ -1111,6 +1117,7 @@ abstract class Core_Daemon
      * Combination getter/setter for the $is_parent property. Can be called manually inside a forked process.
      * Used automatically when creating named workers.
      * @param boolean $set_value
+     * @return boolean
      */
     protected function is_parent($set_value = null)
     {
@@ -1123,6 +1130,7 @@ abstract class Core_Daemon
     /**
      * Combination getter/setter for the $shutdown property.
      * @param boolean $set_value
+     * @return boolean
      */
     protected function shutdown($set_value = null)
     {
@@ -1135,6 +1143,7 @@ abstract class Core_Daemon
     /**
      * Combination getter/setter for the $verbose property.
      * @param boolean $set_value
+     * @return boolean
      */
     protected function verbose($set_value = null)
     {
@@ -1147,6 +1156,7 @@ abstract class Core_Daemon
     /**
      * Combination getter/setter for the $loop_interval property.
      * @param boolean $set_value
+     * @return int
      */
     protected function loop_interval($set_value = null)
     {
@@ -1191,6 +1201,7 @@ abstract class Core_Daemon
     /**
      * Combination getter/setter for the $pid property.
      * @param boolean $set_value
+     * @return int
      */
     protected function pid($set_value = null)
     {
