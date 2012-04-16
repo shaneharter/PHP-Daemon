@@ -2,7 +2,7 @@
 
 class ExampleWorkers_Daemon extends Core_Daemon
 {
-    protected $loop_interval = 1;
+    protected $loop_interval = 3;
 
     public $count = 0;
 
@@ -38,12 +38,14 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
         // Instantiate an App_Primes object as a Worker
         // Load 3 workers in the pool
+        // Allocate 256k of shared memory to pass args to the workers and receive results back: If you omit this, it will use 1MB by default.
         // By convention, workers are named in UpperCase
         // Look at App_Prime to see the available methods. They are: sieve, is_prime, primes_among
 
         $this->worker('PrimeNumbers', new ExampleWorkers_Workers_Primes());
         $this->PrimeNumbers->timeout(60 * 5);
         $this->PrimeNumbers->workers(3);
+        $this->PrimeNumbers->malloc(1024 * 256);
 
         $this->PrimeNumbers->onReturn(function($call) use($that) {
             $that->log("Prime Number {$call->method} Complete");
@@ -110,8 +112,9 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
             $that = $this;
             $this->on(Core_Daemon::ON_SIGNAL, function($signal) use($that) {
-                if (isset($that->ini[$signal])) {
-                    $action = $that->ini[$signal];
+                if (isset($that->settings['signals'][$signal])) {
+                    $action = $that->settings['signals'][$signal];
+                    $that->log("Signal Received! Setting {$action}=true");
                     $that->{$action} = true;
                 }
             });

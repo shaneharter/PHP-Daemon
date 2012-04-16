@@ -247,8 +247,6 @@ abstract class Core_Daemon
         $this->start_time = time();
         $this->pid(getmypid());
         $this->getopt();
-
-        $this->worker = new stdClass; // @todo yeah, probably not
     }
 
     /**
@@ -312,8 +310,8 @@ abstract class Core_Daemon
         $this->dispatch(array(self::ON_INIT));
 
         $this->setup();
-        if ($this->daemon == false)
-            $this->log('Note: Auto-Restart feature is disabled when not run in Daemon mode (using -d).');
+        if (!$this->daemon)
+            $this->log('Note: The daemonize (-d) option was not set: This process is running inside your shell. Auto-Restart feature is disabled.');
 
         $this->log('Process Initialization Complete. Starting timer at a ' . $this->loop_interval . ' second interval.');
     }
@@ -530,7 +528,7 @@ abstract class Core_Daemon
                     if ($raise_logfile_error) {
                         $raise_logfile_error = false;
                         echo $header;
-                        $this->log('Unable to write logfile at ' . $this->log_file() . '. Redirecting errors to stdout.');
+                        $this->log('Unable to write logfile at ' . $this->log_file() . '. Redirecting logging to stdout.');
                     }
 
                     throw new Exception("$prefix $message");
@@ -676,7 +674,7 @@ abstract class Core_Daemon
         $out[] = "Shutdown Signal: " . (int)$this->shutdown();
         $out[] = "Verbose Mode: " . (int)$this->verbose();
         $out[] = "Loaded Plugins: " . implode(', ', $this->plugins);
-        $out[] = "Named Workers: " . implode(', ', array_keys((array)$this->workers));
+        $out[] = "Loaded Workers: " . implode(', ', $this->workers);
         $out[] = "Memory Usage: " . memory_get_usage(true);
         $out[] = "Memory Peak Usage: " . memory_get_peak_usage(true);
         $out[] = "Current User: " . get_current_user();
@@ -896,9 +894,9 @@ abstract class Core_Daemon
      */
     protected function getopt()
     {
-        $opts = getopt('HiI:o:dvp:', array('install', 'resetworkers'));
+        $opts = getopt('hHiI:o:dvp:', array('install', 'resetworkers'));
 
-        if (isset($opts['H']))
+        if (isset($opts['H']) || isset($opts['h']))
             $this->show_help();
 
         if (isset($opts['i']))
@@ -906,9 +904,6 @@ abstract class Core_Daemon
 
         if (isset($opts['I']))
             $this->create_init_script($opts['I'], isset($opts['install']));
-
-        if (isset($opts['resetworkers']))
-            $this->reset_workers = true;
 
         if (isset($opts['d'])) {
             $pid = pcntl_fork();
@@ -919,8 +914,8 @@ abstract class Core_Daemon
             $this->pid(getmypid()); // We have a new pid now
         }
 
-        if (isset($opts['v']) && $this->daemon == false)
-            $this->verbose = true;
+        $this->reset_workers = isset($opts['resetworkers']);
+        $this->verbose = isset($opts['v']) && $this->daemon == false;
 
         if (isset($opts['p'])) {
             $handle = @fopen($opts['p'], 'w');
@@ -951,21 +946,23 @@ abstract class Core_Daemon
 
         echo get_class($this);
         $out[] =  'USAGE:';
-        $out[] =  ' # ' . basename(self::$filename) . ' -H | -i | -I TEMPLATE_NAME | [-d] [-v] [-p PID_FILE]';
+        $out[] =  ' # ' . basename(self::$filename) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-v] [-p PID_FILE] [--resetworkers]';
         $out[] =  '';
         $out[] =  'OPTIONS:';
         $out[] =  ' -H Shows this help';
-        $out[] =  '';
         $out[] =  ' -i Print any daemon install instructions to the screen';
-        $out[] =  '';
         $out[] =  ' -I Create init/config script';
-        $out[] =  '    You must pass in a name of a template in the /Templates directory';
+        $out[] =  '    You must pass in a name of a template from the /Templates directory';
         $out[] =  '    OPTIONS:';
-        $out[] =  '     --install Install the script to /etc/init.d. Otherwise just output the script to stdout.';
+        $out[] =  '     --install';
+        $out[] =  '       Install the script to /etc/init.d. Otherwise just output the script to stdout.';
         $out[] =  '';
         $out[] =  ' -d Daemon, detach and run in the background';
         $out[] =  ' -v Verbose, echo any logged messages. Ignored in Daemon mode.';
         $out[] =  ' -p PID_FILE File to write process ID out to';
+        $out[] =  '';
+        $out[] =  ' --resetworkers';
+        $out[] =  '   Release and reallocate any shared memory and message queues used by workers.';
         $out[] =  '';
         $out[] =  '';
 
@@ -1178,7 +1175,7 @@ abstract class Core_Daemon
                     } else {
                         $this->log(
                             "Warning: At configured loop_interval a process priorty of `{$priority}` is suggested but this process does not have setpriority privileges." . PHP_EOL .
-                            "         Consider running the daemon with `CAP_SYS_RESOURCE` privileges or set it manually using: sudo renice -n {$priority} -p {$this->pid}"
+                            "         Consider running the daemon with `CAP_SYS_RESOURCE` privileges or set it manually using `sudo renice -n {$priority} -p {$this->pid}`"
                         );
                     }
                 }

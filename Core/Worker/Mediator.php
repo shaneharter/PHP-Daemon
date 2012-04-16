@@ -228,10 +228,20 @@ abstract class Core_Worker_Mediator
     public function setup() {
 
         if ($this->is_parent) {
-            @mkdir('/tmp/phpdaemon');
-            $this->ftok = '/tmp/phpdaemon/.' . str_replace("/", "_", $this->daemon->filename()) . '_' . $this->alias;
-            touch($this->ftok);
+
+            // This is slightly grizzly. We need a deterministic ID so we can re-attach shared memory and message queues
+            // after a daemon restart. The ID has to be an int which rules out hashing. Collisions would result in a very pesky bug.
+            // So we want to use the ftok() function, but that needs a unique file path & name. Since this mediator file could be shared
+            // by multiple daemons, we're going to mash-up the daemon filename with the worker alias, and create an empty file in a hidden /tmp directory.
+            @mkdir('/tmp/.phpdaemon');
+            $this->ftok = '/tmp/.phpdaemon/' . str_replace("/", "_", $this->daemon->filename()) . '_' . $this->alias;
+            if (!touch($this->ftok))
+                $this->fatal_error("Unable to create Worker ID. Ftok failed. Could not write to /tmp directory");
+
             $this->id = ftok($this->ftok, substr($this->alias, 0, 1));
+
+            if (!is_numeric($this->id))
+                $this->fatal_error("Unable to create Worker ID. Ftok failed. Could not write to /tmp directory");
 
             if ($this->forking_strategy == self::AGGRESSIVE)
                 $this->fork();
@@ -272,13 +282,17 @@ abstract class Core_Worker_Mediator
      * This is can be calculated roughly as:
      * ([Max Size Of Arguments Passed] + [Max Size of Return Value]) * ([Number of Jobs Running Concurrently] + [Number of Jobs Queued, Waiting to Run])
      *
-     * The memory is freed after a worker ack's the job as complete and the onReturn handler is called.
+     * The memory used by a job is freed after a worker ack's the job as complete and the onReturn handler is called.
+     * The total pool of memory allocated here is freed when:
+     * 1) The daemon is stopped and no messages are left in the queue.
+     * 2) The daemon is started with a --resetworkers flag (In this case the memory is freed and released and then re-allocated.
+     *    This is useful if you need to resize the shared memory the worker uses or you just want to purge any stale messages)
      *
      * @default 1 MB
      * @param $bytes
      * @throws Exception
      */
-    public function memory_allocation($bytes = null) {
+    public function malloc($bytes = null) {
 
         if ($bytes !== null) {
             if (!is_int($bytes))
@@ -318,16 +332,19 @@ abstract class Core_Worker_Mediator
 
     /**
      * Remove and Reset any data in shared resources. A "Hard Reset" of the queue. In normal operation, unless the server is rebooted or a worker's alias changed,
-     * you can restart a daemon process without losing buffered calls or pending return values.
+     * you can restart a daemon process without losing buffered calls or pending return values. In some cases you may want to purge the buffer.
      * @return void
      */
     private function reset_workers($reconnect = false) {
+        @msg_remove_queue($this->queue);
         @shm_remove($this->shm);
         @shm_detach($this->shm);
-        @msg_remove_queue($this->queue);
 
         if (!$reconnect)
             return;
+
+        $this->shm = shm_attach($this->id, $this->memory_allocation, 0666);
+        $this->queue = msg_get_queue($this->id, 0666);
     }
 
     /**
@@ -606,6 +623,7 @@ abstract class Core_Worker_Mediator
         $this->calls[$call->id] = $call;
 
         try {
+            $this->fork();
             return $this->message_encode($call->id) === true;
         } catch (Exception $e) {
             $this->log('Call Failed: ' . $e->getMessage(), true);
@@ -722,7 +740,19 @@ abstract class Core_Worker_Mediator
             throw new Exception(__METHOD__ . " Failed. Integer value expected.");
 
         $this->workers = $workers;
-    }    
+    }
+
+    /**
+     * Does the worker have at least one idle process?
+     * @example Use this to implement a pattern where there is always a background worker working. Suppose your daemon writes results to a file
+     *          that you want to upload to S3 continuously. You could create a worker to do the upload and set ->workers(1). In your execute() method
+     *          if the worker is idle, call the upload() method. This way it should, at all times, be uploading the latest results.
+     *
+     * @return bool
+     */
+    public function is_idle() {
+        return $this->workers > count($this->running_calls);
+    }
     
 
 }
