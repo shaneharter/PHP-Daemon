@@ -2,17 +2,23 @@
 /**
  * Create and run worker processes.
  * Use message queues and shared memory to coordinate worker processes and return work product to the daemon.
- * Uses system v mq's because afaik there's no existing PHP implementation of posix message queues.
+ * Uses system v message queues because afaik there's no existing PHP implementation of posix  queues.
+ * Note: During development, crashes or `kill -9`s may cause the workers to leak IPC resources. You can clean up the
+ * leaks using the /scripts/clean_ipc.php script.
+ *
  * @author Shane Harter
  *
- * @todo use ftok to create IPC id's
  * @todo graceful handling when forking fails for some reason
- * @todo add cli argument to daemon that will let us restart the daemon and re-attach the same message queues. Maybe give workers a way to turn this off tho.
  * @todo retry limits?
  * @todo more/better logging, maybe a debug/verbose mode..
  */
 abstract class Core_Worker_Mediator
 {
+    /**
+     * The version is used in case SHM memory formats chanege in the future. The goal is being able to upgrade in the future without affecting workers.
+     */
+    const VERSION = 2.0;
+
     /**
      * Message Types
      */
@@ -35,6 +41,11 @@ abstract class Core_Worker_Mediator
     const LAZY = 1;
     const MIXED = 2;
     const AGGRESSIVE = 3;
+
+    /**
+     * Each SHM block has a header with needed metadata.
+     */
+    const HEADER_ADDRESS = 1;
 
     /**
      * The forking strategy of the Worker
@@ -152,9 +163,10 @@ abstract class Core_Worker_Mediator
     /**
      * How big, at any time, can the IPC shared memory allocation be.
      * Default is 1MB. May need to be increased if you are passing very large datasets as Arguments and Return values.
+     * @see memory_allocation()
      * @var float
      */
-    protected $memory_limit;
+    protected $memory_allocation;
 
     /**
      * The ID of this worker pool -- used to
@@ -176,9 +188,9 @@ abstract class Core_Worker_Mediator
     public function __construct($alias, Core_Daemon $daemon) {
         $this->alias = $alias;
         $this->daemon = $daemon;
-        $this->memory_limit = 1024 * 1000;
+        $this->memory_allocation = 1024 * 1000;
 
-        $interval = $this->daemon->interval();
+        $interval = $this->daemon->loop_interval();
         switch(true) {
             case $interval > 2 || $interval === 0:
                 $this->forking_strategy = self::LAZY;
@@ -194,18 +206,21 @@ abstract class Core_Worker_Mediator
 
     public function __destruct() {
         if ($this->is_parent) {
-            @shm_remove($this->shm);
-            @shm_detach($this->shm);
-            @msg_remove_queue($this->queue);
+            // If there are no pending messages, release all shared resources.
+            // If there are, then we want to preserve them so we can allow for daemon restarts without losing the call buffer
+            $stat = @msg_stat_queue($this->queue);
+            if (is_array($stat) && $stat['msg_qnum'] > 0) {
+                return;
+            }
+
+            $this->reset_workers();
         }
     }
 
     public function setup() {
 
         if ($this->is_parent) {
-            do {
-                $this->id = mt_rand(999999, 99999999);
-            } while(msg_queue_exists($this->id) == 1);
+            $this->id = ftok(dirname($this->daemon->filename()) . '/' . $this->alias, substr($this->alias, 0, 1));
 
             if ($this->forking_strategy == self::AGGRESSIVE)
                 $this->fork();
@@ -217,7 +232,13 @@ abstract class Core_Worker_Mediator
         }
 
         $this->queue = msg_get_queue($this->id, 0666);
-        $this->shm = shm_attach($this->id, $this->memory_limit, 0666);
+        $this->shm = shm_attach($this->id, $this->memory_allocation, 0666);
+        if ($this->is_parent) {
+            if ($this->daemon->reset_workers())
+                $this->reset_workers(true);
+
+            $this->shm_header();
+        }
 
         if (!is_resource($this->queue))
             throw new Exception(__METHOD__ . " Failed. Could not attach message queue id {$this->id}");
@@ -231,6 +252,74 @@ abstract class Core_Worker_Mediator
             $errors[] = 'The PCNTL Extension is Not Installed';
 
         return $errors;
+    }
+
+    /**
+     * Allocate the total size of shared memory that will be allocated for passing arguments and return values to/from the
+     * worker processes. Should be sufficient to hold the working set of each worker pool.
+     *
+     * This is can be calculated roughly as:
+     * ([Max Size Of Arguments Passed] + [Max Size of Return Value]) * ([Number of Jobs Running Concurrently] + [Number of Jobs Queued, Waiting to Run])
+     *
+     * The memory is freed after a worker ack's the job as complete and the onReturn handler is called.
+     *
+     * @default 1 MB
+     * @param $bytes
+     * @throws Exception
+     */
+    public function memory_allocation($bytes = null) {
+
+        if ($bytes !== null) {
+            if (!is_int($bytes))
+                throw new Exception(__METHOD__ . " Failed. Could not set SHM allocation size. Expected Integer. Given: " . gettype($bytes));
+
+            if (is_resource($this->shm))
+                throw new Exception(__METHOD__ . " Failed. Can Not Re-Allocate SHM Size. You will have to restart the daemon with the --resetworkers option to resize.");
+
+            $this->memory_allocation = $bytes;
+        }
+
+        return $this->memory_allocation;
+    }
+
+    /**
+     * Write and Verify the SHM header
+     * @return void
+     * @throws Exception
+     */
+    private function shm_header() {
+        if (!shm_has_var($this->shm, self::HEADER_ADDRESS)) {
+            $header = array(
+                'version' => self::VERSION,
+                'memory_limit' => $this->memory_limit,
+            );
+
+            if (!shm_put_var($this->shm, self::HEADER_ADDRESS, $header))
+                throw new Exception(__METHOD__ . " Failed. Could Not Read Header. If this problem persists, try running the daemon with the --resetworkers option.");
+        }
+
+        $header = shm_get_var($this->shm, self::HEADER_ADDRESS);
+        if ($header['memory_limit'] <> $this->memory_limit) {
+            $this->log('Warning: Seems you\'ve made a change to the memory_limit. To apply this change you will have to restart the daemon with the --resetworkers option. Memory limits are otherwise immutable.');
+            $this->log('The existing memory_limit is ' . $header['memory_limit'] . ' bytes.');
+        }
+    }
+
+    /**
+     * Remove and Reset any data in shared resources. A "Hard Reset" of the queue. In normal operation, unless the server is rebooted or a worker's alias changed,
+     * you can restart a daemon process without losing buffered calls or pending return values.
+     * @return void
+     */
+    private function reset_workers($reconnect = false) {
+        @shm_remove($this->shm);
+        @shm_detach($this->shm);
+        @msg_remove_queue($this->queue);
+
+        if (!$reconnect)
+            return;
+
+
+
     }
 
     /**
@@ -289,7 +378,7 @@ abstract class Core_Worker_Mediator
             return;
 
         $message_type = $message = $message_error = null;
-        if (msg_receive($this->queue, -self::WORKER_RUNNING, $message_type, $this->memory_limit, $message, true, MSG_IPC_NOWAIT, $message_error)) {
+        if (msg_receive($this->queue, -self::WORKER_RUNNING, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
             switch($message_type) {
                 case self::WORKER_RUNNING:
                     $call_id = $this->message_decode($message);
@@ -305,7 +394,7 @@ abstract class Core_Worker_Mediator
                     if (is_callable($on_return))
                         call_user_func($on_return, $call);
 
-                    unset($this->running_calls[$call_id], $this->calls[$call_id]);
+                    unset($this->running_calls[$call_id]);
                     $this->log('Job ' . $call_id . ' Is Complete');
                     break;
             }
@@ -345,7 +434,7 @@ abstract class Core_Worker_Mediator
 
         while($this->shutdown == false) {
             $message_type = $message = $message_error = null;
-            if (msg_receive($this->queue, self::WORKER_CALL, $message_type, $this->memory_limit, $message, true, 0, $message_error)) {
+            if (msg_receive($this->queue, self::WORKER_CALL, $message_type, $this->memory_allocation, $message, true, 0, $message_error)) {
                 try {
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
@@ -481,7 +570,7 @@ abstract class Core_Worker_Mediator
     }
 
     public function fatal_error($message) {
-        $this->daemon->fatal_error("$message\nWorker Is Shutting Down...", $this->alias);
+        $this->daemon->fatal_error("$message\nFatal Error: Worker process will restart", $this->alias);
     }
 
     /**
@@ -503,13 +592,12 @@ abstract class Core_Worker_Mediator
         $call->status        = self::UNCALLED;
         $call->time          = array(microtime(true));
         $call->pid           = null;
-        $call->id            = count($this->calls) + 1; // We use this ID for shm keys which cannot be 0
+        $call->id            = count($this->calls) + (self::HEADER_ADDRESS + 1); // We use this ID for shm keys and we don't want to overwrite the header
         $call->retries       = $retries;
         $call->errors        = $errors;
         $this->calls[$call->id] = $call;
 
         try {
-            $this->fork();
             return $this->message_encode($call->id) === true;
         } catch (Exception $e) {
             $this->log('Call Failed: ' . $e->getMessage(), true);

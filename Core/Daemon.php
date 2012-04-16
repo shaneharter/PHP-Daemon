@@ -131,6 +131,13 @@ abstract class Core_Daemon
      */
     private $stats = array();
 
+    /**
+     * Set from the --resetworkers command line option, when this is set, worker processes will
+     * flush their IPC resources, allowing any bad messages to purged, the shm allocation to be resized, etc.
+     * @var bool
+     */
+    private $reset_workers = false;
+
 
     /**
      * This has to be set using the Core_Daemon::setFilename before init.
@@ -323,15 +330,23 @@ abstract class Core_Daemon
     }
 
     /**
-     * Allow named workers to be accessed as a local method
-     * @example $this->WorkerName();
-     * @param string $name    The name of the worker to access
+     * Some accessors are available as setters only within their defined scope, but can be
+     * used as getters universally. Filter out setter arguments and proxy the call to the accessor.
+     * Note: A warning will be raised if the accessor is used as a setter out of scope.
+     * @example $someDaemon->loop_interval()
+     *
+     * @param $method
+     * @param $args
+     * @return mixed
      */
-    public function __call($name, $args)
+    public function __call($method, $args)
     {
-        $this->log("Daemon __call with " . $name);
-        if (in_array($name, $this->workers)) {
-            return call_user_func_array($this->$name, $args);
+        $accessors = array('loop_interval', 'is_parent', 'verbose', 'pid', 'shutdown');
+        if (in_array($method, $accessors)) {
+            if ($args)
+                trigger_error("The '$method' accessor can not be used as a setter in this context. Supplied arguments ignored.");
+
+            return call_user_func_array(array($this, $method), array());
         }
     }
 
@@ -881,7 +896,7 @@ abstract class Core_Daemon
      */
     protected function getopt()
     {
-        $opts = getopt('HiI:o:dvp:', array('install'));
+        $opts = getopt('HiI:o:dvp:', array('install', 'resetworkers'));
 
         if (isset($opts['H']))
             $this->show_help();
@@ -891,6 +906,9 @@ abstract class Core_Daemon
 
         if (isset($opts['I']))
             $this->create_init_script($opts['I'], isset($opts['install']));
+
+        if (isset($opts['resetworkers']))
+            $this->reset_workers = true;
 
         if (isset($opts['d'])) {
             $pid = pcntl_fork();
@@ -1028,7 +1046,7 @@ abstract class Core_Daemon
 
     /**
      * Return the daemon's filename
-     * @return integer
+     * @return string
      */
     public function filename()
     {
@@ -1037,7 +1055,7 @@ abstract class Core_Daemon
 
     /**
      * Is this run as a daemon or within a shell?
-     * @param boolean $set_value
+     * @return boolean
      */
     public function is_daemon()
     {
@@ -1045,12 +1063,12 @@ abstract class Core_Daemon
     }
 
     /**
-     * Get the current loop interval
-     * @return float|null
+     * Is the --resetworkers flag set?
+     * @return boolean
      */
-    public function interval()
+    public function reset_workers()
     {
-        return $this->loop_interval;
+        return $this->reset_workers;
     }
 
     /**

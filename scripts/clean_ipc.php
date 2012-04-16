@@ -1,9 +1,22 @@
 <?php
 /**
- * Created by JetBrains PhpStorm.
- * User: Shane Harter
+ * PHP Simple Daemon IPC Cleaner
+ * @author Shane Harter
  * Date: 4/15/12
  * Time: 6:06 PM
+ *
+ * When developing a daemon that uses Workers, it's common that crashes and kill -9's leave certain
+ * kernel-level interprocess communication (IPC) resources unreleased. This script will release all allocated shared
+ * memory segments, message queues, and semaphores.
+ *
+ * You should not run this on a production server unless you know what you're doing. Doing so could interfere with other
+ * applications, servers and daemons that may be running on the system.
+ *
+ * If you do need to clean up IPC resources in a more selective way, on linux you can use the ipcs and ipcrm commands.
+ * Running `ipcs` will show you information about each memory segment, queue and semaphore. You can then pass the ID
+ * displayed there in column 2 to ipcrm, which is what we're doing in this script.
+ *
+ * You have to pass iprcm a flag indicating the type of resources (-m, -q, and -s for Shared Memory, Queues and Semaphores, respectively), and then the ID.
  */
 
 $warning = PHP_EOL . "WARNING: This script releases all SystemV IPC resources: Shared Memory, Message Queues and Semaphores. Only run this if you want ALL resources released.
@@ -13,56 +26,41 @@ $warning = PHP_EOL . "WARNING: This script releases all SystemV IPC resources: S
 // Remove this next line to continue:
 die($warning);
 
-$ipcs = array(); exec('ipcs', $ipcs);
+$ipcs = array();
+exec('ipcs', $ipcs);
 foreach($ipcs as $row) {
 
     if (strpos($row, 'Shared Memory Segments') > 0) {
         echo PHP_EOL, "Cleaning Shared Memory Segments...";
-        $function = 'close_shm';
+        $flag = '-m';
         continue;
     }
 
     if (strpos($row, 'Message Queues') > 0) {
         echo PHP_EOL, "Cleaning Message Queues...";
-        $function = 'close_msg';
+        $flag = '-q';
         continue;
     }
 
     if (strpos($row, 'Semaphore Arrays') > 0) {
         echo PHP_EOL, "Cleaning Semaphore Arrays...";
-        $function = 'close_sem';
+        $flag = '-s';
         continue;
     }
 
     $row = explode(' ', $row);
-    $id  = $row[0];
-    if (substr($id, 0, 2) != '0x')
+
+    if (!isset($row[1]))
+        continue;
+
+    $id  = trim($row[1]);
+    if (!is_numeric($id))
         continue;
 
     // Note: Consider adding filters here if you want to selectively remove resources
 
-    $id = substr($id, 2);
-    $id = hexdec($id);
-
-    echo PHP_EOL, "Processing Address {$id}";
-    @$function($id);
+    echo PHP_EOL, "Removing Address {$id}";
+    @exec("ipcrm {$flag} {$id}");
 }
 
 echo PHP_EOL, "** DONE **", PHP_EOL, PHP_EOL;
-
-function close_shm($id) {
-    $id = shm_attach($id);
-    shm_remove($id);
-    shm_detach($id);
-}
-
-function close_sem($id) {
-    $id = sem_acquire($id);
-    sem_release($id);
-    sem_remove($id);
-}
-
-function close_msg($id) {
-    $id = msg_get_queue($id);
-    msg_remove_queue($id);
-}
