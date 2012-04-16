@@ -243,9 +243,7 @@ abstract class Core_Worker_Mediator
             if (!is_numeric($this->id))
                 $this->fatal_error("Unable to create Worker ID. Ftok failed. Could not write to /tmp directory");
 
-            if ($this->forking_strategy == self::AGGRESSIVE)
-                $this->fork();
-
+            $this->fork();
             $this->daemon->on(Core_Daemon::ON_RUN, array($this, 'run'));
         } else {
             $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'signal'));
