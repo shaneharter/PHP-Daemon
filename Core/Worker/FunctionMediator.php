@@ -1,9 +1,13 @@
 <?php
 /**
  * Adapt a supplied function to the Worker Mediator class
+ *
+ * Note: While it's not required, it's a good practice to change this class to extend Core_Worker_Mediator directly
+ * once you're ready to deploy it to production. It will reduce some method-call overhead.
+ *
  * @author Shane Harter
  */
-final class Core_Worker_FunctionMediator extends Core_Worker_Mediator
+final class Core_Worker_FunctionMediator extends Core_Worker_DebugMediator
 {
     /**
      * @var Core_IWorkerInterface

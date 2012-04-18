@@ -1,4 +1,3 @@
-#!/usr/bin/php
 <?php
 require_once 'config.php';
 require_once 'error_handlers.php';

@@ -15,7 +15,7 @@
 abstract class Core_Worker_Mediator
 {
     /**
-     * The version is used in case SHM memory formats chanege in the future. The goal is being able to upgrade in the future without affecting workers.
+     * The version is used in case SHM memory formats change in the future. The goal is being able to upgrade in the future without affecting workers.
      */
     const VERSION = 2.0;
 
@@ -46,6 +46,14 @@ abstract class Core_Worker_Mediator
      * Each SHM block has a header with needed metadata.
      */
     const HEADER_ADDRESS = 1;
+
+    /**
+     * If debug is set to "true" and the concrete subclass extends Core_Worker_DebugMediator instead of directly
+     * extending this class, this will run the worker IPC in a sort-of "debug console"
+     *
+     * @var bool
+     */
+    public $debug = false;
 
     /**
      * The forking strategy of the Worker
@@ -168,7 +176,7 @@ abstract class Core_Worker_Mediator
     protected $memory_allocation;
 
     /**
-     * The ID of this worker pool -- used to
+     * The ID of this worker pool -- used to address shared IPC resources
      * @var int
      */
     protected $id;
@@ -267,7 +275,7 @@ abstract class Core_Worker_Mediator
 
     public function check_environment(Array $errors = array()) {
         if (function_exists('posix_kill') == false)
-            $errors[] = 'The PCNTL Extension is Not Installed';
+            $errors[] = 'The POSIX Extension is Not Installed';
 
         return $errors;
     }
@@ -314,7 +322,7 @@ abstract class Core_Worker_Mediator
         if (!shm_has_var($this->shm, self::HEADER_ADDRESS)) {
             $header = array(
                 'version' => self::VERSION,
-                'memory_limit' => $this->memory_allocation,
+                'memory_allocation' => $this->memory_allocation,
             );
 
             if (!shm_put_var($this->shm, self::HEADER_ADDRESS, $header))
@@ -322,10 +330,9 @@ abstract class Core_Worker_Mediator
         }
 
         $header = shm_get_var($this->shm, self::HEADER_ADDRESS);
-        if ($header['memory_limit'] <> $this->memory_allocation) {
-            $this->log('Warning: Seems you\'ve made a change to the memory_limit. To apply this change you will have to restart the daemon with the --resetworkers option. Memory limits are otherwise immutable.');
-            $this->log('The existing memory_limit is ' . $header['memory_limit'] . ' bytes.');
-        }
+        if ($header['memory_allocation'] <> $this->memory_allocation)
+            $this->log('Warning: Seems you\'ve made a change to the memory_limit. To apply this change you will have to restart the daemon with the --resetworkers option. Memory limits are otherwise immutable.' .
+                        PHP_EOL . 'The existing memory_limit is ' . $header['memory_allocation'] . ' bytes.');
     }
 
     /**
@@ -334,7 +341,7 @@ abstract class Core_Worker_Mediator
      * @param bool $reconnect
      * @return void
      */
-    private function reset_workers($reconnect = false) {
+    protected function reset_workers($reconnect = false) {
         @msg_remove_queue($this->queue);
         @shm_remove($this->shm);
         @shm_detach($this->shm);
@@ -352,7 +359,7 @@ abstract class Core_Worker_Mediator
      * fork as-needed. In the middle we will avoid forking until the first call, then do all the forks in one go.
      * @return mixed
      */
-    private function fork() {
+    protected function fork() {
         $processes = count($this->processes);
         if ($this->workers <= $processes)
             return;
@@ -402,33 +409,32 @@ abstract class Core_Worker_Mediator
             return;
 
         $message_type = $message = $message_error = null;
-        if (msg_receive($this->queue, -self::WORKER_RUNNING, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
-            switch($message_type) {
-                case self::WORKER_RUNNING:
-                    $call_id = $this->message_decode($message);
-                    $this->running_calls[$call_id] = true;
-                    $this->log('Job ' . $call_id . ' Is Running');
-                    break;
+        if (msg_receive($this->queue, self::WORKER_RUNNING, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
+            $call_id = $this->message_decode($message);
+            $this->running_calls[$call_id] = true;
+            $this->log('Job ' . $call_id . ' Is Running');
+        } else {
+            $this->message_error($message_error);
+        }
 
-                case self::WORKER_RETURN:
-                    $call_id = $this->message_decode($message);
-                    $call = $this->calls[$call_id];
+        $message_type = $message = $message_error = null;
+        if (msg_receive($this->queue, self::WORKER_RETURN, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
+            $call_id = $this->message_decode($message);
+            $call = $this->calls[$call_id];
 
-                    $on_return = $this->on_return; // Callbacks have to be in a local variable...
-                    if (is_callable($on_return))
-                        call_user_func($on_return, $call);
+            unset($this->running_calls[$call_id]);
 
-                    unset($this->running_calls[$call_id]);
+            $on_return = $this->on_return; // Callbacks have to be in a local variable...
+            if (is_callable($on_return))
+                call_user_func($on_return, $call);
 
-                    // Periodically garbage-collect call stats
-                    if (mt_rand(1, 50) == 25)
-                        foreach ($this->calls as $item_id => $item)
-                            if (in_array($item->status, array(self::TIMEOUT, self::RETURNED)))
-                                unset($this->calls[$item_id]);
+            // Periodically garbage-collect call stats
+            if (mt_rand(1, 50) == 25)
+                foreach ($this->calls as $item_id => $item)
+                    if (in_array($item->status, array(self::TIMEOUT, self::RETURNED)))
+                        unset($this->calls[$item_id]);
 
-                    $this->log('Job ' . $call_id . ' Is Complete');
-                    break;
-            }
+            $this->log('Job ' . $call_id . ' Is Complete');
         } else {
             $this->message_error($message_error);
         }
@@ -529,7 +535,7 @@ abstract class Core_Worker_Mediator
      * Handle Message Queue errors
      * @param $error_code
      */
-    private  function message_error($error_code) {
+    protected  function message_error($error_code) {
         $ignored_errors = array(
             4,  // System Interrupt
             42, // No message of desired type
@@ -546,7 +552,7 @@ abstract class Core_Worker_Mediator
      * @param $call_id
      * @return bool
      */
-    private function message_encode($call_id) {
+    protected function message_encode($call_id) {
 
         $call = $this->calls[$call_id];
 
@@ -556,15 +562,20 @@ abstract class Core_Worker_Mediator
             self::RETURNED  => self::WORKER_RETURN
         );
 
-        $message = array('call' => $call->id);
-        $message_error = null;
-
         $call->status++;
         $call->time[$call->status] = microtime(true);
-        shm_put_var($this->shm, $call_id, $call);
+
+        $message = array('call' => $call->id, 'status' => $call->status);
+        $message_error = null;
+
+        if (shm_put_var($this->shm, $call->id, $call) == false) {
+            $this->log("Could Not Write to Shared Memory [{$this->id}");
+        }
+
+        usleep(mt_rand(20000,50000));
 
         if (msg_send($this->queue, $queue_lookup[$call->status], $message, true, false, $message_error)) {
-            //$this->log("Message Sent to Queue " . $queue_lookup[$call->status]);
+            $this->log("Message Sent to Queue " . $queue_lookup[$call->status]);
             return true;
         }
 
@@ -578,17 +589,22 @@ abstract class Core_Worker_Mediator
      * @return mixed
      * @throws Exception
      */
-    private function message_decode(Array $message) {
+    protected function message_decode(Array $message) {
 
         $call = null;
-        if ($call_id = $message['call'])
+        if ($call_id = $message['call']) {
             $call = shm_get_var($this->shm, $call_id);
-
+        }
         if (!is_object($call))
             throw new Exception(__METHOD__ . " Failed. Expected stdClass object in {$this->id}:{$call_id}. Given: " . gettype($call));
 
         $this->calls[$call_id] = $call;
-        shm_remove_var($this->shm, $call_id);
+
+        // If the message status matches the status of the object in memory, we know there aren't any more queued messages
+        // presently that will be using the shared memory.
+        if ($call->status == $message['status'])
+            shm_remove_var($this->shm, $call_id);
+
         return $call_id;
     }
 
@@ -617,7 +633,7 @@ abstract class Core_Worker_Mediator
      * @return bool
      * @throws Exception
      */
-    private function call($method, Array $args, $retries=0, $errors=0) {
+    protected function call($method, Array $args, $retries=0, $errors=0) {
 
         if (!in_array($method, $this->methods))
             throw new Exception(__METHOD__ . " Failed. Method `{$method}` is not callable.");
@@ -658,12 +674,12 @@ abstract class Core_Worker_Mediator
         if (empty($call->method))
             throw new Exception(__METHOD__ . " Failed. A valid call struct is required.");
 
-        $this->log("Retrying Call {$call->id} To `{$call->method}``");
+        $this->log("Retrying Call {$call->id} To `{$call->method}`");
         return $this->call($call->method, $call->args, ++$call->retries);
     }
 
     /**
-     * Intercept method calls on worker objects and pass them to the call mediatorff
+     * Intercept method calls on worker objects and pass them to the worker processes
      * @param $method
      * @param $args
      * @return bool
@@ -750,5 +766,13 @@ abstract class Core_Worker_Mediator
      */
     public function is_idle() {
         return $this->workers > count($this->running_calls);
+    }
+
+    /**
+     * Get the worker ID
+     * @return int
+     */
+    public function id() {
+        return $this->id;
     }
 }

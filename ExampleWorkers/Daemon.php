@@ -6,6 +6,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
     public $count = 0;
 
+    public $debug_workers = false;
 
     /**
      * We want to be able to start workers by passing in signals. In a real daemon, workers would be used to process
@@ -45,7 +46,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
         $this->worker('PrimeNumbers', new ExampleWorkers_Workers_Primes());
         $this->PrimeNumbers->timeout(60 * 5);
         $this->PrimeNumbers->workers(3);
-        $this->PrimeNumbers->malloc(1024 * 256);
+        $this->PrimeNumbers->malloc(1024 * 2000);
 
         $this->PrimeNumbers->onReturn(function($call) use($that) {
             $that->log("Prime Number {$call->method} Complete");
@@ -91,13 +92,13 @@ class ExampleWorkers_Daemon extends Core_Daemon
         });
 
         $this->GetFactors->timeout(60 * 5);
-        $this->GetFactors->workers(5);
+        $this->GetFactors->workers(3);
         $this->GetFactors->onReturn(function($call) use($that) {
             $that->log("Factoring Complete for `{$call->args[0]}`");
             $that->log("Factors: " . implode(', ', $call->return));
 
-            $that->log("Finding Prime Factors...");
-            $that->PrimeNumbers->primes_among($call->return);
+            //$that->log("Finding Prime Factors...");
+            //$that->PrimeNumbers->primes_among($call->return);
         });
 
 

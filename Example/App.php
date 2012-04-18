@@ -15,6 +15,7 @@ class Example_App extends Core_Daemon
 		$this->plugin('ini');
 		$this->ini->filename = BASE_PATH . '/Example/config.ini';
 		$this->ini->required_sections = array('example_section');
+
 	}
 	
 	/**

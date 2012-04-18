@@ -14,8 +14,8 @@ declare(ticks = 5) ;
 abstract class Core_Daemon
 {
     /**
-     * The settings.ini has a setting wherein the daemon can be auto-restarted every X seconds.
-     * We don't want to kill the server with process spawning so any number below this constant will be ignored.
+     * The daemon will attempt to restart itself it encounters a recoverable fatal error after it's been running
+     * for at least this many seconds. Prevents killing the server with process spawning if the error occurs at startup.
      * @var integer
      */
     const MIN_RESTART_SECONDS = 10;
@@ -32,7 +32,6 @@ abstract class Core_Daemon
     const ON_PIDCHANGE  = 5;
     const ON_SHUTDOWN   = 10;
 
-
     /**
      * An array of instructions that's displayed when the -i param is passed into the daemon.
      * Helps sysadmins and users of your daemons get installation correct. Guide them to set
@@ -42,22 +41,31 @@ abstract class Core_Daemon
     protected $install_instructions = array();
 
     /**
-     * The frequency at which the run() loop will run (and execute() method will called). After execute() is called, any remaining time in that
+     * The frequency at which the run() loop will run (and execute() method will be called). After execute() is called, any remaining time in that
      * interval will be spent in a sleep state. If there is no remaining time, that will be logged as an error condition.
-     * @example $this->loop_interval = 300; // execute() will be called once every 5 minutes
-     * @example $this->loop_interval = 0.1; // execute() will be called 10 times every second
-     * @example $this->loop_interval = 0;   // execute() will be called immediately -- There will be no sleep.
+     * @example $this->loop_interval = 300;     // execute() will be called once every 5 minutes
+     * @example $this->loop_interval = 0.5;     // execute() will be called 2 times every second
+     * @example $this->loop_interval = 0;       // execute() will be called immediately -- There will be no sleep.
      * @var float    The interval in Seconds
      */
     protected $loop_interval = null;
 
     /**
-     * The frequency (in seconds) at which the timer will automatically restart the daemon.
-     * @example $this->auto_restart_interval = 3600; // Daemon will be restarted once an hour
-     * @example $this->auto_restart_interval = 86400; // Daemon will be restarted once an day
+     * The frequency (in seconds) at which the daemon will restart itself
+     * @example $this->auto_restart_interval = 3600;    // Daemon will be restarted once an hour
+     * @example $this->auto_restart_interval = 86400;   // Daemon will be restarted once an day
      * @var integer        The interval in Seconds
      */
     protected $auto_restart_interval = 86400;
+
+    /**
+     * Set this in your daemon to run a debug console to interact with your worker processes. It will essentially set a breakpoint
+     * at each inter-process message and fork point. You will be prompted and you'll be able to continue ("y") or abort ("n"). You can also
+     * dump a stack trace ("s") and then chose to continue or abort. When you chose to abort, an exception will be thrown.
+     * To make debugging easier, you should consider setting only 1 worker process and increase your loop interval to slow everything down.
+     * @var bool
+     */
+    protected $debug_workers = false;
 
     /**
      * If the process is forked, this will indicate whether we're still in the parent or not.
@@ -66,7 +74,7 @@ abstract class Core_Daemon
     private $is_parent = true;
 
     /**
-     * Timestamp when was this pid started?
+     * Timestamp when was the daemon started
      * @var integer
      */
     private $start_time;
@@ -78,25 +86,31 @@ abstract class Core_Daemon
     private $pid;
 
     /**
-     * An optional filename wherein the PID was written upon init.
+     * An optional filename the PID was written to at startup
+     * @see Core_Daemon::pid()
+     * @example Pass CLI argument: -p pidfile
      * @var string
      */
     private $pid_file = false;
 
     /**
-     * Is this process running as a Daemon? Triggered by the -d param. Has a getter/setter.
+     * Is this process running as a Daemon?
+     * @see Core_Daemon::is_daemon()
+     * @example Pass CLI argument: -d
      * @var boolean
      */
     private $daemon = false;
 
     /**
-     * Has a shutdown signal been received? If so, it will shut down upon completion of this iteration. Has a getter/setter.
+     * Has a shutdown signal been received? If so, it will shutdown gracefully after your execute() method returns.
+     * @see Core_Daemon::shutdown()
      * @var boolean
      */
     private $shutdown = false;
 
     /**
-     * In verbose mode, every log entry is also dumped to stdout, as long as were not in daemon mode. Has a getter/setter.
+     * In verbose mode, every log entry is also dumped to stdout, as long as were not in daemon mode.
+     * @see Core_Daemon::verbose()
      * @var boolean
      */
     private $verbose = false;
@@ -120,7 +134,7 @@ abstract class Core_Daemon
     private $plugins = array();
 
     /**
-     * Hash of callbacks that have been registered using on()
+     * Map of callbacks that have been registered using on()
      * @var Array
      */
     private $callbacks = array();
@@ -132,16 +146,18 @@ abstract class Core_Daemon
     private $stats = array();
 
     /**
-     * Set from the --resetworkers command line option, when this is set, worker processes will
-     * flush their IPC resources, allowing any bad messages to purged, the shm allocation to be resized, etc.
+     * The daemon will reset all worker's shared memory and buffered calls before starting them.
+     * Will allow you to resize the shared memory allocation or purge any unwanted buffered calls
+     * @example Pass CLI argument: --resetworkers
      * @var bool
      */
     private $reset_workers = false;
 
 
     /**
-     * This has to be set using the Core_Daemon::setFilename before init.
-     * It's used as part of the auto-restart mechanism. Probably a way to figure it out programatically tho.
+     * This has to be set using the Core_Daemon::setFilename() method before you call getInstance() the first time.
+     * It's used as part of the auto-restart mechanism.
+     * @todo Is there a way to get the currently executed filename from within an include?
      * @var string
      */
     private static $filename = false;
@@ -281,14 +297,18 @@ abstract class Core_Daemon
             foreach ($this->{$plugin}->check_environment() as $error)
                 $errors[] = "[$plugin] $error";
 
+        foreach ($this->workers as $worker)
+            foreach ($this->{$worker}->check_environment() as $error)
+                $errors[] = "[$worker] $error";
+
         if (count($errors)) {
             $errors = implode("\n  ", $errors);
-            throw new Exception("Core_Daemon::check_environment Found The Following Errors:\n  $errors");
+            throw new Exception("Core_Daemon::check_environment() Found The Following Errors:\n  $errors");
         }
     }
 
     /**
-     * Call Plugin and Daemon setup methods
+     * Run the setup() methods of installed plugins, installed workers, and the subclass, in that order. And dispatch the ON_INIT event.
      * @return void
      */
     private function init()
@@ -323,6 +343,9 @@ abstract class Core_Daemon
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->teardown();
 
+        foreach ($this->workers as $worker)
+            $this->{$worker}->teardown();
+
         //$this->reap(true);
         if ($this->is_parent && !empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
             unlink($this->pid_file);
@@ -343,10 +366,15 @@ abstract class Core_Daemon
         $accessors = array('loop_interval', 'is_parent', 'verbose', 'pid', 'shutdown');
         if (in_array($method, $accessors)) {
             if ($args)
-                trigger_error("The '$method' accessor can not be used as a setter in this context. Supplied arguments ignored.");
+                trigger_error("The '$method' accessor can not be used as a setter in this context. Supplied arguments ignored.", E_WARNING);
 
             return call_user_func_array(array($this, $method), array());
         }
+
+        if (in_array($method, $this->workers)) {
+            return call_user_func_array($this->$method, $args);
+        }
+
 
         throw new Exception("Invalid Method Call '$method'");
     }
@@ -371,13 +399,15 @@ abstract class Core_Daemon
         }
         catch (Exception $e)
         {
-            $this->fatal_error('Error in Core_Daemon::run(): ' . $e->getMessage());
+            $this->fatal_error(sprintf('Exception Thrown in Event Loop: %s [file] %s [line] %s%s%s',
+                $e->getMessage(), $e->getFile(), $e->getLine(), PHP_EOL, $e->getTraceAsString()));
         }
     }
 
     /**
-     * Register a callback for the given $event. Use the event class constants for built-in events, or add and dispatch your own events however you want.
-     * @param $event mixed scalar   Event id's under 100 should be reserved for daemon use. For custom events, use any other scalar.
+     * Register a callback for the given $event. Use the event class constants for built-in events. Add and dispatch
+     * your own events however you want.
+     * @param $event mixed scalar  When creating custom events, keep ints < 100 reserved for the daemon
      * @param $callback closure|callback
      * @return array    The return value can be passed to off() to unbind the event
      * @throws Exception
@@ -416,7 +446,8 @@ abstract class Core_Daemon
     /**
      * Dispatch callbacks. Can either pass an array referencing a specific callback (eg the return value from an on() call)
      * or you can pass it an array with the event type and all registered callbacks will be called.
-     * @param array $event  Either an array with a single item (an event type) or 2 items (an event type, and a callback ID for that event type)
+     * @param array $event  Either an array with a single item (an event type) or 2
+     *                      items (an event type, and a callback ID for that event type)
      * @param array $args   Array of arguments passed to the event listener
      */
     protected function dispatch(Array $event, Array $args = array())
@@ -429,9 +460,9 @@ abstract class Core_Daemon
     }
 
     /**
-     * Parallelize  any task by passing it as a callback or closure. Will fork into a child process, execute the supplied function, and exit.
-     * If the task uses MySQL or certain other outside resources, the connection will have to be re-established in the child process
-     * so in those cases, set the run_setup flag.
+     * Parallelize any task by passing it as a callback or closure. Will fork into a child process, execute the supplied
+     * function, and exit. If the task uses MySQL or certain other outside resources, the connection will have to be
+     * re-established in the child process so in those cases, set the run_setup flag.
      *
      * @link https://github.com/shaneharter/PHP-Daemon/wiki/Forking-Example
      *
@@ -439,7 +470,7 @@ abstract class Core_Daemon
      * @param Array $params             The params that will be passed into the Callback when it's called.
      * @param boolean $run_setup        After the child process is created, it will re-run the setup() method.
      * @param string $worker            Used by Named Workers to track forked workers. Do not use in any other situation.
-     * @return boolean                  Cannot know if the callback worked or not, but returns true if the fork was successful.
+     * @return boolean                  Cannot know if the callback worked, returns true if the fork was successful.
      */
     public function fork($callback, array $params = array(), $run_setup = false, $worker = false)
     {
@@ -616,7 +647,7 @@ abstract class Core_Daemon
      * Register Signal Handlers
      * Note: SIGKILL is missing -- afaik this is uncapturable in a PHP script, which makes sense.
      * Note: Some of these signals have special meaning and use in POSIX systems like Linux. Use with care.
-     * Note: If the daemon is run with a loop_interval timer, some signals will be suppressed during usleep periods
+     * Note: If the daemon is run with a loop_interval timer, some signals will be suppressed during sleep periods
      * @return void
      */
     private function register_signal_handlers()
@@ -668,6 +699,10 @@ abstract class Core_Daemon
      */
     private function dump()
     {
+        $workers = '';
+        foreach($this->workers as $worker)
+            $workers .= sprintf('%s %s [%s], ', $worker, $this->{$worker}->id(), $this->{$worker}->is_idle() ? 'AVAILABLE' : 'RUNNING');
+
         $out = array();
         $out[] = "Dump Signal Recieved";
         $out[] = "Loop Interval: " . $this->loop_interval;
@@ -679,7 +714,7 @@ abstract class Core_Daemon
         $out[] = "Shutdown Signal: " . (int)$this->shutdown();
         $out[] = "Verbose Mode: " . (int)$this->verbose();
         $out[] = "Loaded Plugins: " . implode(', ', $this->plugins);
-        $out[] = "Loaded Workers: " . implode(', ', $this->workers);
+        $out[] = "Loaded Workers: " . $workers;
         $out[] = "Memory Usage: " . memory_get_usage(true);
         $out[] = "Memory Peak Usage: " . memory_get_peak_usage(true);
         $out[] = "Current User: " . get_current_user();
@@ -870,6 +905,10 @@ abstract class Core_Daemon
 
             default:
                 throw new Exception(__METHOD__ . ' Failed. Could Not Load Worker: ' . $alias);
+        }
+
+        if ($this->debug_workers) {
+            $mediator->debug = true;
         }
 
         $this->workers[] = $alias;

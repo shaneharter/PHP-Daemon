@@ -1,3 +1,4 @@
+#!/usr/bin/php
 <?php
 /**
  * PHP Simple Daemon IPC Cleaner
@@ -20,11 +21,13 @@
  */
 
 $warning = PHP_EOL . "WARNING: This script releases all SystemV IPC resources: Shared Memory, Message Queues and Semaphores. Only run this if you want ALL resources released.
-                      Consider modifying it for partial release if you have other running systems on this server that could be using these resources.
-                      NOTE: YOU MUST EDIT THIS SCRIPT AND REMOVE THIS WARNING TO CONTINUE" . PHP_EOL . PHP_EOL;
+If this is a production server, you should probably not do this. See the comment block in this file for further guidance.
 
-// Remove this next line to continue:
-die($warning);
+PASS --confirm TO RUN THE CLEANER" . PHP_EOL . PHP_EOL;
+
+$opt = getopt('', array('confirm'));
+if (!$opt)
+    die($warning);
 
 $ipcs = array();
 exec('ipcs', $ipcs);

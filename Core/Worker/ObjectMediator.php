@@ -1,10 +1,14 @@
 <?php
 /**
  * Adapt a supplied object to the Worker Mediator
+ *
+ * Note: While it's not required, it's a good practice to change this class to extend Core_Worker_Mediator directly
+ * once you're ready to deploy it to production. It will reduce some method-call overhead.
+ *
  * @see https://github.com/shaneharter/PHP-Daemon/wiki/Named-Workers
  * @author Shane Harter
  */
-final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
+final class Core_Worker_ObjectMediator extends Core_Worker_DebugMediator
 {
 
     /**
@@ -74,9 +78,5 @@ final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
     public function inline() {
         return $this->object;
     }
-
-
-
-
 
 }
