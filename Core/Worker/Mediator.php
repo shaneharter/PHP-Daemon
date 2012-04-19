@@ -48,14 +48,6 @@ abstract class Core_Worker_Mediator
     const HEADER_ADDRESS = 1;
 
     /**
-     * If debug is set to "true" and the concrete subclass extends Core_Worker_DebugMediator instead of directly
-     * extending this class, this will run the worker IPC in a sort-of "debug console"
-     *
-     * @var bool
-     */
-    public $debug = false;
-
-    /**
      * The forking strategy of the Worker
      *
      * @example self::LAZY
@@ -575,7 +567,6 @@ abstract class Core_Worker_Mediator
         usleep(mt_rand(20000,50000));
 
         if (msg_send($this->queue, $queue_lookup[$call->status], $message, true, false, $message_error)) {
-            $this->log("Message Sent to Queue " . $queue_lookup[$call->status]);
             return true;
         }
 

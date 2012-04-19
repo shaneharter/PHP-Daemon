@@ -59,10 +59,8 @@ abstract class Core_Daemon
     protected $auto_restart_interval = 86400;
 
     /**
-     * Set this in your daemon to run a debug console to interact with your worker processes. It will essentially set a breakpoint
-     * at each inter-process message and fork point. You will be prompted and you'll be able to continue ("y") or abort ("n"). You can also
-     * dump a stack trace ("s") and then chose to continue or abort. When you chose to abort, an exception will be thrown.
-     * To make debugging easier, you should consider setting only 1 worker process and increase your loop interval to slow everything down.
+     * Set this in your daemon to run a debug console to interact with your worker processes.
+     * @example Pass CLI argument: --debugworkers
      * @var bool
      */
     protected $debug_workers = false;
@@ -84,6 +82,13 @@ abstract class Core_Daemon
      * @var integer
      */
     private $pid;
+
+    /**
+     * Process ID of the parent daemon process
+     * When in parent, it'll be the same as $pid
+     * @var integer
+     */
+    private $parent_pid;
 
     /**
      * An optional filename the PID was written to at startup
@@ -492,6 +497,7 @@ abstract class Core_Daemon
             case 0:
                 // Child Process
                 $this->is_parent = false;
+                $this->parent_pid = $this->pid;
                 $this->pid(getmypid());
                 pcntl_setpriority(1);
 
@@ -681,6 +687,9 @@ abstract class Core_Daemon
             $command .= ' -d';
             if ($this->pid_file)
                 $command .= ' -p ' . $this->pid_file;
+
+            if ($this->debug_workers)
+                $command .= ' --debugworkers';
         }
         else {
             $command .= ' ' . trim($options);
@@ -823,6 +832,7 @@ abstract class Core_Daemon
         // Close the resource handles to prevent this process from hanging on the exec() output.
         if (is_resource(STDOUT)) fclose(STDOUT);
         if (is_resource(STDERR)) fclose(STDERR);
+        if (is_resource(STDIN))  fclose(STDIN);
         exec($this->getFilename());
         exit();
     }
@@ -894,21 +904,25 @@ abstract class Core_Daemon
 
         switch (true) {
             case is_object($worker) && !is_a($worker, 'Closure'):
-                $mediator = new Core_Worker_ObjectMediator($alias, $this);
+                if ($this->debug_workers)
+                    $mediator = new Core_Worker_Debug_ObjectMediator($alias, $this);
+                else
+                    $mediator = new Core_Worker_ObjectMediator($alias, $this);
+
                 $mediator->setObject($worker);
                 break;
 
             case is_callable($worker):
-                $mediator = new Core_Worker_FunctionMediator($alias, $this);
+                if ($this->debug_workers)
+                    $mediator = new Core_Worker_Debug_FunctionMediator($alias, $this);
+                else
+                    $mediator = new Core_Worker_FunctionMediator($alias, $this);
+
                 $mediator->setFunction($worker);
                 break;
 
             default:
                 throw new Exception(__METHOD__ . ' Failed. Could Not Load Worker: ' . $alias);
-        }
-
-        if ($this->debug_workers) {
-            $mediator->debug = true;
         }
 
         $this->workers[] = $alias;
@@ -939,7 +953,7 @@ abstract class Core_Daemon
      */
     protected function getopt()
     {
-        $opts = getopt('hHiI:o:dvp:', array('install', 'resetworkers'));
+        $opts = getopt('hHiI:o:dvp:', array('install', 'resetworkers', 'debugworkers'));
 
         if (isset($opts['H']) || isset($opts['h']))
             $this->show_help();
@@ -960,6 +974,7 @@ abstract class Core_Daemon
         }
 
         $this->reset_workers = isset($opts['resetworkers']);
+        $this->debug_workers = isset($opts['debugworkers']);
         $this->verbose = isset($opts['v']) && $this->daemon == false;
 
         if (isset($opts['p'])) {
@@ -991,7 +1006,7 @@ abstract class Core_Daemon
 
         echo get_class($this);
         $out[] =  'USAGE:';
-        $out[] =  ' # ' . basename(self::$filename) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-v] [-p PID_FILE] [--resetworkers]';
+        $out[] =  ' # ' . basename(self::$filename) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-v] [-p PID_FILE] [--resetworkers] [--debugworkers]';
         $out[] =  '';
         $out[] =  'OPTIONS:';
         $out[] =  ' -H Shows this help';
@@ -1008,6 +1023,10 @@ abstract class Core_Daemon
         $out[] =  '';
         $out[] =  ' --resetworkers';
         $out[] =  '   Release and reallocate any shared memory and message queues used by workers.';
+        $out[] =  '';
+        $out[] =  ' --debugworkers';
+        $out[] =  '   Run workers under a debug console. Provides tools to debug the inter-process communication between workers.';
+        $out[] =  '   Console will only be displayed if Workers are used in your daemon';
         $out[] =  '';
         $out[] =  '';
 
@@ -1087,10 +1106,19 @@ abstract class Core_Daemon
     }
 
     /**
+     * Return the pid of the parent daemon process
+     * @return integer
+     */
+    public function parent_pid()
+    {
+        return $this->parent_pid;
+    }
+
+    /**
      * Return the daemon's filename
      * @return string
      */
-    public function filename()
+    public static function filename()
     {
         return self::$filename;
     }
@@ -1249,6 +1277,9 @@ abstract class Core_Daemon
                 $this->pid = $set_value;
             else
                 throw new Exception(__METHOD__ . ' Failed. Could not set pid. Integer Expected. Given: ' . $set_value);
+
+            if ($this->is_parent)
+                $this->parent_pid = $set_value;
 
             $this->dispatch(array(self::ON_PIDCHANGE), array($set_value));
         }

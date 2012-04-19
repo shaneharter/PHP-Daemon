@@ -18,6 +18,9 @@
  * displayed there in column 2 to ipcrm, which is what we're doing in this script.
  *
  * You have to pass iprcm a flag indicating the type of resources (-m, -q, and -s for Shared Memory, Queues and Semaphores, respectively), and then the ID.
+ *
+ * Note:
+ * If your system does not have `ipcs` or `ipcrm` binaries, install the linux-util-ng package
  */
 
 $warning = PHP_EOL . "WARNING: This script releases all SystemV IPC resources: Shared Memory, Message Queues and Semaphores. Only run this if you want ALL resources released.

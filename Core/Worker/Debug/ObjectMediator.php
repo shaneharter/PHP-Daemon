@@ -2,15 +2,14 @@
 /**
  * Adapt a supplied object to the Worker Mediator
  *
- * Note: Any changes here need to be duplicated in Core_Worker_Debug_ObjectMediator.
- *       That sucks and will change once we release a version targeted for PHP 5.4 where we can use traits to hold
- *       the debug logic.
+ * Note: The logic here is a copy of Core_Worker_ObjectMediator. This class is required because we want don't have
+ * multiple inheritance, and we don't have traits/mixins until we move to PHP 5.4 later in 2012. This solution isn't
+ * ideal but since this and the FunctionMediator are so simple, it really isn't tragic.
  *
  * @author Shane Harter
  */
-final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
+final class Core_Worker_Debug_ObjectMediator extends Core_Worker_Debug_Mediator
 {
-
     /**
      * @var Core_IWorkerInterface
      */

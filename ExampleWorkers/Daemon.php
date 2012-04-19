@@ -6,8 +6,6 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
     public $count = 0;
 
-    public $debug_workers = false;
-
     /**
      * We want to be able to start workers by passing in signals. In a real daemon, workers would be used to process
      * input, handle complex events, etc. To simulate that we're adding listeners for various signals that we can call as desired from the commandline.
@@ -139,7 +137,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
             case 10:
             case 30:
-                $this->run_sieve = true;
+                $this->run_sieve = false;
                 break;
         }
 
