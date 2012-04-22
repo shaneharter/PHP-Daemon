@@ -39,7 +39,7 @@ class ExampleWorkers_Workers_Primes implements Core_IWorkerInterface
         // Satisfy Interface
     }
 
-    function primes_among($set) {
+    public function primes_among($set) {
         $this->mediator->log('Looking for primes among ' . count($set) . ' items between ' . min($set) . ' and ' . max($set));
         $primes = array();
         foreach($set as $i)
@@ -49,13 +49,23 @@ class ExampleWorkers_Workers_Primes implements Core_IWorkerInterface
         return $primes;
     }
 
-    function is_prime($number) {
+    public function someDebugFunction($arg1, $arg2) {
+        echo "This is an example function I created that I'll use in the debug console. Demonstrates the ability to use",
+             "the debug console and its automatic breakpoints, custom code like this, and the ability to dynamically",
+             "inject code using eval() to debug multi-process Daemon/Worker applications.";
+
+        // If I return true, the current breakpoint in the debug console will be continued-from. Otherwise
+        // I'll stay at the breakpoint after this returns.
+        return ($arg1 > $arg2);
+    }
+
+    public function is_prime($number) {
 
         $result = $this->sieve($number, $number);
         return !empty($result);
     }
 
-    function sieve($start, $end) {
+    public function sieve($start, $end) {
 
         $primes = array();
 
