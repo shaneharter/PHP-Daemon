@@ -28,7 +28,10 @@ final class Core_Worker_Debug_FunctionMediator extends Core_Worker_Debug_Mediato
         $this->methods = array('execute');
     }
 
-    protected function getCallback(stdClass $call) {
-        return $this->function;
+    protected function get_callback(stdClass $call) {
+        if ($call->method == 'execute')
+            return $this->function;
+
+        return null;
     }
 }

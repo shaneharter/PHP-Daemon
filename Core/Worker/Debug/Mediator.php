@@ -16,6 +16,7 @@
 abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
 {
     protected $debug = true;
+    const INDENT_DEPTH = 4;
 
     /**
      * Used to determine which process has access to issue prompts to the debug console.
@@ -116,7 +117,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
             $status = "Unknown Status. (Status: {$call_status}) (Type: $type) (CallId Type: $calltype)";
         }
 
-        $indent = ($call_id - 2) % 5;
+        $indent = ($call_id - 2) % self::INDENT_DEPTH;
         $indent = str_repeat("\t", $indent);
 
         $prompt = "{$indent}[{$call_id}] {$status}";
@@ -149,7 +150,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
             $status = "Unknown Status! (Status: {$call_status}) (Type: $type) (CallId Type: $calltype)";
         }
 
-        $indent = ($call_id - 2) % 5;
+        $indent = ($call_id - 2) % self::INDENT_DEPTH;
         $indent = str_repeat("\t", $indent);
         $prompt = "{$indent}[{$call_id}] {$status}";
         $this->prompt($prompt, $message, function() {
@@ -170,8 +171,10 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
     protected function call($method, Array $args, $retries=0, $errors=0) {
         $status = ($this->is_idle()) ? 'Realtime' : 'Queued';
         $prompt = ($method == 'execute') ? '' : "->{$method}";
-
-        if ($this->prompt("Call to {$this->alias}{$prompt}()", $args))
+        $call_id = count($this->calls) + 2;
+        $indent = ($call_id - 2) % self::INDENT_DEPTH;
+        $indent = str_repeat("\t", $indent);
+        if ($this->prompt("{$indent}[{$call_id}] Call to {$this->alias}{$prompt}()", $args))
             return parent::call($method, $args, $retries, $errors);
 
         return false;
@@ -188,6 +191,10 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
         $that = $this;
         $daemon = $this->daemon;
         static $state = false;
+
+        if(!is_resource($this->consoleshm)) {
+            return true;
+        }
 
         // Each running process will display its own debug console. Use a mutex to serialize the execution
         // and control access to STDIN. We use shared memory -- abstracted using the $state closure -- to share settings among them
@@ -240,7 +247,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
         try {
 
             if (!$state('enabled'))
-                return false;
+                return true;
 
             if (!$state('indent'))
                 $prompt = str_replace("\t", '', $prompt);
@@ -249,6 +256,12 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
             $dw     = ($this->daemon->is_parent()) ? 'D' : 'W';
             $prompt = "[$this->alias $pid $dw] $prompt > ";
             $break  = false;
+
+            // We have to clear the buffer of any input that occurred in the terminal in the space after they submitted their last
+            // command and before this new prompt. Otherwise it'll be read from fgets below and probably ruin everything.
+            stream_set_blocking(STDIN, 0);
+            while(fgets(STDIN)) continue;
+            stream_set_blocking(STDIN, 1);
 
             // Commands that set $break=true will continue forward from the command prompt.
             // Otherwise it will just do the action (or display an error) and then repeat the prompt
@@ -262,7 +275,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
 
                 if (substr($input, -2) == '[A') {
                     $input = $state('last');
-                } else {
+                } elseif(!empty($input)) {
                     $state('last', $input);
                 }
 
@@ -344,10 +357,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                 switch(strtolower($input)) {
                     case 'help':
                         $out = array();
-                        $out[] = 'Debugging a multi-process application can be far more challenging than debugging other applications you may have built using PHP. ';
-                        $out[] = 'These tools were built to debug the daemon library and refined for your use. The key function here is allowing you to 1) See what messages are being passed';
-                        $out[] = 'between processes and 2) Inspect the contents of the shared memory the processes use as well as their local in-process cache of it.';
-                        $out[] = 'For a debugging guide, see: ';
+                        $out[] = 'For the PHP Simple Daemon debugging guide, see: ';
                         $out[] = 'https://github.com/shaneharter/PHP-Daemon/wiki/Debugging-Workers';
                         $out[] = '';
                         $out[] = 'Available Commands:';

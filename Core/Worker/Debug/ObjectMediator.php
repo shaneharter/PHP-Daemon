@@ -59,10 +59,13 @@ final class Core_Worker_Debug_ObjectMediator extends Core_Worker_Debug_Mediator
         return parent::check_environment($errors);
     }
 
-    protected function getCallback(stdClass $call) {
-        return array($this->object, $call->method);
+    protected function get_callback(stdClass $call) {
+        $cb = array($this->object, $call->method);
+        if (is_callable($cb)) {
+            return $cb;
+        }
+        return null;
     }
-
 
     /**
      * Return an instance of $object, allowing inline (synchronous) calls that bypass the mediator.

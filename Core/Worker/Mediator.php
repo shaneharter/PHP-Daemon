@@ -187,8 +187,7 @@ abstract class Core_Worker_Mediator
      * @abstract
      * @param $call
      */
-    protected abstract function getCallback(stdClass $call);
-
+    protected abstract function get_callback(stdClass $call);
 
 
     public function __construct($alias, Core_Daemon $daemon) {
@@ -473,7 +472,7 @@ abstract class Core_Worker_Mediator
                         $this->log("Call {$call_id} Could Not Ack Running.");
                     }
 
-                    $call->return = call_user_func_array($this->getCallback($call), $call->args);
+                    $call->return = call_user_func_array($this->get_callback($call), $call->args);
 
                     if ($this->message_encode($call_id) !== true) {
                         $this->log("Call {$call_id} Could Not Ack Complete.");
@@ -626,7 +625,10 @@ abstract class Core_Worker_Mediator
      */
     protected function call($method, Array $args, $retries=0, $errors=0) {
 
-        if (!in_array($method, $this->methods))
+        // Certain methods should be called on the local in-memory instance of the worker, not sent to a worker process
+        $local_methods = array('teardown');
+
+        if (!in_array($method, $this->methods) && !in_array($method, $local_methods))
             throw new Exception(__METHOD__ . " Failed. Method `{$method}` is not callable.");
 
         $call = new stdClass();
@@ -638,6 +640,17 @@ abstract class Core_Worker_Mediator
         $call->id            = count($this->calls) + (self::HEADER_ADDRESS + 1); // We use this ID for shm keys and we don't want to overwrite the header
         $call->retries       = $retries;
         $call->errors        = $errors;
+
+        // If this is a local method, just call it and return
+        if (in_array($method, $local_methods)) {
+            $cb = $this->get_callback($call);
+            if ($cb !== null)
+                return call_user_func_array($cb, $call->args);
+
+            $this->log('Call Failed. Local Method ' . $call->method . '() is Not Callable!', true);
+        }
+
+        // It's not a local method -- add it to the call stack and send to a worker process
         $this->calls[$call->id] = $call;
 
         try {

@@ -60,8 +60,12 @@ final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
         return parent::check_environment($errors);
     }
 
-    protected function getCallback(stdClass $call) {
-        return array($this->object, $call->method);
+    protected function get_callback(stdClass $call) {
+        $cb = array($this->object, $call->method);
+        if (is_callable($cb)) {
+            return $cb;
+        }
+        return null;
     }
 
 
