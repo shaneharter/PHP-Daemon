@@ -666,8 +666,12 @@ abstract class Core_Daemon
             // Some of these are duplicated/aliased, listed here for completeness
             SIGUSR2, SIGCONT, SIGQUIT, SIGILL, SIGTRAP, SIGABRT, SIGIOT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGALRM,
             SIGCONT, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF,
-            SIGWINCH, SIGPOLL, SIGIO, SIGPWR, SIGSYS, SIGBABY, SIGSTKFLT, SIGCHLD
+            SIGWINCH, SIGIO, SIGSYS, SIGBABY, SIGCHLD
         );
+
+		if (defined('SIGPOLL')) $signals[] = SIGPOLL;
+		if (defined('SIGPWR')) $signals[] = SIGPWR;
+		if (defined('SIGSTKFLT')) $signals[] = SIGSTKFLT;
 
         foreach(array_unique($signals) as $signal) {
             pcntl_signal($signal, array($this, 'signal'));
@@ -1246,7 +1250,7 @@ abstract class Core_Daemon
                 }
 
                 if ($priority <> pcntl_getpriority()) {
-                    pcntl_setpriority($priority);
+                    @pcntl_setpriority($priority);
                     if (pcntl_getpriority() == $priority) {
                         $this->log('Adjusting Process Priority to ' . $priority);
                     } else {
