@@ -1250,7 +1250,7 @@ abstract class Core_Daemon
                 }
 
                 if ($priority <> pcntl_getpriority()) {
-                    pcntl_setpriority($priority);
+                    @pcntl_setpriority($priority);
                     if (pcntl_getpriority() == $priority) {
                         $this->log('Adjusting Process Priority to ' . $priority);
                     } else {
