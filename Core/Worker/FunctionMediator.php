@@ -29,9 +29,20 @@ final class Core_Worker_FunctionMediator extends Core_Worker_Mediator
     }
 
     protected function get_callback(stdClass $call) {
-        if ($call->method == 'execute')
-            return $this->function;
+        switch ($call->method) {
+            case 'execute':
+                return $this->function;
+                break;
 
-        return null;
+            case 'teardown':
+                $that = $this;
+                return function() use ($that) {
+                    $that->function = null;
+                };
+                break;
+
+            default:
+                throw new Exception("$call->method() is Not Callable.");
+        }
     }
 }

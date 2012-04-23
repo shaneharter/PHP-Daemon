@@ -236,7 +236,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
             $this->mutex_acquired = sem_acquire($this->mutex);
             // Just in case another process changed settings while we were waiting for the mutex...
             if (!$state('enabled'))
-                return false;
+                return true;
         }
 
         if ($state('banner')) {

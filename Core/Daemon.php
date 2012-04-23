@@ -975,7 +975,7 @@ abstract class Core_Daemon
 
         $this->reset_workers = isset($opts['resetworkers']);
         $this->debug_workers = isset($opts['debugworkers']);
-        $this->verbose = isset($opts['v']) && $this->daemon == false;
+        $this->verbose = isset($opts['v']) && $this->daemon == false && $this->debug_workers == false;
 
         if (isset($opts['p'])) {
             $handle = @fopen($opts['p'], 'w');
@@ -1018,7 +1018,7 @@ abstract class Core_Daemon
         $out[] =  '       Install the script to /etc/init.d. Otherwise just output the script to stdout.';
         $out[] =  '';
         $out[] =  ' -d Daemon, detach and run in the background';
-        $out[] =  ' -v Verbose, echo any logged messages. Ignored in Daemon mode.';
+        $out[] =  ' -v Verbose, echo any logged messages. Ignored in Daemon mode. Ignored in --debugworkers mode.';
         $out[] =  ' -p PID_FILE File to write process ID out to';
         $out[] =  '';
         $out[] =  ' --resetworkers';

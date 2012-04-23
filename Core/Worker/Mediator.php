@@ -399,55 +399,58 @@ abstract class Core_Worker_Mediator
         if (empty($this->calls))
             return;
 
-        $message_type = $message = $message_error = null;
-        if (msg_receive($this->queue, self::WORKER_RUNNING, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
-            $call_id = $this->message_decode($message);
-            $this->running_calls[$call_id] = true;
-            $this->log('Job ' . $call_id . ' Is Running');
-        } else {
-            $this->message_error($message_error);
-        }
-
-        $message_type = $message = $message_error = null;
-        if (msg_receive($this->queue, self::WORKER_RETURN, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
-            $call_id = $this->message_decode($message);
-            $call = $this->calls[$call_id];
-
-            unset($this->running_calls[$call_id]);
-
-            $on_return = $this->on_return; // Callbacks have to be in a local variable...
-            if (is_callable($on_return))
-                call_user_func($on_return, $call);
-
-            // Periodically garbage-collect call stats
-            if (mt_rand(1, 50) == 25)
-                foreach ($this->calls as $item_id => $item)
-                    if (in_array($item->status, array(self::TIMEOUT, self::RETURNED)))
-                        unset($this->calls[$item_id]);
-
-            $this->log('Job ' . $call_id . ' Is Complete');
-        } else {
-            $this->message_error($message_error);
-        }
-
-        if ($this->timeout > 0) {
-            $now = microtime(true);
-            foreach(array_keys($this->running_calls) as $call_id) {
-                $call = $this->calls[$call_id];
-                if ($now > ($call->time[self::RUNNING] + $this->timeout)) {
-                    posix_kill($call->pid, SIGKILL);
-                    unset($this->running_calls[$call_id], $this->processes[$call->pid]);
-                    $call->status = self::TIMEOUT;
-
-                    $on_timeout = $this->on_timeout;
-                    if (is_callable($on_timeout))
-                        call_user_func($on_timeout, $call);
-
-                }
+        try {
+            $message_type = $message = $message_error = null;
+            if (msg_receive($this->queue, self::WORKER_RUNNING, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
+                $call_id = $this->message_decode($message);
+                $this->running_calls[$call_id] = true;
+                $this->log('Job ' . $call_id . ' Is Running');
+            } else {
+                $this->message_error($message_error);
             }
 
-        }
+            $message_type = $message = $message_error = null;
+            if (msg_receive($this->queue, self::WORKER_RETURN, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
+                $call_id = $this->message_decode($message);
+                $call = $this->calls[$call_id];
 
+                unset($this->running_calls[$call_id]);
+
+                $on_return = $this->on_return; // Callbacks have to be in a local variable...
+                if (is_callable($on_return))
+                    call_user_func($on_return, $call);
+
+                // Periodically garbage-collect call stats
+                if (mt_rand(1, 50) == 25)
+                    foreach ($this->calls as $item_id => $item)
+                        if (in_array($item->status, array(self::TIMEOUT, self::RETURNED)))
+                            unset($this->calls[$item_id]);
+
+                $this->log('Job ' . $call_id . ' Is Complete');
+            } else {
+                $this->message_error($message_error);
+            }
+
+            if ($this->timeout > 0) {
+                $now = microtime(true);
+                foreach(array_keys($this->running_calls) as $call_id) {
+                    $call = $this->calls[$call_id];
+                    if (isset($call->time[self::RUNNING]) && $now > ($call->time[self::RUNNING] + $this->timeout)) {
+                        posix_kill($call->pid, SIGKILL);
+                        unset($this->running_calls[$call_id], $this->processes[$call->pid]);
+                        $call->status = self::TIMEOUT;
+
+                        $on_timeout = $this->on_timeout;
+                        if (is_callable($on_timeout))
+                            call_user_func($on_timeout, $call);
+
+                    }
+                }
+
+            }
+        } catch (Exception $e) {
+            $this->log(__METHOD__ . ' Failed: ' . $e->getMessage(), true);
+        }
     }
 
     /**
@@ -643,11 +646,11 @@ abstract class Core_Worker_Mediator
 
         // If this is a local method, just call it and return
         if (in_array($method, $local_methods)) {
-            $cb = $this->get_callback($call);
-            if ($cb !== null)
-                return call_user_func_array($cb, $call->args);
-
-            $this->log('Call Failed. Local Method ' . $call->method . '() is Not Callable!', true);
+            try {
+                return call_user_func_array($this->get_callback($call), $call->args);
+            } catch (Exception $e) {
+                $this->log('Local Method Call Failed: ' . $e->getMessage(), true);
+            }
         }
 
         // It's not a local method -- add it to the call stack and send to a worker process

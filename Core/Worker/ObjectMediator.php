@@ -65,7 +65,8 @@ final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
         if (is_callable($cb)) {
             return $cb;
         }
-        return null;
+
+        throw new Exception("$call->method() is Not Callable.");
     }
 
 
