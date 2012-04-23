@@ -207,6 +207,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                     'indent'  => true,
                     'last'    => '',
                     'banner'  => true,
+                    'warned'  => false,
                 );
 
                 if (shm_has_var($that->consoleshm, 1))
@@ -229,7 +230,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
         }
 
         if (!$state('enabled'))
-            return false;
+            return true;
 
         if (!$this->mutex_acquired) {
             $this->mutex_acquired = sem_acquire($this->mutex);
@@ -245,9 +246,6 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
         }
 
         try {
-
-            if (!$state('enabled'))
-                return true;
 
             if (!$state('indent'))
                 $prompt = str_replace("\t", '', $prompt);
@@ -487,6 +485,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                         if (is_callable($on_interrupt))
                             $on_interrupt();
 
+                        $input = false;
                         $break = true;
                         break;
 

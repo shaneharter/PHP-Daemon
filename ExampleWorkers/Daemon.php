@@ -14,6 +14,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
     public $run_primes_among = false;
     public $run_sieve        = false;
     public $run_getfactors   = false;
+    public $auto_run         = false;
 
     protected function load_plugins()
     {
@@ -132,12 +133,12 @@ class ExampleWorkers_Daemon extends Core_Daemon
         switch (mt_rand(1, 50)) {
             case 20:
             case 40:
-                $this->run_getfactors = true;
+                $this->run_getfactors = $this->auto_run;
                 break;
 
             case 10:
             case 30:
-                $this->run_sieve = false;
+                $this->run_sieve = $this->auto_run;
                 break;
         }
 
