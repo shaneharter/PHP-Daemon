@@ -570,6 +570,7 @@ abstract class Core_Daemon
                         $raise_logfile_error = false;
                         echo $header;
                         $this->log('Unable to write logfile at ' . $this->log_file() . '. Redirecting logging to stdout.');
+                        $this->verbose(true);
                     }
 
                     throw new Exception("$prefix $message");
