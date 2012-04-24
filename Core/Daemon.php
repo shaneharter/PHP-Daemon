@@ -412,11 +412,7 @@ abstract class Core_Daemon
             return;
 
         // During Shutdown, we need to ensure that all worker processes are killed and reaped.
-        // But in a high-performance situation you need to be able to restart a daemon quickly.
-        // Once the event loop is broken, the daemon goes into a caretaker state. Plugins are torn-down.
-        // Locks are released. Signals are ignored. It will stick around long enough to reap every process
-        // and then exit. It will try to do a graceful shutdown on the worker, but once a workers timeout
-        // is reached, the process will be killed.
+        // The run loop is broken. Release locks (allowing another instance to begin) and shutdown worker processes.
         try
         {
             $this->log('Releasing Lock and Shutting Down... ');
@@ -516,7 +512,7 @@ abstract class Core_Daemon
                 if ($callback instanceof Closure)
                     $msg = 'Fork Request Failed. Uncalled Closure';
                 else
-                    $msg = 'Fork Request Failed. Uncalled Callback: ' . is_array($callback) ? implode('::', $callback) : $callback;
+                    $msg = 'Fork Request Failed. Uncalled Callback';
 
                 $this->log($msg, true);
                 return false;
@@ -538,6 +534,11 @@ abstract class Core_Daemon
                 if ($run_setup) {
                     $this->log("Running Setup in forked PID " . $this->pid);
                     $this->setup();
+
+                    if ($worker) {
+                        $this->{$worker}->is_parent = false;
+                        $this->{$worker}->setup();
+                    }
                 }
 
                 try

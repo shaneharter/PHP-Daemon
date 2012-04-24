@@ -158,7 +158,7 @@ abstract class Core_Worker_Mediator
      * Is the current instance the Parent (daemon-side) mediator, or the Child (worker-side) mediator?
      * @var bool
      */
-    protected $is_parent = true;
+    public $is_parent = true;
 
     /**
      * How big, at any time, can the IPC shared memory allocation be.
@@ -263,6 +263,9 @@ abstract class Core_Worker_Mediator
     }
 
     public function shutdown() {
+
+        if (!$this->is_parent)
+            return;
 
         foreach($this->processes as $pid => $state) {
             if ($state === true) {
@@ -527,9 +530,9 @@ abstract class Core_Worker_Mediator
     public function start() {
 
         $this->is_parent = false;
-        $this->setup();
 
         while($this->shutdown == false) {
+            $error_count = 0;
             $message_type = $message = $message_error = null;
             if (msg_receive($this->queue, self::WORKER_CALL, $message_type, $this->memory_allocation, $message, true, 0, $message_error)) {
                 try {
@@ -550,18 +553,13 @@ abstract class Core_Worker_Mediator
                 catch (Exception $e) {
                     $this->log($e->getMessage(), true);
                 }
-            } else {
-                $this->message_error($message_error);
-                if (is_resource($this->queue)) {
-                    $this->log(print_r(msg_stat_queue($this->queue), true));
-                } else {
-                    $this->log("queue is not a resource");
-                }
-                sleep(5);
+
+                // Give the CPU a break - Sleep for 1/50 a second.
+                usleep(50000);
+                continue;
             }
 
-            // Give the CPU a break - Sleep for 1/50 a second.
-            usleep(50000);
+            $this->message_error($message_error);
         }
     }
 
@@ -601,14 +599,38 @@ abstract class Core_Worker_Mediator
      * @param $error_code
      */
     protected  function message_error($error_code) {
-        $ignored_errors = array(
-            4,              //  4 = System Interrupt
-            MSG_ENOMSG,     // 42 = No message of desired type
-            0,              //  0 = Success
-        );
 
-        if (!in_array($error_code, $ignored_errors))
-            $this->log("Message Queue Error [$error_code] " . posix_strerror($error_code), true);
+        static $error_count = 0;
+
+        switch($error_code) {
+            case 0:             // Success
+            case 4:             // System Interrupt
+            case MSG_ENOMSG:    // No message of desired type
+
+                // Ignored Errors
+                usleep(20000);
+                break;
+
+            case 22:
+                // Invalid Argument
+                // Probably because the queue was removed in another process.
+            case 43:
+                // Identifier Removed
+                // A message queue was re-created at this address but the resource identifier we have needs to be re-created
+
+                sleep(3);
+                $this->ipc_create();
+                break;
+
+            default:
+                $error_count++;
+                $this->log("Message Queue Error {$error_code}: " . posix_strerror($error_code));
+                sleep(3);
+        }
+
+        if ($error_count > 5) {
+            $this->fatal_error("Message Queue Error Threshold Reached");
+        }
     }
 
     /**
@@ -636,31 +658,24 @@ abstract class Core_Worker_Mediator
         $message_error = null;
 
         if (shm_put_var($this->shm, $call->id, $call) == false) {
-            $this->log("Could Not Write to Shared Memory [{$this->id}");
+            if ($retry < 3) {
+                $this->log("Could Not Write to Shared Memory [{$this->id}]. Retrying...");
+                return $this->message_encode($call_id, ++$retry);
+            }
+
+            $this->log("Could Not Write to Shared Memory [{$this->id}]. Retries Failed. Giving Up...");
+            return false;
         }
 
-        // @todo is this required???
-        // usleep(mt_rand(20000,50000));
+        // Add in a tiny delay between the shm write and the message send
+        usleep(mt_rand(5000,15000));
 
         if (msg_send($this->queue, $queue_lookup[$call->status], $message, true, false, $message_error)) {
             return true;
         }
 
-        if ($retry < 3) {
-            $retry++;
-            switch($message_error) {
-                case MSG_EAGAIN:
-                    return $this->message_encode($call_id, $retry);
-                    break;
-
-                case 43:    // Identifier Removed
-                    $this->message_error($message_error);
-                    $this->log('Attempting To Re-Initialize IPC Resources and Retry Message. Retry: ' . $retry);
-                    $this->queue = msg_get_queue($this->id, 0666);
-                    $this->shm = shm_attach($this->id, $this->memory_allocation, 0666);
-                    return $this->message_encode($call_id, $retry);
-                    break;
-            }
+        if ($retry < 3 && $message_error == MSG_EAGAIN) {
+            return $this->message_encode($call_id, ++$retry);
         }
 
         $this->message_error($message_error);
