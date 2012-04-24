@@ -348,9 +348,9 @@ abstract class Core_Daemon
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->teardown();
 
-        foreach ($this->workers as $worker)
-            $this->{$worker}->teardown();
+        //  Worker teardown()'s are handled by the mediator objects
 
+        // @todo reaping...
         //$this->reap(true);
         if ($this->is_parent && !empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
             unlink($this->pid_file);
@@ -405,6 +405,29 @@ abstract class Core_Daemon
         catch (Exception $e)
         {
             $this->fatal_error(sprintf('Exception Thrown in Event Loop: %s [file] %s [line] %s%s%s',
+                $e->getMessage(), $e->getFile(), $e->getLine(), PHP_EOL, $e->getTraceAsString()));
+        }
+
+        if (!$this->is_parent)
+            return;
+
+        // During Shutdown, we need to ensure that all worker processes are killed and reaped.
+        // But in a high-performance situation you need to be able to restart a daemon quickly.
+        // Once the event loop is broken, the daemon goes into a caretaker state. Plugins are torn-down.
+        // Locks are released. Signals are ignored. It will stick around long enough to reap every process
+        // and then exit. It will try to do a graceful shutdown on the worker, but once a workers timeout
+        // is reached, the process will be killed.
+        try
+        {
+            $this->log('Releasing Lock and Shutting Down... ');
+            foreach($this->plugins as $plugin)
+                $this->{$plugin}->teardown();
+
+            $this->shutdown_workers();
+        }
+        catch (Exception $e)
+        {
+            $this->fatal_error(sprintf('Exception Thrown in Shutdown: %s [file] %s [line] %s%s%s',
                 $e->getMessage(), $e->getFile(), $e->getLine(), PHP_EOL, $e->getTraceAsString()));
         }
     }
@@ -479,6 +502,11 @@ abstract class Core_Daemon
      */
     public function fork($callback, array $params = array(), $run_setup = false, $worker = false)
     {
+        if ($this->shutdown) {
+            $this->log("Daemon is shutting down... fork() ignored");
+            return false;
+        }
+
         $this->dispatch(array(self::ON_FORK));
         $pid = pcntl_fork();
         switch ($pid)
@@ -592,7 +620,6 @@ abstract class Core_Daemon
             echo PHP_EOL . $e->getMessage();
         }
 
-        // Optionally distribute this error message to anybody on the ->email_distribution_list
         if ($is_error)
             $this->dispatch(array(self::ON_ERROR), array($message));
     }
@@ -816,7 +843,24 @@ abstract class Core_Daemon
                 $this->{$alias}->reap($pid, $status);
                 unset($this->worker_map[$pid]);
             }
-        } while($pid && count($this->worker_map) > 0);
+        } while($pid > 0);
+    }
+
+    /**
+     * Shutdown all forked worker processes
+     * It will attempt to shutdown all workers asynchronously so the longest this should take is max() of all worker timeouts.
+     * If no timeout is set, the worker is given 30 seconds to shutdown.
+     * @return void
+     */
+    private function shutdown_workers()
+    {
+        while($this->is_parent && count($this->worker_map) > 0) {
+            foreach(array_unique($this->worker_map) as $worker) {
+                $this->{$worker}->shutdown();
+            }
+            $this->reap(false);
+            sleep(1);
+        }
     }
 
     /**
@@ -829,15 +873,22 @@ abstract class Core_Daemon
         if ($this->is_parent == false)
             return;
 
+        $this->shutdown = true;
         $this->log('Restart Happening Now...');
         foreach($this->plugins as $plugin)
             $this->{$plugin}->teardown();
+
+        // Remove any registered callback handlers...
+        $this->callbacks = array();
 
         // Close the resource handles to prevent this process from hanging on the exec() output.
         if (is_resource(STDOUT)) fclose(STDOUT);
         if (is_resource(STDERR)) fclose(STDERR);
         if (is_resource(STDIN))  fclose(STDIN);
         exec($this->getFilename());
+
+        // A new daemon process has been created. This one will stick around just long enough to clean up the worker processes.
+        $this->shutdown_workers();
         exit();
     }
 
@@ -940,7 +991,7 @@ abstract class Core_Daemon
      * @throws Exception
      */
     private function check_alias($alias) {
-        if (empty($alias) && !is_scalar($alias)) {
+        if (empty($alias) || !is_scalar($alias)) {
             throw new Exception("Invalid Alias. Identifiers must be scalar.");
         }
 

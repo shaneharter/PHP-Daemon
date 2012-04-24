@@ -11,6 +11,7 @@
  * @todo graceful handling when forking fails for some reason
  * @todo retry limits?
  * @todo more/better logging, maybe a debug/verbose mode..
+ * @todo when daemon shuts down (due to lock, for example), workers have already been forked.. same w/ shutdown/restart signals of all types
  */
 abstract class Core_Worker_Mediator
 {
@@ -210,16 +211,14 @@ abstract class Core_Worker_Mediator
     }
 
     public function __destruct() {
-        if ($this->is_parent) {
-            // If there are no pending messages, release all shared resources.
-            // If there are, then we want to preserve them so we can allow for daemon restarts without losing the call buffer
-            $stat = @msg_stat_queue($this->queue);
-            if (is_array($stat) && $stat['msg_qnum'] > 0) {
-                return;
-            }
+        if (!$this->is_parent)
+            return;
 
-            @unlink($this->ftok);
-            $this->reset_workers();
+        // During a normal, graceful shutdown of the daemon, shutdown() will have already been called and processes will be empty.
+        // But if a fatal error occurred, or just this worker was removed, etc, we need to be sure that all forked processes are killed.
+        while(count($this->processes) > 0) {
+            $this->shutdown();
+            sleep(1);
         }
     }
 
@@ -243,18 +242,17 @@ abstract class Core_Worker_Mediator
 
             $this->fork();
             $this->daemon->on(Core_Daemon::ON_RUN, array($this, 'run'));
+
+            if ($this->daemon->reset_workers())
+                $this->ipc_destroy();
+
+            $this->ipc_create();
+            $this->shm_header();
+
         } else {
+            $this->ipc_create();
             $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'signal'));
             $this->log('Worker Process Started...');
-        }
-
-        $this->queue = msg_get_queue($this->id, 0666);
-        $this->shm = shm_attach($this->id, $this->memory_allocation, 0666);
-        if ($this->is_parent) {
-            if ($this->daemon->reset_workers())
-                $this->reset_workers(true);
-
-            $this->shm_header();
         }
 
         if (!is_resource($this->queue))
@@ -264,11 +262,88 @@ abstract class Core_Worker_Mediator
             throw new Exception(__METHOD__ . " Failed. Could not address shared memory block {$this->id}");
     }
 
+    public function shutdown() {
+
+        foreach($this->processes as $pid => $state) {
+            if ($state === true) {
+                posix_kill($pid, SIGTERM);
+                $this->processes[$pid] = time();
+                continue;
+            }
+
+            $timeout = $this->timeout > 0 ? $this->timeout : 30;
+            $this->log(sprintf("ST: %s TO: %s = %s  TIME: %s", $state, $timeout, $state + $timeout, time()));
+            if ($state + $timeout < time()) {
+                $this->log("Worker '{$pid}' Time Out: Killing Process.");
+                posix_kill($pid, SIGKILL);
+            }
+        }
+
+        // If there are no pending messages, release all shared resources.
+        // If there are, then we want to preserve them so we can allow for daemon restarts without losing the call buffer
+        if (count($this->processes) == 0) {
+            $stat = $this->ipc_status();
+            if ($stat['messages'] > 0) {
+                return;
+            }
+
+            @unlink($this->ftok);
+            $this->ipc_destroy();
+        }
+    }
+
     public function check_environment(Array $errors = array()) {
         if (function_exists('posix_kill') == false)
             $errors[] = 'The POSIX Extension is Not Installed';
 
         return $errors;
+    }
+
+    /**
+     * Connect to (and create if necessary) Shared Memory and Message Queue resources
+     * @return void
+     */
+    protected function ipc_create() {
+        $this->shm      = shm_attach($this->id, $this->memory_allocation, 0666);
+        $this->queue    = msg_get_queue($this->id, 0666);
+    }
+
+    /**
+     * Remove and Reset any data in shared resources. A "Hard Reset" of the queue. In normal operation, unless the server is rebooted or a worker's alias changed,
+     * you can restart a daemon process without losing buffered calls or pending return values. In some cases you may want to purge the buffer.
+     * @param bool $reconnect
+     * @return void
+     */
+    protected function ipc_destroy() {
+        if (!is_resource($this->queue) || !is_resource($this->shm))
+            $this->ipc_create();
+
+        @msg_remove_queue($this->queue);
+        @shm_remove($this->shm);
+        @shm_detach($this->shm);
+        $this->queue = $this->shm = null;
+    }
+
+    /**
+     * Get the status of IPC message queue and shared memory resources
+     * @return array    Tuple of 'messages','memory_allocation'
+     */
+    protected function ipc_status() {
+
+        $tuple = array(
+            'messages' => null,
+            'memory_allocation' => null,
+        );
+
+        $stat = @msg_stat_queue($this->queue);
+        if (is_array($stat))
+            $tuple['messages'] = $stat['msg_qnum'];
+
+        $header = @shm_get_var($this->shm, 1);
+        if (is_array($header))
+            $tuple['memory_allocation'] = $header['memory_allocation'];
+
+        return $tuple;
     }
 
     /**
@@ -290,7 +365,6 @@ abstract class Core_Worker_Mediator
      * @return int
      */
     public function malloc($bytes = null) {
-
         if ($bytes !== null) {
             if (!is_int($bytes))
                 throw new Exception(__METHOD__ . " Failed. Could not set SHM allocation size. Expected Integer. Given: " . gettype($bytes));
@@ -323,25 +397,7 @@ abstract class Core_Worker_Mediator
         $header = shm_get_var($this->shm, self::HEADER_ADDRESS);
         if ($header['memory_allocation'] <> $this->memory_allocation)
             $this->log('Warning: Seems you\'ve made a change to the memory_limit. To apply this change you will have to restart the daemon with the --resetworkers option. Memory limits are otherwise immutable.' .
-                        PHP_EOL . 'The existing memory_limit is ' . $header['memory_allocation'] . ' bytes.');
-    }
-
-    /**
-     * Remove and Reset any data in shared resources. A "Hard Reset" of the queue. In normal operation, unless the server is rebooted or a worker's alias changed,
-     * you can restart a daemon process without losing buffered calls or pending return values. In some cases you may want to purge the buffer.
-     * @param bool $reconnect
-     * @return void
-     */
-    protected function reset_workers($reconnect = false) {
-        @msg_remove_queue($this->queue);
-        @shm_remove($this->shm);
-        @shm_detach($this->shm);
-
-        if (!$reconnect)
-            return;
-
-        $this->shm = shm_attach($this->id, $this->memory_allocation, 0666);
-        $this->queue = msg_get_queue($this->id, 0666);
+                PHP_EOL . 'The existing memory_limit is ' . $header['memory_allocation'] . ' bytes.');
     }
 
     /**
@@ -357,7 +413,7 @@ abstract class Core_Worker_Mediator
 
         switch ($this->forking_strategy) {
             case self::LAZY:
-                if ($processes > count($this->running_calls))
+                if ($processes > count($this->running_calls) || count($this->calls) == 0)
                     $forks = 0;
                 else
                     $forks = 1;
@@ -446,8 +502,18 @@ abstract class Core_Worker_Mediator
 
                     }
                 }
-
             }
+
+            // If we've killed all our processes -- either timeouts or maybe they fatal-errored, and we have pending calls
+            // in the queue, create process(es) to run them. Not perfect -- it's possible the messages are Ack's and not Calls
+            // But since we just read all the Ack's at the top of this method, that's unlikely
+            if (count($this->processes) == 0) {
+                $stat = $this->ipc_status();
+                if ($stat['messages'] > 0) {
+                    $this->fork();
+                }
+            }
+
         } catch (Exception $e) {
             $this->log(__METHOD__ . ' Failed: ' . $e->getMessage(), true);
         }
@@ -486,10 +552,16 @@ abstract class Core_Worker_Mediator
                 }
             } else {
                 $this->message_error($message_error);
+                if (is_resource($this->queue)) {
+                    $this->log(print_r(msg_stat_queue($this->queue), true));
+                } else {
+                    $this->log("queue is not a resource");
+                }
+                sleep(5);
             }
 
             // Give the CPU a break - Sleep for 1/50 a second.
-            usleep(20000);
+            usleep(50000);
         }
     }
 
@@ -500,14 +572,13 @@ abstract class Core_Worker_Mediator
     public function signal($signal) {
         switch ($signal)
         {
+            case SIGHUP:
+                $this->log("Restarting Worker Process...");
+
             case SIGINT:
             case SIGTERM:
                 $this->shutdown = true;
                 break;
-
-            case SIGHUP:
-                $this->log("Restarting Worker Process...");
-                $this->shutdown = true;
         }
     }
 
@@ -531,9 +602,9 @@ abstract class Core_Worker_Mediator
      */
     protected  function message_error($error_code) {
         $ignored_errors = array(
-            4,  // System Interrupt
-            42, // No message of desired type
-            0,  // Success
+            4,              //  4 = System Interrupt
+            MSG_ENOMSG,     // 42 = No message of desired type
+            0,              //  0 = Success
         );
 
         if (!in_array($error_code, $ignored_errors))
@@ -544,10 +615,12 @@ abstract class Core_Worker_Mediator
      * Send messages for the given $call_id to the right queue based on that call's state. Writes call data
      * to shared memory at the address specified in the message.
      * @param $call_id
+     * @param $retry Used when msg_send returns an MSG_EAGAIN error. Nothing to do with timeout retries.
      * @return bool
      */
-    protected function message_encode($call_id) {
+    protected function message_encode($call_id, $retry = 0) {
 
+        usleep($retry * 10000);
         $call = $this->calls[$call_id];
 
         $queue_lookup = array(
@@ -566,10 +639,28 @@ abstract class Core_Worker_Mediator
             $this->log("Could Not Write to Shared Memory [{$this->id}");
         }
 
-        usleep(mt_rand(20000,50000));
+        // @todo is this required???
+        // usleep(mt_rand(20000,50000));
 
         if (msg_send($this->queue, $queue_lookup[$call->status], $message, true, false, $message_error)) {
             return true;
+        }
+
+        if ($retry < 3) {
+            $retry++;
+            switch($message_error) {
+                case MSG_EAGAIN:
+                    return $this->message_encode($call_id, $retry);
+                    break;
+
+                case 43:    // Identifier Removed
+                    $this->message_error($message_error);
+                    $this->log('Attempting To Re-Initialize IPC Resources and Retry Message. Retry: ' . $retry);
+                    $this->queue = msg_get_queue($this->id, 0666);
+                    $this->shm = shm_attach($this->id, $this->memory_allocation, 0666);
+                    return $this->message_encode($call_id, $retry);
+                    break;
+            }
         }
 
         $this->message_error($message_error);

@@ -8,7 +8,7 @@
  */
 
 
-$opts = getopt('w:i:', array('useexport'));
+$opts = getopt('w:i:', array('useexport', 'scan'));
 if (false == ($opts['w'] )) {
     $file = basename(__FILE__);
     die("
@@ -27,6 +27,9 @@ if (false == ($opts['w'] )) {
           The variable name set. Scalar expected.
           Leave blank to print the header written to the memory block by the worker mediator.
 
+        --scan
+          Look for items in the numeric key range 1 thru 1000
+
         --useexport optional
           Will use var_export() to print the variable contents as valid PHP.
           Useful for objects and arrays that you want to re-construct.\n\n"
@@ -34,6 +37,20 @@ if (false == ($opts['w'] )) {
 }
 
 $shm = shm_attach($opts['w']);
+
+if (isset($opts['scan'])) {
+
+    $out = 'Keys In Use:';
+    for ($i=0; $i<100000; $i++) {
+        if(shm_has_var($shm, $i))
+            $out .= " $i";
+    }
+
+    if ($out == 'Keys In Use:')
+        $out .= ' None.';
+
+    die(PHP_EOL . $out . PHP_EOL . PHP_EOL);
+}
 
 if (!isset($opts['i'])) {
     echo PHP_EOL . "PHP Daemon Memory Block Header:\n\n";

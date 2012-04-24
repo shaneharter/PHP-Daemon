@@ -2,7 +2,7 @@
 
 class ExampleWorkers_Daemon extends Core_Daemon
 {
-    protected $loop_interval = 3;
+    protected $loop_interval = 1;
 
     public $count = 0;
 
@@ -23,8 +23,10 @@ class ExampleWorkers_Daemon extends Core_Daemon
         // This daemon will respond to signals sent from the commandline.
         // 1) You can send a signal that will calculate factors of a random number
         // 2) You can send a signal that will find primes within a random range.
+        // 3) You can send a signal that will turn auto_run on and off. When it's on, the execute() method will randomly start worker jobs to mimic event-driven behavior.
         // The signals themselves are defined in the settings.ini
         // We also have other various settings defined in the ini, so we validate that the ini has both [signals] and [default] section
+        // We're using the INI file here only because it's a conveinient way to demonstrate using the INI plugin.
 
         $this->plugin('settings', new Core_Plugin_Ini());
         $this->settings->filename = BASE_PATH . '/ExampleWorkers/settings.ini';
@@ -38,12 +40,12 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
         // Instantiate an App_Primes object as a Worker
         // Load 3 workers in the pool
-        // Allocate 256k of shared memory to pass args to the workers and receive results back: If you omit this, it will use 1MB by default.
+        // Allocate 2MB of shared memory to pass args to the workers and receive results back: If you omit this, it will use 1MB by default.
         // By convention, workers are named in UpperCase
         // Look at App_Prime to see the available methods. They are: sieve, is_prime, primes_among
 
         $this->worker('PrimeNumbers', new ExampleWorkers_Workers_Primes());
-        $this->PrimeNumbers->timeout(60 * 5);
+        $this->PrimeNumbers->timeout(60);
         $this->PrimeNumbers->workers(3);
         $this->PrimeNumbers->malloc(1024 * 2000);
 
@@ -67,12 +69,11 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
             if ($call->retries < 3) {
                 $that->log("Retrying...");
-                $that->example->retry($call);
+                $that->PrimeNumbers->retry($call);
             } else {
                 $that->log("Retries Concluded. I Give Up.");
             }
         });
-
 
 
         // Add a GetFactors Function as a Named Worker
@@ -90,7 +91,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
             return $factors;
         });
 
-        $this->GetFactors->timeout(60 * 5);
+        $this->GetFactors->timeout(60);
         $this->GetFactors->workers(3);
         $this->GetFactors->onReturn(function($call) use($that) {
             $that->log("Factoring Complete for `{$call->args[0]}`");
@@ -115,13 +116,19 @@ class ExampleWorkers_Daemon extends Core_Daemon
             $this->on(Core_Daemon::ON_SIGNAL, function($signal) use($that) {
                 if (isset($that->settings['signals'][$signal])) {
                     $action = $that->settings['signals'][$signal];
-                    $that->log("Signal Received! Setting {$action}=true");
-                    $that->{$action} = true;
+
+                    if ($action == 'auto_run') {
+                        $that->log("Signal Received! Setting auto_run=" . ($that->auto_run ? 'false' : 'true'));
+                        $that->{$action} = !$that->{$action};
+                    } else {
+                        $that->log("Signal Received! Setting {$action}=true");
+                        $that->{$action} = true;
+                    }
                 }
             });
 
-            // You never really want to call a worker method directly from a signal handler.
-            // This is because signal handlers are not re-entrant. So worker processes initiated within a signal handler
+            // You never want to call a worker method directly from a signal handler.
+            // This is because signal handlers are not re-entrant. So worker processes forked within a signal handler
             // will not respond to any signals themselves. So here we're setting a flag that is polled in the execute() method.
         }
     }
@@ -132,19 +139,23 @@ class ExampleWorkers_Daemon extends Core_Daemon
         // Run our Factor and Prime workers randomly and in response to signals
         switch (mt_rand(1, 50)) {
             case 20:
+            case 30:
             case 40:
                 $this->run_getfactors = $this->auto_run;
                 break;
 
-            case 10:
-            case 30:
+            case 45:
+                $this->run_getfactors = $this->auto_run;
+
+            case 21:
+            case 31:
                 $this->run_sieve = $this->auto_run;
                 break;
         }
 
         if ($this->run_getfactors) {
             $this->run_getfactors = false;
-            $rand = mt_rand(100000, 1000000);
+            $rand = mt_rand(500000, 10000000);
             $this->log("Finding Factors of `{$rand}`");
             $this->GetFactors($rand);
         }
