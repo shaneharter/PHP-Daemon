@@ -1,2 +1,0 @@
-echo $1
-kill -$1 `cat ./pid`

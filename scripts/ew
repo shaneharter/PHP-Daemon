@@ -1,0 +1,2 @@
+cd ..
+php ExampleWorkers/run.php -v -p ./ExampleWorkers/pid $1
