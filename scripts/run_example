@@ -1,1 +1,2 @@
-./Example/run.php -v -p ./pid
+cd ..
+php Example/run.php -v -p ./Example/pid $1

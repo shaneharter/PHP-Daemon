@@ -151,12 +151,14 @@ abstract class Core_Daemon
     private $stats = array();
 
     /**
-     * The daemon will reset all worker's shared memory and buffered calls before starting them.
-     * Will allow you to resize the shared memory allocation or purge any unwanted buffered calls
-     * @example Pass CLI argument: --resetworkers
+     * By default, any buffered calls and acks between a daemon and its worker processes do not persist after a restart.
+     * You can retain these calls -- and attempt to pick-up where you left off -- by using the the --recoverworkers
+     * option.
+     * Note: When a daemon auto-restarts itself it will use this function to retain worker operation.
+     * @example Pass CLI argument: --recoverworkers
      * @var bool
      */
-    private $reset_workers = false;
+    private $recover_workers = false;
 
 
     /**
@@ -527,7 +529,7 @@ abstract class Core_Daemon
 
                 // Truncate the plugins and workers lists.
                 // The instances themselves will still be available as $this->{$alias} but removing the arrays
-                // will allow the fork to have and manage it's own set of workers and plugins if desired without interfering
+                // will allow the fork to have and manage it's own set of plugins if desired without interfering
                 // with the parent.
                 $this->workers = $this->worker_map = $this->plugins = array();
 
@@ -716,7 +718,7 @@ abstract class Core_Daemon
         $command = 'php ' . self::$filename;
 
         if ($options === false) {
-            $command .= ' -d';
+            $command .= ' -d --recoverworkers';
             if ($this->pid_file)
                 $command .= ' -p ' . $this->pid_file;
 
@@ -1009,7 +1011,7 @@ abstract class Core_Daemon
      */
     protected function getopt()
     {
-        $opts = getopt('hHiI:o:dvp:', array('install', 'resetworkers', 'debugworkers'));
+        $opts = getopt('hHiI:o:dvp:', array('install', 'recoverworkers', 'debugworkers'));
 
         if (isset($opts['H']) || isset($opts['h']))
             $this->show_help();
@@ -1029,7 +1031,7 @@ abstract class Core_Daemon
             $this->pid(getmypid()); // We have a new pid now
         }
 
-        $this->reset_workers = isset($opts['resetworkers']);
+        $this->recover_workers = isset($opts['recoverworkers']);
         $this->debug_workers = isset($opts['debugworkers']);
         $this->verbose = isset($opts['v']) && $this->daemon == false && $this->debug_workers == false;
 
@@ -1189,12 +1191,12 @@ abstract class Core_Daemon
     }
 
     /**
-     * Is the --resetworkers flag set?
+     * Is the --recoverworkers flag set?
      * @return boolean
      */
-    public function reset_workers()
+    public function recover_workers()
     {
-        return $this->reset_workers;
+        return $this->recover_workers;
     }
 
     /**

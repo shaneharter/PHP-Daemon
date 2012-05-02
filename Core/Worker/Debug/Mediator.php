@@ -46,15 +46,13 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
     }
 
     /**
-     * Remove and Reset any data in shared resources. A "Hard Reset" of the queue. In normal operation, unless the server is rebooted or a worker's alias changed,
-     * you can restart a daemon process without losing buffered calls or pending return values. In some cases you may want to purge the buffer.
-     * @param bool $reconnect
+     * Destroy any data in shared resources.
      * @return void
      */
-    protected function reset_workers($reconnect = false) {
-        $prompt = "Reset Workers. Reconnect: " . (int) $reconnect;
-        if ($this->prompt($prompt, $reconnect))
-            parent::reset_workers($reconnect);
+    protected function ipc_destroy() {
+        $prompt = "Destroy IPC Resources";
+        if ($this->prompt($prompt))
+            parent::ipc_destroy();
     }
 
     /**
@@ -104,9 +102,9 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
     protected function message_encode($call_id) {
         $call_status = $this->calls[$call_id]->status;
         $statuses = array(
-            self::UNCALLED  =>  'Daemon sending Call message to Worker',
-            self::CALLED    =>  'Worker sending "running" ack message to Daemon',
-            self::RUNNING   =>  'Worker sending "return" ack message to Daemon',
+            self::CALLED     =>  'Daemon sending Call message to Worker',
+            self::RUNNING    =>  'Worker sending "running" ack message to Daemon',
+            self::RETURNED   =>  'Worker sending "return" ack message to Daemon',
         );
 
         if (isset($statuses[$call_status]))
@@ -186,7 +184,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
      * @return string   Returns the raw input
      * @throws Exception
      */
-    private function prompt($prompt, $args = null, Closure $on_interrupt = null) {
+    public function prompt($prompt, $args = null, Closure $on_interrupt = null) {
 
         $that = $this;
         $daemon = $this->daemon;
@@ -268,6 +266,10 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
 
                 echo $prompt;
                 $input = trim(fgets(STDIN));
+                $input = preg_replace('/\s*/', ' ', $input);
+
+                echo PHP_EOL, $input, PHP_EOL;
+
                 $matches = false;
                 $message = '';
 
@@ -291,7 +293,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                         $message = "Item Does Not Exist";
                 }
 
-                if (!$matches && preg_match('/^show (\d+)?/i', $input, $matches) == 1) {
+                if (!$matches && preg_match('/^show[\s]*(\d+)?$/i', $input, $matches) == 1) {
                     if (empty($this->shm)) {
                         echo "Shared Memory Not Connected Yet", PHP_EOL;
                         continue;
@@ -367,7 +369,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                         $out[] = 'eval [php]        Eval the supplied code. Passed to eval() as-is. Any return values will be printed. Run context is the Core_Worker_Mediator class.';
                         $out[] = 'help              Print This Help';
                         $out[] = 'indent [y|n]      When turned-on, indentation will be used to group messages from the same call in a column so you can easily match them together.';
-                        $out[] = 'kill              Kill all PHP processes - Could effect non-daemon-related processes.';
+                        $out[] = 'kill              Kill the daemon and all of its worker processes.';
                         $out[] = 'show [n]          Display the Nth item in shared memory. If no ID is passed, `show` will show the shared memory header.';
                         $out[] = 'show args         Display any arguments that may have been passed at the breakpoint.';
                         $out[] = 'show local [n]    Display the Nth item in local memory - from the $this->calls array';
@@ -461,7 +463,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                     case 'kill':
                         @fclose(STDOUT);
                         @fclose(STDERR);
-                        @exec('killall -9 -v /usr/bin/php');
+                        @exec('ps -C "php ' . $this->daemon->filename() . '" -o pid= | xargs kill -9 ');
                         break;
 
                     case 'cleanipc':

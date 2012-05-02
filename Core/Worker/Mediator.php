@@ -11,7 +11,6 @@
  * @todo graceful handling when forking fails for some reason
  * @todo retry limits?
  * @todo more/better logging, maybe a debug/verbose mode..
- * @todo when daemon shuts down (due to lock, for example), workers have already been forked.. same w/ shutdown/restart signals of all types
  */
 abstract class Core_Worker_Mediator
 {
@@ -94,6 +93,13 @@ abstract class Core_Worker_Mediator
      * @var array
      */
     protected $calls = array();
+
+    /**
+     * Call Counter - Used to assign keys in the local and shm $calls array
+     * Note: Start at 1 because the first key in shm memory is reserved for the header
+     * @var int
+     */
+    protected $call_count = 1;
 
     /**
      * Calls currently running on one of the worker processes.
@@ -214,12 +220,17 @@ abstract class Core_Worker_Mediator
         if (!$this->is_parent)
             return;
 
-        // During a normal, graceful shutdown of the daemon, shutdown() will have already been called and processes will be empty.
-        // But if a fatal error occurred, or just this worker was removed, etc, we need to be sure that all forked processes are killed.
-        while(count($this->processes) > 0) {
-            $this->shutdown();
-            sleep(1);
-        }
+        $this->log("DESTRUCT");
+//        $e = new Exception();
+//        echo $e->getTraceAsString();
+//        echo PHP_EOL, "---", PHP_EOL;
+//        // During a normal, graceful shutdown of the daemon, shutdown() will have already been called and processes will be empty.
+//        // But if a fatal error occurred, or just this worker was removed, etc, we need to be sure that all forked processes are killed.
+//        while(count($this->processes) > 0) {
+//            $this->log("DESTRUCT LLLL");
+//            $this->shutdown();
+//            sleep(1);
+//        }
     }
 
     public function setup() {
@@ -243,7 +254,7 @@ abstract class Core_Worker_Mediator
             $this->fork();
             $this->daemon->on(Core_Daemon::ON_RUN, array($this, 'run'));
 
-            if ($this->daemon->reset_workers())
+            if (!$this->daemon->recover_workers())
                 $this->ipc_destroy();
 
             $this->ipc_create();
@@ -263,22 +274,27 @@ abstract class Core_Worker_Mediator
     }
 
     public function shutdown() {
+        static $state = array();
 
         if (!$this->is_parent)
             return;
 
-        foreach($this->processes as $pid => $state) {
-            if ($state === true) {
-                posix_kill($pid, SIGTERM);
-                $this->processes[$pid] = time();
+        if ($this->timeout > 0)
+            $timeout = $this->timeout;
+        else
+            $timeout = 30;
+        $timeout = 10;
+        foreach(array_keys($this->processes) as $pid) {
+            if (!isset($state[$pid])) {
+               // posix_kill($pid, SIGTERM);
+                $state[$pid] = time();
                 continue;
             }
 
-            $timeout = $this->timeout > 0 ? $this->timeout : 30;
-            $this->log(sprintf("ST: %s TO: %s = %s  TIME: %s", $state, $timeout, $state + $timeout, time()));
-            if ($state + $timeout < time()) {
+            if (isset($state[$pid]) && ($state[$pid] + $timeout) < time()) {
                 $this->log("Worker '{$pid}' Time Out: Killing Process.");
                 posix_kill($pid, SIGKILL);
+                unset($state[$pid]);
             }
         }
 
@@ -532,7 +548,6 @@ abstract class Core_Worker_Mediator
         $this->is_parent = false;
 
         while($this->shutdown == false) {
-            $error_count = 0;
             $message_type = $message = $message_error = null;
             if (msg_receive($this->queue, self::WORKER_CALL, $message_type, $this->memory_allocation, $message, true, 0, $message_error)) {
                 try {
@@ -540,20 +555,20 @@ abstract class Core_Worker_Mediator
                     $call = $this->calls[$call_id];
 
                     $call->pid = getmypid();
-                    if ($this->message_encode($call_id) !== true) {
+                    $call->status = self::RUNNING;
+                    if (!$this->message_encode($call_id)) {
                         $this->log("Call {$call_id} Could Not Ack Running.");
                     }
 
                     $call->return = call_user_func_array($this->get_callback($call), $call->args);
-
-                    if ($this->message_encode($call_id) !== true) {
+                    $call->status = self::RETURNED;
+                    if (!$this->message_encode($call_id)) {
                         $this->log("Call {$call_id} Could Not Ack Complete.");
                     }
                 }
                 catch (Exception $e) {
                     $this->log($e->getMessage(), true);
                 }
-
                 // Give the CPU a break - Sleep for 1/50 a second.
                 usleep(50000);
                 continue;
@@ -597,40 +612,61 @@ abstract class Core_Worker_Mediator
     /**
      * Handle Message Queue errors
      * @param $error_code
+     * @return boolean  Returns true if the operation should be retried.
      */
     protected  function message_error($error_code) {
 
         static $error_count = 0;
 
+        // The cost and risk of restarting a worker process is lower than restarting the daemon
+        if ($this->is_parent)
+            $error_threshold = 50;
+        else
+            $error_threshold = 10;
+
         switch($error_code) {
             case 0:             // Success
             case 4:             // System Interrupt
             case MSG_ENOMSG:    // No message of desired type
+            case MSG_EAGAIN:    // Temporary Problem, Try Again
 
                 // Ignored Errors
                 usleep(20000);
+                return true;
                 break;
 
             case 22:
                 // Invalid Argument
                 // Probably because the queue was removed in another process.
+
             case 43:
                 // Identifier Removed
                 // A message queue was re-created at this address but the resource identifier we have needs to be re-created
+                if ($this->is_parent)
+                    usleep(20000);
+                else
+                    sleep(3);
 
-                sleep(3);
                 $this->ipc_create();
+                return true;
                 break;
 
             default:
                 $error_count++;
                 $this->log("Message Queue Error {$error_code}: " . posix_strerror($error_code));
-                sleep(3);
+                if ($this->is_parent)
+                    usleep(20000);
+                else
+                    sleep(3);
+
+                if ($error_count > $error_threshold) {
+                    $this->fatal_error("Message Queue Error Threshold Reached");
+                }
+
+                return false;
         }
 
-        if ($error_count > 5) {
-            $this->fatal_error("Message Queue Error Threshold Reached");
-        }
+
     }
 
     /**
@@ -642,7 +678,6 @@ abstract class Core_Worker_Mediator
      */
     protected function message_encode($call_id, $retry = 0) {
 
-        usleep($retry * 10000);
         $call = $this->calls[$call_id];
 
         $queue_lookup = array(
@@ -651,34 +686,27 @@ abstract class Core_Worker_Mediator
             self::RETURNED  => self::WORKER_RETURN
         );
 
-        $call->status++;
         $call->time[$call->status] = microtime(true);
 
-        $message = array('call' => $call->id, 'status' => $call->status);
-        $message_error = null;
-
-        if (shm_put_var($this->shm, $call->id, $call) == false) {
+        if (!shm_put_var($this->shm, $call->id, $call) || !shm_has_var($this->shm, $call->id)) {
             if ($retry < 3) {
                 $this->log("Could Not Write to Shared Memory [{$this->id}]. Retrying...");
                 return $this->message_encode($call_id, ++$retry);
             }
-
             $this->log("Could Not Write to Shared Memory [{$this->id}]. Retries Failed. Giving Up...");
             return false;
         }
 
-        // Add in a tiny delay between the shm write and the message send
-        usleep(mt_rand(5000,15000));
-
+        $message = array('call' => $call->id, 'status' => $call->status);
+        $message_error = null;
         if (msg_send($this->queue, $queue_lookup[$call->status], $message, true, false, $message_error)) {
             return true;
         }
 
-        if ($retry < 3 && $message_error == MSG_EAGAIN) {
+        if ($this->message_error($message_error)) {
             return $this->message_encode($call_id, ++$retry);
         }
 
-        $this->message_error($message_error);
         return false;
     }
 
@@ -740,13 +768,14 @@ abstract class Core_Worker_Mediator
         if (!in_array($method, $this->methods) && !in_array($method, $local_methods))
             throw new Exception(__METHOD__ . " Failed. Method `{$method}` is not callable.");
 
+        $this->call_count++;
         $call = new stdClass();
         $call->method        = $method;
         $call->args          = $args;
-        $call->status        = self::UNCALLED;
+        $call->status        = self::CALLED;
         $call->time          = array(microtime(true));
         $call->pid           = null;
-        $call->id            = count($this->calls) + (self::HEADER_ADDRESS + 1); // We use this ID for shm keys and we don't want to overwrite the header
+        $call->id            = $this->call_count;
         $call->retries       = $retries;
         $call->errors        = $errors;
 
@@ -763,8 +792,10 @@ abstract class Core_Worker_Mediator
         $this->calls[$call->id] = $call;
 
         try {
-            $this->fork();
-            return $this->message_encode($call->id) === true;
+            if ($this->message_encode($call->id)) {
+                $this->fork();
+                return true;
+            }
         } catch (Exception $e) {
             $this->log('Call Failed: ' . $e->getMessage(), true);
         }
@@ -887,5 +918,12 @@ abstract class Core_Worker_Mediator
      */
     public function id() {
         return $this->id;
+    }
+
+    /**
+     * Satisfy the debugging interface in case there are user-created prompt() calls in their workers
+     */
+    public function prompt($prompt, $args = null, Closure $on_interrupt = null) {
+        return true;
     }
 }

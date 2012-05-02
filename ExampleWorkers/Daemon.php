@@ -158,6 +158,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
             $rand = mt_rand(500000, 10000000);
             $this->log("Finding Factors of `{$rand}`");
             $this->GetFactors($rand);
+
         }
 
         if ($this->run_sieve) {

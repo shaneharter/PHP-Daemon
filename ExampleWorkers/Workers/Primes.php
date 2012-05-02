@@ -71,7 +71,7 @@ class ExampleWorkers_Workers_Primes implements Core_IWorkerInterface
 
         // The sieve is designed to work from 3 and above.
         // We know that "2" is a Prime. So if $start is less than "3", we will prepend the array with "2".
-        // But in some cases, "1" is considered prime, and in others not. For our puposes, we've put a setting in the ini file to resolve this issue.
+        // But in some cases, "1" is considered prime, and in others not. For our purposes, we've put a setting in the ini file to resolve this issue.
         // The daemon() method on the mediator allows us to import objects/properties from the daemon by name
         if ($start < 3) {
             $settings = $this->mediator->daemon('settings');
@@ -82,6 +82,8 @@ class ExampleWorkers_Workers_Primes implements Core_IWorkerInterface
 
             $start = 3;
         }
+
+        $this->mediator->prompt("Something Is Happeneing in sieve! Oh Noes!", array($start, $end));
 
         for ($i = $start; $i <= $end; $i++)
         {
