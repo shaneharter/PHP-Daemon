@@ -227,7 +227,6 @@ abstract class Core_Worker_Mediator
         if (!$this->is_parent)
             return;
 
-        $this->log("DESTRUCT");
 //        $e = new Exception();
 //        echo $e->getTraceAsString();
 //        echo PHP_EOL, "---", PHP_EOL;
@@ -461,9 +460,28 @@ abstract class Core_Worker_Mediator
                 break;
         }
 
+        $errors = array();
         for ($i=0; $i<$forks; $i++) {
+
             $pid = $this->daemon->fork(array($this, 'start'), array(), true, $this->alias);
-            $this->processes[$pid] = microtime(true);
+            if ($pid) {
+                $this->processes[$pid] = microtime(true);
+                continue;
+            }
+
+            // If the forking failed, we can retry a few times and then fatal-error
+            // The most common reason this could happen is the PID table gets full (zombie processes left behind?)
+            // or the machine runs out of memory.
+            if (!isset($errors[$i])) {
+                $errors[$i] = 0;
+            }
+
+            if ($errors[$i]++ < 3) {
+                $i--;
+                continue;
+            }
+
+            $this->fatal_error("Could Not Fork: See PHP error log for an error code and more information.");
         }
     }
 
@@ -565,9 +583,6 @@ abstract class Core_Worker_Mediator
      * @return void
      */
     public function start() {
-
-        $this->is_parent = false;
-
         while($this->shutdown == false) {
             $message_type = $message = $message_error = null;
             if (msg_receive($this->queue, self::WORKER_CALL, $message_type, $this->memory_allocation, $message, true, 0, $message_error)) {
@@ -671,6 +686,9 @@ abstract class Core_Worker_Mediator
                 $this->ipc_create();
                 return true;
                 break;
+
+            case -1:
+                // This error code is used when we have a problem forking
 
             case null:
                 // Almost certainly an issue with shared memory
