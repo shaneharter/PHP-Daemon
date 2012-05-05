@@ -12,6 +12,7 @@
  */
 
 ini_set('error_log', '/var/log/phpcli');
+ini_set('display_errors', 1);
 
 date_default_timezone_set('America/Los_Angeles');
 

@@ -140,11 +140,16 @@ abstract class Core_Worker_Mediator
     /**
      * How long, in seconds, can worker methods take before being killed?
      * Note: There may be deviation in enforcement up to the length of your loop_interval. So if you set this ot "5" and
-     * your loop interval is 2.5 second, workers may be allowed to run for up to 7.5 seconds before timing out.
+     * your loop interval is 2.5 second, workers may be allowed to run for up to 7.5 seconds before timing out. This
+     * happens because timeouts and the on_return and on_timeout calls are all handled inside the run() loop just before
+     * your execute() method is called.
      * Note: You can set a callback using $this->onTimeout that will be called when a worker times-out.
+     * Note: Timeouts are used by the parent daemon process to clear local copies of calls that will never return an ack
+     * from the worker due to, say, fatal errors or the worker process being killed. Not setting a timeout will have
+     * deleterious effects.
      * @var float
      */
-    protected $timeout = 0;
+    protected $timeout = 60;
 
     /**
      * Callback that's called when a worker completes it's job.
@@ -154,7 +159,10 @@ abstract class Core_Worker_Mediator
     protected $on_return;
 
     /**
-     * Callback that's called when a worker times-out
+     * Callback that's called when a worker times-out. A timeout could be due to a worker taking too long to process
+     * a call or it could also be due to a fatal error in the worker. When a fatal error happens in a worker it has
+     * no way to communicate that to the daemon. The result is that it just looks to the daemon as if the job is running
+     * for too long so it triggers a timeout.
      * @example set using $this->onTimeout();
      * @var callable
      */
@@ -187,6 +195,14 @@ abstract class Core_Worker_Mediator
      * @var string
      */
     protected $ftok;
+
+    /**
+     * A numerically indexed array that contains a value for every SHM operation with 0=failure 1=success.
+     * This is used to keep track of general health of the IPC shared memory allocation.
+     * Note: This is garbage-collected periodically to the last 100 operations.
+     * @var Array
+     */
+    protected $shm_stat_map = array();
 
 
     /**
@@ -328,19 +344,27 @@ abstract class Core_Worker_Mediator
     }
 
     /**
-     * Remove and Reset any data in shared resources. A "Hard Reset" of the queue. In normal operation, unless the server is rebooted or a worker's alias changed,
-     * you can restart a daemon process without losing buffered calls or pending return values. In some cases you may want to purge the buffer.
-     * @param bool $reconnect
+     * Remove and Reset any data in shared resources. A "Hard Reset" of the queue. In normal operation, this happens every
+     * time you restart the daemon. To preserve any buffered calls and try to pick them up where they left off, you can
+     * start a daemon with a --recoverworkers flag.
+     * @param bool $mq   Destroy the message queue?
+     * @param bool $shm  Destroy the shared memory?
      * @return void
      */
-    protected function ipc_destroy() {
-        if (!is_resource($this->queue) || !is_resource($this->shm))
+    protected function ipc_destroy($mq = true, $shm = true) {
+        if (($mq && !is_resource($this->queue)) || ($shm && !is_resource($this->shm)))
             $this->ipc_create();
 
-        @msg_remove_queue($this->queue);
-        @shm_remove($this->shm);
-        @shm_detach($this->shm);
-        $this->queue = $this->shm = null;
+        if ($mq) {
+            @msg_remove_queue($this->queue);
+            $this->queue = null;
+        }
+
+        if ($shm) {
+            @shm_remove($this->shm);
+            @shm_detach($this->shm);
+            $this->shm = null;
+        }
     }
 
     /**
@@ -506,12 +530,16 @@ abstract class Core_Worker_Mediator
                 $this->message_error($message_error);
             }
 
+            // Enforce Timeouts
+            // Timeouts will either be simply that the worker is taking longer than expected to return the call,
+            // or the worker actually fatal-errored and killed itself. We could build a mechanism that's triggered on
+            // reap but for simplicity, fatal errors are treated as timeouts. We need to
             if ($this->timeout > 0) {
                 $now = microtime(true);
                 foreach(array_keys($this->running_calls) as $call_id) {
                     $call = $this->calls[$call_id];
                     if (isset($call->time[self::RUNNING]) && $now > ($call->time[self::RUNNING] + $this->timeout)) {
-                        posix_kill($call->pid, SIGKILL);
+                        @posix_kill($call->pid, SIGKILL);
                         unset($this->running_calls[$call_id], $this->processes[$call->pid]);
                         $call->status = self::TIMEOUT;
 
@@ -651,60 +679,152 @@ abstract class Core_Worker_Mediator
                 return true;
                 break;
 
-            default:
+            case null:
+                // Almost certainly an issue with shared memory
+                $this->shm_stat_map = 0;
+                $this->log("Shared Memory I/O Error at Address {$this->id}.");
+
                 $error_count++;
-                $this->log("Message Queue Error {$error_code}: " . posix_strerror($error_code));
+
+                // If this is a worker, all we can do is try to re-attach the shared memory.
+                // Any corruption or OOM errors will be handled by the parent exclusively.
+                if (!$this->is_parent) {
+                    sleep(3);
+                    $this->ipc_create();
+                    return true;
+                }
+
+                // If this is the parent, do some diagnostic checks and attempt correction.
+                usleep(20000);
+
+                // Test writing to shared memory using an array that should come to a few kilobytes.
+                for($i=0; $i<2; $i++)
+                    $arr = array_fill(0, 20, mt_rand(1000,1000 * 1000));
+                    $key = mt_rand(1000 * 1000, 2000 * 1000);
+                    @shm_put_var($this->shm, $key, $arr);
+
+                    if (@shm_get_var($this->shm, $key) == $arr)
+                        return true;
+
+                    // Re-attach the shared memory and try the diagnostic again
+                    $this->ipc_create();
+                }
+
+                // Attempt to re-connect the shared memory
+                // See if we can read what's in shared memory and re-write it later
+                $items_to_copy = array();
+                $items_to_call = array();
+                for ($i=0; $i<$this->call_count; $i++) {
+                    $call = @shm_get_var($this->shm, $i);
+                    if (!is_object($call))
+                        continue;
+
+                    if (!isset($this->calls[$i]))
+                        continue;
+
+                    if ($this->calls[$i]->status == self::TIMEOUT)
+                        continue;
+
+                    if ($this->calls[$i]->status == self::UNCALLED) {
+                        $items_to_call[$i] = $call;
+                        continue;
+                    }
+
+                    $items_to_copy[$i] = $call;
+                }
+
+                $calls = array();
+                foreach(array_keys($this->calls) as $item_id => $item) {
+
+                    // Attempt to read any updates for acked jobs from SHM (in case it's just an OOM error)
+                    // Get array of jobs that should be re-queued
+
+                    switch($item->status) {
+                        case self::TIMEOUT:
+                        case self::RETURNED:
+                            unset($this->calls[$item_id]);
+                            continue;
+
+                        case self::UNCALLED:
+                            $calls[] = $item;
+                            continue;
+
+                        case self::CALLED:
+                        case self::RUNNING:
+                            // Check shared memory to see if a worker has actually run this job but the daemon wasn't
+                            // able to handle the ack due to error. If it's not returned, it should either complete
+                            // as normal or be handled as a timeout. The hope is that once we re-init the SHM here
+                            // any running workers will just have to re-attach and then return their calls normally.
+                            if (@shm_has_var($this->shm, $item_id)) {
+                                $shm_item = @shm_get_var($this->shm, $item_id);
+                                if (is_object($shm_item) && $shm_item->status == self::RETURNED) {
+                                    unset($this->running_calls[$item_id]);
+                                    $on_return = $this->on_return; // Callbacks have to be in a local variable...
+                                    if (is_callable($on_return))
+                                        call_user_func($on_return, $shm_item);
+                                    unset($this->calls[$item_id]);
+                                }
+                            } else {
+
+                            }
+                    }
+                }
+
+                // Destroy the shared memory
+                $this->ipc_destroy(false, true);
+
+
+
+                return true;
+
+            default:
+                if ($error_code)
+                    $this->log("Message Queue Error {$error_code}: " . posix_strerror($error_code));
+
+                $error_count++;
                 if ($this->is_parent)
                     usleep(20000);
                 else
                     sleep(3);
 
                 if ($error_count > $error_threshold) {
-                    $this->fatal_error("Message Queue Error Threshold Reached");
+                    $this->fatal_error("IPC Error Threshold Reached");
                 }
 
+                $this->ipc_create();
                 return false;
         }
-
-
     }
 
     /**
      * Send messages for the given $call_id to the right queue based on that call's state. Writes call data
      * to shared memory at the address specified in the message.
      * @param $call_id
-     * @param $retry Used when msg_send returns an MSG_EAGAIN error. Nothing to do with timeout retries.
      * @return bool
      */
-    protected function message_encode($call_id, $retry = 0) {
+    protected function message_encode($call_id) {
 
         $call = $this->calls[$call_id];
 
         $queue_lookup = array(
-            self::CALLED    => self::WORKER_CALL,
+            self::UNCALLED  => self::WORKER_CALL,
             self::RUNNING   => self::WORKER_RUNNING,
             self::RETURNED  => self::WORKER_RETURN
         );
 
         $call->time[$call->status] = microtime(true);
 
-        if (!shm_put_var($this->shm, $call->id, $call) || !shm_has_var($this->shm, $call->id)) {
-            if ($retry < 3) {
-                $this->log("Could Not Write to Shared Memory [{$this->id}]. Retrying...");
-                return $this->message_encode($call_id, ++$retry);
+        $error_code = null;
+        if (shm_put_var($this->shm, $call->id, $call) && shm_has_var($this->shm, $call->id)) {
+            $this->shm_stat_map[] = 1;
+            $message = array('call' => $call->id, 'status' => $call->status);
+            if (msg_send($this->queue, $queue_lookup[$call->status], $message, true, false, $error_code)) {
+                return true;
             }
-            $this->log("Could Not Write to Shared Memory [{$this->id}]. Retries Failed. Giving Up...");
-            return false;
         }
 
-        $message = array('call' => $call->id, 'status' => $call->status);
-        $message_error = null;
-        if (msg_send($this->queue, $queue_lookup[$call->status], $message, true, false, $message_error)) {
-            return true;
-        }
-
-        if ($this->message_error($message_error)) {
-            return $this->message_encode($call_id, ++$retry);
+        if ($this->message_error($error_code) && $call->errors++ < 3) {
+            return $this->message_encode($call_id);
         }
 
         return false;
@@ -719,16 +839,22 @@ abstract class Core_Worker_Mediator
     protected function message_decode(Array $message) {
 
         $call = null;
-        if ($call_id = $message['call']) {
-            $call = shm_get_var($this->shm, $call_id);
-        }
+        $tries = 0;
+        do {
+            if ($call_id = $message['call']) {
+                $call = shm_get_var($this->shm, $call_id);
+            }
+        } while($call_id && empty($call) && $this->message_error(null) && $tries++ < 3);
+
         if (!is_object($call))
             throw new Exception(__METHOD__ . " Failed. Expected stdClass object in {$this->id}:{$call_id}. Given: " . gettype($call));
 
+        $this->shm_stat_map[]  = 1;
         $this->calls[$call_id] = $call;
 
         // If the message status matches the status of the object in memory, we know there aren't any more queued messages
-        // presently that will be using the shared memory.
+        // presently that will be using the shared memory. This works because we enforce strict ordering: We first
+        // read any running acks from the queue, then we read the complete acks.
         if ($call->status == $message['status'])
             shm_remove_var($this->shm, $call_id);
 
@@ -762,37 +888,26 @@ abstract class Core_Worker_Mediator
      */
     protected function call($method, Array $args, $retries=0, $errors=0) {
 
-        // Certain methods should be called on the local in-memory instance of the worker, not sent to a worker process
-        $local_methods = array('teardown');
-
-        if (!in_array($method, $this->methods) && !in_array($method, $local_methods))
+        if (!in_array($method, $this->methods))
             throw new Exception(__METHOD__ . " Failed. Method `{$method}` is not callable.");
 
         $this->call_count++;
         $call = new stdClass();
         $call->method        = $method;
         $call->args          = $args;
-        $call->status        = self::CALLED;
+        $call->status        = self::UNCALLED;
         $call->time          = array(microtime(true));
         $call->pid           = null;
         $call->id            = $this->call_count;
         $call->retries       = $retries;
         $call->errors        = $errors;
 
-        // If this is a local method, just call it and return
-        if (in_array($method, $local_methods)) {
-            try {
-                return call_user_func_array($this->get_callback($call), $call->args);
-            } catch (Exception $e) {
-                $this->log('Local Method Call Failed: ' . $e->getMessage(), true);
-            }
-        }
-
         // It's not a local method -- add it to the call stack and send to a worker process
         $this->calls[$call->id] = $call;
 
         try {
             if ($this->message_encode($call->id)) {
+                $call->status = self::CALLED;
                 $this->fork();
                 return true;
             }
