@@ -197,15 +197,6 @@ abstract class Core_Worker_Mediator
     protected $ftok;
 
     /**
-     * A numerically indexed array that contains a value for every SHM operation with 0=failure 1=success.
-     * This is used to keep track of general health of the IPC shared memory allocation.
-     * Note: This is garbage-collected periodically to the last 100 operations.
-     * @var Array
-     */
-    protected $shm_stat_map = array();
-
-
-    /**
      * Return a valid callback for the supplied $call
      * @abstract
      * @param $call
@@ -518,6 +509,8 @@ abstract class Core_Worker_Mediator
                 $on_return = $this->on_return; // Callbacks have to be in a local variable...
                 if (is_callable($on_return))
                     call_user_func($on_return, $call);
+                else
+                    $this->log('No onReturn Callback Available');
 
                 // Periodically garbage-collect call stats
                 if (mt_rand(1, 50) == 25)
@@ -681,7 +674,6 @@ abstract class Core_Worker_Mediator
 
             case null:
                 // Almost certainly an issue with shared memory
-                $this->shm_stat_map = 0;
                 $this->log("Shared Memory I/O Error at Address {$this->id}.");
 
                 $error_count++;
@@ -698,7 +690,7 @@ abstract class Core_Worker_Mediator
                 usleep(20000);
 
                 // Test writing to shared memory using an array that should come to a few kilobytes.
-                for($i=0; $i<2; $i++)
+                for($i=0; $i<2; $i++) {
                     $arr = array_fill(0, 20, mt_rand(1000,1000 * 1000));
                     $key = mt_rand(1000 * 1000, 2000 * 1000);
                     @shm_put_var($this->shm, $key, $arr);
@@ -733,47 +725,32 @@ abstract class Core_Worker_Mediator
                     $items_to_copy[$i] = $call;
                 }
 
-                $calls = array();
-                foreach(array_keys($this->calls) as $item_id => $item) {
+                for($i=0; $i<2; $i++) {
+                    $this->ipc_destroy(false, true);
+                    $this->ipc_create();
 
-                    // Attempt to read any updates for acked jobs from SHM (in case it's just an OOM error)
-                    // Get array of jobs that should be re-queued
+                    if (!empty($items_to_copy))
+                        foreach($items_to_copy as $key => $value)
+                            @shm_put_var($this->shm, $key, $value);
 
-                    switch($item->status) {
-                        case self::TIMEOUT:
-                        case self::RETURNED:
-                            unset($this->calls[$item_id]);
-                            continue;
+                    // Run a simple diagnostic
+                    $arr = array_fill(0, 20, mt_rand(1000,1000 * 1000));
+                    $key = mt_rand(1000 * 1000, 2000 * 1000);
+                    @shm_put_var($this->shm, $key, $arr);
 
-                        case self::UNCALLED:
-                            $calls[] = $item;
-                            continue;
-
-                        case self::CALLED:
-                        case self::RUNNING:
-                            // Check shared memory to see if a worker has actually run this job but the daemon wasn't
-                            // able to handle the ack due to error. If it's not returned, it should either complete
-                            // as normal or be handled as a timeout. The hope is that once we re-init the SHM here
-                            // any running workers will just have to re-attach and then return their calls normally.
-                            if (@shm_has_var($this->shm, $item_id)) {
-                                $shm_item = @shm_get_var($this->shm, $item_id);
-                                if (is_object($shm_item) && $shm_item->status == self::RETURNED) {
-                                    unset($this->running_calls[$item_id]);
-                                    $on_return = $this->on_return; // Callbacks have to be in a local variable...
-                                    if (is_callable($on_return))
-                                        call_user_func($on_return, $shm_item);
-                                    unset($this->calls[$item_id]);
-                                }
-                            } else {
-
-                            }
+                    if (@shm_get_var($this->shm, $key) != $arr) {
+                        if (empty($items_to_copy)) {
+                            $this->fatal_error("Shared Memory Failure: Unable to proceed.");
+                        } else {
+                            $this->log('Purging items from shared memory: ' . implode(', ', array_keys($items_to_copy)));
+                            unset($items_to_copy);
+                        }
                     }
                 }
 
-                // Destroy the shared memory
-                $this->ipc_destroy(false, true);
-
-
+                foreach($items_to_call as $calls) {
+                    $this->call($calls->method, $calls->args, 1, 0);
+                }
 
                 return true;
 
@@ -816,7 +793,6 @@ abstract class Core_Worker_Mediator
 
         $error_code = null;
         if (shm_put_var($this->shm, $call->id, $call) && shm_has_var($this->shm, $call->id)) {
-            $this->shm_stat_map[] = 1;
             $message = array('call' => $call->id, 'status' => $call->status);
             if (msg_send($this->queue, $queue_lookup[$call->status], $message, true, false, $error_code)) {
                 return true;
@@ -849,7 +825,6 @@ abstract class Core_Worker_Mediator
         if (!is_object($call))
             throw new Exception(__METHOD__ . " Failed. Expected stdClass object in {$this->id}:{$call_id}. Given: " . gettype($call));
 
-        $this->shm_stat_map[]  = 1;
         $this->calls[$call_id] = $call;
 
         // If the message status matches the status of the object in memory, we know there aren't any more queued messages

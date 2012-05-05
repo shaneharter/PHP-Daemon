@@ -95,7 +95,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
         $this->GetFactors->workers(3);
         $this->GetFactors->onReturn(function($call) use($that) {
             $that->log("Factoring Complete for `{$call->args[0]}`");
-            $that->log("Factors: " . implode(', ', $call->return));
+            $that->log("Factors: " . count($call->return));
 
             //$that->log("Finding Prime Factors...");
             //$that->PrimeNumbers->primes_among($call->return);
