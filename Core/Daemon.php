@@ -746,23 +746,59 @@ abstract class Core_Daemon
         foreach($this->workers as $worker)
             $workers .= sprintf('%s %s [%s], ', $worker, $this->{$worker}->id(), $this->{$worker}->is_idle() ? 'AVAILABLE' : 'RUNNING');
 
+        $pretty_memory = function($bytes) {
+            $kb = 1024 * 1000; $mb = $kb  * 1000; $gb = $mb  * 1000;
+            switch(true) {
+                case $bytes > $gb: return sprintf('%sG', number_format($bytes / $gb, 2));
+                case $bytes > $mb: return sprintf('%sM', number_format($bytes / $mb, 2));
+                case $bytes > $kb: return sprintf('%sK', number_format($bytes / $kb, 2));
+                default: return $bytes;
+            }
+        };
+
+        $pretty_duration = function($seconds) {
+            $m = 60; $h = $m * 60; $d = $h * 24;
+            $out = '';
+            switch(true) {
+                case $seconds > $d:
+                    $out .= intval($seconds / $d) . 'd ';
+                    $seconds %= $d;
+                case $seconds > $h:
+                    $out .= intval($seconds / $h) . 'h ';
+                    $seconds %= $h;
+                case $seconds > $m:
+                    $out .= intval($seconds / $m) . 'm ';
+                    $seconds %= $m;
+                default:
+                    $out .= "{$seconds}s";
+            }
+            return $out;
+        };
+
+        $pretty_bool = function($bool) {
+            return ($bool ? 'Yes' : 'No');
+        };
+
         $out = array();
-        $out[] = "Dump Signal Recieved";
-        $out[] = "Loop Interval: " . $this->loop_interval;
-        $out[] = "Restart Interval: " . $this->auto_restart_interval;
-        $out[] = "Start Time: " . $this->start_time;
-        $out[] = "Duration: " . $this->runtime();
-        $out[] = "Log File: " . $this->log_file();
-        $out[] = "Daemon Mode: " . (int)$this->is_daemon();
-        $out[] = "Shutdown Signal: " . (int)$this->shutdown();
-        $out[] = "Verbose Mode: " . (int)$this->verbose();
-        $out[] = "Loaded Plugins: " . implode(', ', $this->plugins);
-        $out[] = "Loaded Workers: " . $workers;
-        $out[] = "Memory Usage: " . memory_get_usage(true);
-        $out[] = "Memory Peak Usage: " . memory_get_peak_usage(true);
-        $out[] = "Current User: " . get_current_user();
-        $out[] = "Priority: " . pcntl_getpriority();
-        $out[] = "Stats (mean): " . implode(', ', $this->stats_mean());
+        $out[] = "---------------------------------------------------------------------------------------------------";
+        $out[] = "Application Runtime Statistics";
+        $out[] = "---------------------------------------------------------------------------------------------------";
+        $out[] = "Loop Interval:        " . $this->loop_interval;
+        $out[] = "Restart Interval:     " . $this->auto_restart_interval;
+        $out[] = sprintf("Start Time:           %s (%s)", $this->start_time, date('Y-m-d H:i:s', $this->start_time));
+        $out[] = sprintf("Duration:             %s (%s)", $this->runtime(), $pretty_duration($this->runtime()));
+        $out[] = "Log File:             " . $this->log_file();
+        $out[] = "Daemon Mode:          " . $pretty_bool($this->daemon);
+        $out[] = "Shutdown Signal:      " . $pretty_bool($this->shutdown);
+        $out[] = "Verbose Mode:         " . $pretty_bool($this->verbose);
+        $out[] = "Role:                 " . ($this->is_parent ? 'Parent' : 'Child');
+        $out[] = "Loaded Plugins:       " . implode(', ', $this->plugins);
+        $out[] = "Loaded Workers:       " . $workers;
+        $out[] = sprintf("Memory:               %s (%s)", memory_get_usage(true), $pretty_memory(memory_get_usage(true)));
+        $out[] = sprintf("Peak Memory:          %s (%s)", memory_get_usage(true), $pretty_memory(memory_get_peak_usage(true)));
+        $out[] = "Current User:         " . get_current_user();
+        $out[] = "Priority:             " . pcntl_getpriority();
+        $out[] = "Stats (mean):         " . implode(', ', $this->stats_mean());
         $this->log(implode("\n", $out));
     }
 

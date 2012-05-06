@@ -2,10 +2,12 @@
 <?php
 /**
  * A simple console that lets you send signals to a process
- * User: shane
+ * Set your own pid file locations in the array below so you can read the PIDs from them by passing in their array ordinal.
+ * @example To attach the signal console to the pidfile listed 2nd in the array below, you'd type -1 at the signal prompt.
+ *          The dash indicates a shortcut (instead of attaching to PID 1) and "1" is the array ordinal for the 2nd item.
+ *
+ * User: Shane Harter
  * Date: 4/24/12
- * Time: 6:03 PM
- * To change this template use File | Settings | File Templates.
  */
 
 define('BASE_PATH', dirname(dirname(__FILE__)));
@@ -19,7 +21,7 @@ $pidfiles = array(
 $index = array_keys($pidfiles);
 $string = '';
 foreach($index as $id => $key) {
-    $string .= sprintf(' [%s] %s', $id, $key);
+    $string .= sprintf(' [-%s] %s', $id, $key);
 }
 
 echo PHP_EOL, "PHP Simple Daemon - Signal Console";
@@ -29,18 +31,48 @@ if ($string)
 echo PHP_EOL;
 echo PHP_EOL;
 
-$pid = false;
 
 stream_set_blocking(STDIN, 0);
-$input = '';
-$prompt = true;
+$pid            = false;
+$input          = '';
+$macro_input    = '';
+$prompt         = true;
+
+
+function out($out)
+{
+    echo $out, PHP_EOL;
+}
+
+function macro($id) {
+    global $input, $macro_input, $prompt, $pid;
+    if ($macro_input)
+        $macro_input = '';
+
+    switch($id){
+        case 1:
+            // Macro 1 reads an optional PID from a pid-reset command.
+            // Example:   SIG> pid 12345    The current pid will be released and this macro will pull 12345 out and set
+            //                              it as the new pid.
+            $arg = @func_get_arg(1);
+            if (!$arg || strlen(trim($arg)) < 4)
+                return;
+
+            $macro_input = trim(str_replace('pid', '', $arg));
+            break;
+    }
+
+    if ($macro_input)
+        $input = '';
+}
+
 
 while(true) {
 
     // Every few iterations verify that the pid still exists
     if ($pid && ($input || mt_rand(1,3) == 2) && (file_exists("/proc") && !file_exists("/proc/{$pid}"))) {
         $prompt = true;
-        $pid = false;
+        $pid    = false;
         if (!$input)
             echo PHP_EOL;
     }
@@ -52,8 +84,14 @@ while(true) {
             echo "SIG > ";
 
     $prompt = false;
-    $input  = strtolower(fgets(STDIN));
-    $prompt = ($input != trim($input));
+    if ($macro_input) {
+        $input = $macro_input;
+        $macro_input = '';
+    } else {
+        $input  = strtolower(fgets(STDIN));
+    }
+
+    $prompt = $input == "\n";
     $input  = trim($input);
 
     try {
@@ -76,7 +114,7 @@ while(true) {
                 $out[] = '[integer]           A valid signal';
                 $out[] = '';
 
-                echo implode(PHP_EOL, $out), PHP_EOL;
+                out(implode(PHP_EOL, $out));
                 continue;
 
             case $input == 'help':
@@ -89,32 +127,37 @@ while(true) {
                 $out[] = '';
                 $out[] = 'Shortcuts:';
                 foreach($index as $i => $f) {
-                    $out[] = str_pad($i, 20, ' ', STR_PAD_RIGHT) . "Shortcut to read a PID from " . $pidfiles[$f];
+                    $out[] = str_pad("-$i", 20, ' ', STR_PAD_RIGHT) . $pidfiles[$f];
                 }
                 $out[] = '';
                 $out[] = 'Shortcuts come from the $pidfiles array. Add your own shortcuts to make life easier.';
                 $out[] = '';
 
-                echo implode(PHP_EOL, $out), PHP_EOL;
+                out(implode(PHP_EOL, $out));
                 continue;
 
             case $pid && is_numeric($input) && $input > 0 && $input < 50:
-                echo "Sending Signal...", PHP_EOL;
+                out("Sending Signal...");
                 posix_kill($pid, $input);
                 continue;
 
-            case $pid && $input == 'pid':
-                $pid = false;
+            case substr($input, 0, 3) == 'pid':
+                if ($pid) {
+                    out("Releasing PID...");
+                    $pid = false;
+                }
+                macro(1, $input);
                 continue;
 
-            case isset($index[$input]):
-                $key = $index[$input];
+            case $input < 0 && isset($index[abs($input)]):
+                $key = $index[abs($input)];
                 $file = $pidfiles[$key];
 
                 if (!file_exists($file))
                     throw new Exception("Sorry, Pid File Not Found! Tried: $file");
 
                 $pid = file_get_contents($file);
+                out("Setting PID From Shortcut: {$pid}");
                 continue;
 
             case (is_numeric($input) && $input < 40000 && $input > 1):
@@ -122,6 +165,7 @@ while(true) {
                 if (file_exists("/proc") && !file_exists("/proc/$input"))
                     throw new Exception("Pid `$input` Does Not Exist");
 
+                out("Setting PID: {$input}");
                 $pid = $input;
                 continue;
 

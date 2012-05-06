@@ -687,9 +687,6 @@ abstract class Core_Worker_Mediator
                 return true;
                 break;
 
-            case -1:
-                // This error code is used when we have a problem forking
-
             case null:
                 // Almost certainly an issue with shared memory
                 $this->log("Shared Memory I/O Error at Address {$this->id}.");
@@ -766,8 +763,8 @@ abstract class Core_Worker_Mediator
                     }
                 }
 
-                foreach($items_to_call as $calls) {
-                    $this->call($calls->method, $calls->args, 1, 0);
+                foreach($items_to_call as $call) {
+                    $this->retry($call);
                 }
 
                 return true;
