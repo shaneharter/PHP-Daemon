@@ -522,19 +522,22 @@ abstract class Core_Daemon
 
             case 0:
                 // Child Process
+                $this->start_time = time();
                 $this->is_parent = false;
                 $this->parent_pid = $this->pid;
                 $this->pid(getmypid());
                 pcntl_setpriority(1);
 
-                // Truncate the plugins and workers lists.
-                // The instances themselves will still be available as $this->{$alias} but removing the arrays
-                // will allow the fork to have and manage it's own set of plugins if desired without interfering
-                // with the parent.
+                // Remove all plugins and workers
+                // Leave only the worker this fork is implementing (if applicable)
+                foreach(array_merge($this->workers, $this->plugins) as $object)
+                    if ($object != $worker)
+                        unset($this->{$object});
+
                 $this->workers = $this->worker_map = $this->plugins = array();
 
                 if ($run_setup) {
-                    $this->log("Running Setup in forked PID " . $this->pid);
+                    $this->log("Running Setup in forked PID " . $this->pid . ($worker ? ' worker ' . $worker : ''));
                     $this->setup();
 
                     if ($worker) {
@@ -640,7 +643,7 @@ abstract class Core_Daemon
             $this->log(get_class($this) . ' is Shutting Down...');
 
             $delay = 2;
-            if (($this->runtime() + $delay) > self::MIN_RESTART_SECONDS) {
+            if ($this->is_daemon() && ($this->runtime() + $delay) > self::MIN_RESTART_SECONDS) {
                 sleep($delay);
                 $this->restart();
             }
@@ -747,7 +750,7 @@ abstract class Core_Daemon
             $workers .= sprintf('%s %s [%s], ', $worker, $this->{$worker}->id(), $this->{$worker}->is_idle() ? 'AVAILABLE' : 'RUNNING');
 
         $pretty_memory = function($bytes) {
-            $kb = 1024 * 1000; $mb = $kb  * 1000; $gb = $mb  * 1000;
+            $kb = 1024; $mb = $kb * 1024; $gb = $mb * 1024;
             switch(true) {
                 case $bytes > $gb: return sprintf('%sG', number_format($bytes / $gb, 2));
                 case $bytes > $mb: return sprintf('%sM', number_format($bytes / $mb, 2));
@@ -798,7 +801,7 @@ abstract class Core_Daemon
         $out[] = sprintf("Peak Memory:          %s (%s)", memory_get_usage(true), $pretty_memory(memory_get_peak_usage(true)));
         $out[] = "Current User:         " . get_current_user();
         $out[] = "Priority:             " . pcntl_getpriority();
-        $out[] = "Stats (mean):         " . implode(', ', $this->stats_mean());
+        $out[] = "Loop duration, idle:  " . implode(', ', $this->stats_mean()) . ' (Mean Seconds)';
         $this->log(implode("\n", $out));
     }
 
@@ -1258,19 +1261,21 @@ abstract class Core_Daemon
             $duration[$i] = $data[$i]['duration'];
         }
         array_multisort($duration, SORT_ASC, $data);
-
         $count -= ($n * 2);
         $data = array_slice($data, $n, $count);
 
         // Now compute the corrected mean
         $tuple = array(0,0);
-        for($i=0; $i<$count; $i++) {
-            $tuple[0] += $data[$i]['duration'];
-            $tuple[1] += $data[$i]['idle'];
+        if ($count) {
+            for($i=0; $i<$count; $i++) {
+                $tuple[0] += $data[$i]['duration'];
+                $tuple[1] += $data[$i]['idle'];
+            }
+
+            $tuple[0] /= $count;
+            $tuple[1] /= $count;
         }
 
-        $tuple[0] /= $count;
-        $tuple[1] /= $count;
         return $tuple;
     }
 

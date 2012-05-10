@@ -16,7 +16,7 @@
 abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
 {
     protected $debug = true;
-    const INDENT_DEPTH = 4;
+    const INDENT_DEPTH = 6;
 
     /**
      * Used to determine which process has access to issue prompts to the debug console.
@@ -33,6 +33,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
     private $mutex_acquired = false;
 
     public function setup() {
+        ini_set('display_errors', 0); // Displayed errors won't break the debug console but it will make it more difficult to use. Tail a log file in another shell instead.
         $ftok = ftok(Core_Daemon::filename(), 'D');
         $this->mutex = sem_get($ftok, 1, 0666, 1);
         $this->consoleshm = shm_attach($ftok, 64 * 1024, 0666);
@@ -68,17 +69,16 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
 
         switch ($this->forking_strategy) {
             case self::LAZY:
-                if ($processes > count($this->running_calls))
+                $stat = $this->ipc_status();
+                if ($processes > count($this->running_calls) || count($this->calls) == 0 && $stat['messages'] == 0)
                     $forks = 0;
                 else
                     $forks = 1;
                 break;
             case self::MIXED:
-                $forks = $this->workers - $processes;
-                break;
             case self::AGGRESSIVE:
             default:
-                $forks = $this->workers;
+                $forks = $this->workers - $processes;
                 break;
         }
 
@@ -102,7 +102,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
     protected function message_encode($call_id) {
         $call_status = $this->calls[$call_id]->status;
         $statuses = array(
-            self::CALLED     =>  'Daemon sending Call message to Worker',
+            self::UNCALLED   =>  'Daemon sending Call message to Worker',
             self::RUNNING    =>  'Worker sending "running" ack message to Daemon',
             self::RETURNED   =>  'Worker sending "return" ack message to Daemon',
         );
@@ -115,7 +115,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
             $status = "Unknown Status. (Status: {$call_status}) (Type: $type) (CallId Type: $calltype)";
         }
 
-        $indent = ($call_id - 2) % self::INDENT_DEPTH;
+        $indent = ($call_id - 1) % self::INDENT_DEPTH;
         $indent = str_repeat("\t", $indent);
 
         $prompt = "{$indent}[{$call_id}] {$status}";
@@ -135,7 +135,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
         $call_id = parent::message_decode($message);
         $call_status = $message['status'];
         $statuses = array(
-            self::CALLED    =>  "This worker will run {$this->calls[$call_id]->method}()..",
+            self::UNCALLED    =>  "This worker will run {$this->calls[$call_id]->method}()..",
             self::RUNNING   =>  "Worker is now running {$this->calls[$call_id]->method}()..",
             self::RETURNED  =>  "Worker has returned from {$this->calls[$call_id]->method}()..",
         );
@@ -148,7 +148,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
             $status = "Unknown Status! (Status: {$call_status}) (Type: $type) (CallId Type: $calltype)";
         }
 
-        $indent = ($call_id - 2) % self::INDENT_DEPTH;
+        $indent = ($call_id - 1) % self::INDENT_DEPTH;
         $indent = str_repeat("\t", $indent);
         $prompt = "{$indent}[{$call_id}] {$status}";
         $this->prompt($prompt, $message, function() {
@@ -170,7 +170,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
         $status = ($this->is_idle()) ? 'Realtime' : 'Queued';
         $prompt = ($method == 'execute') ? '' : "->{$method}";
         $call_id = count($this->calls) + 2;
-        $indent = ($call_id - 2) % self::INDENT_DEPTH;
+        $indent = ($call_id - 1) % self::INDENT_DEPTH;
         $indent = str_repeat("\t", $indent);
         if ($this->prompt("{$indent}[{$call_id}] Call to {$this->alias}{$prompt}()", $args))
             return parent::call($method, $args, $retries, $errors);
@@ -188,6 +188,11 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
 
         $that = $this;
         $daemon = $this->daemon;
+
+        $breakpoint = new Exception();
+        $breakpoint = $breakpoint->getTrace();
+        $breakpoint = sprintf('%s:%s', $breakpoint[0]['file'], $breakpoint[0]['line']);
+
         static $state = false;
 
         if(!is_resource($this->consoleshm)) {
@@ -220,20 +225,23 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                 }
 
                 if ($value === null)
-                    return $state[$key];
+                    if (isset($state[$key]))
+                        return $state[$key];
+                    else
+                        return null;
 
                 $state[$key] = $value;
                 return shm_put_var($that->consoleshm, 1, $state);
             };
         }
 
-        if (!$state('enabled'))
+        if (!$state('enabled') || $state("skip_$breakpoint"))
             return true;
 
         if (!$this->mutex_acquired) {
             $this->mutex_acquired = sem_acquire($this->mutex);
             // Just in case another process changed settings while we were waiting for the mutex...
-            if (!$state('enabled'))
+            if (!$state('enabled') || $state("skip_$breakpoint"))
                 return true;
         }
 
@@ -266,9 +274,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
 
                 echo $prompt;
                 $input = trim(fgets(STDIN));
-                $input = preg_replace('/\s*/', ' ', $input);
-
-                echo PHP_EOL, $input, PHP_EOL;
+                $input = preg_replace('/\s+/', ' ', $input);
 
                 $matches = false;
                 $message = '';
@@ -331,16 +337,10 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
 
                 if (!$matches && preg_match('/^eval (.*)/i', $input, $matches) == 1) {
                     $return = @eval($matches[1]);
-                    switch($return) {
-                        case false:
-                            $message = "eval returned false -- possibly a parse error. Check semi-colons, parens, braces, etc.";
-                            break;
-                        case null:
-                            $message = "eval() ran successfully";
-                            break;
-                        default:
-                            $message = "eval() returned:" . PHP_EOL . print_r($return, true);
-                    }
+                    if ($return === false)
+                        $message = "eval returned false -- possibly a parse error. Check semi-colons, parens, braces, etc.";
+                    elseif ($return !== null)
+                        $message = "eval() returned:" . PHP_EOL . print_r($return, true);
                     echo PHP_EOL;
                 }
 
@@ -365,7 +365,8 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                         $out[] = 'n                 Interrupt';
                         $out[] = 'call [f] [a,b..]  Call a worker\'s function in the local process, passing remaining values as args. Return true: a "continue" will be implied. Non-true: keep you at the prompt';
                         $out[] = 'cleanipc          Clean all systemv resources including shared memory and message queues. Does not remove semaphores. REQUIRES CONFIRMATION.  ';
-                        $out[] = 'end               End the debugging session for this process, continue the daemon as normal.';
+                        $out[] = 'end               End the debugging session, continue the daemon as normal.';
+                        $out[] = 'skip              Skip this breakpoint from now on.';
                         $out[] = 'eval [php]        Eval the supplied code. Passed to eval() as-is. Any return values will be printed. Run context is the Core_Worker_Mediator class.';
                         $out[] = 'help              Print This Help';
                         $out[] = 'indent [y|n]      When turned-on, indentation will be used to group messages from the same call in a column so you can easily match them together.';
@@ -428,6 +429,14 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                         $state('enabled', false);
                         $break = true;
                         $message = 'Debugging Ended..';
+                        $input = true;
+                        break;
+
+                    case 'skip':
+                        $state("skip_$breakpoint", true);
+                        $break = true;
+                        $message = 'Breakpoint Turned Off..';
+                        $input = true;
                         break;
 
                     case 'status':
@@ -481,6 +490,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
 
                     case 'y':
                         $break = true;
+                        $input = true;
                         break;
 
                     case 'n':

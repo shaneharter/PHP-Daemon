@@ -13,15 +13,15 @@
 define('BASE_PATH', dirname(dirname(__FILE__)));
 
 $pidfiles = array(
-    'Example'           =>  BASE_PATH . '/Example/pid',
     'ExampleWorkers'    =>  BASE_PATH . '/ExampleWorkers/pid',
+    'Example'           =>  BASE_PATH . '/Example/pid',
 );
 
 
 $index = array_keys($pidfiles);
 $string = '';
 foreach($index as $id => $key) {
-    $string .= sprintf(' [-%s] %s', $id, $key);
+    $string .= sprintf('%s [-%s] %s', PHP_EOL, $id, $key);
 }
 
 echo PHP_EOL, "PHP Simple Daemon - Signal Console";
@@ -71,6 +71,7 @@ while(true) {
 
     // Every few iterations verify that the pid still exists
     if ($pid && ($input || mt_rand(1,3) == 2) && (file_exists("/proc") && !file_exists("/proc/{$pid}"))) {
+        out("Process {$pid} Has Exited");
         $prompt = true;
         $pid    = false;
         if (!$input)
@@ -149,7 +150,7 @@ while(true) {
                 macro(1, $input);
                 continue;
 
-            case $input < 0 && isset($index[abs($input)]):
+            case $input <= 0 && isset($index[abs($input)]):
                 $key = $index[abs($input)];
                 $file = $pidfiles[$key];
 

@@ -126,8 +126,8 @@ function daemon_shutdown_function()
 			daemon_error($error['type'], $error['message'], $error['file'], $error['line']);
     }
 }
-
-error_reporting(E_WARNING | E_USER_ERROR);
+error_reporting(E_ALL);
+//error_reporting(E_WARNING | E_USER_ERROR);
 set_error_handler('daemon_error');
 set_exception_handler('daemon_exception');
 register_shutdown_function('daemon_shutdown_function');

@@ -1,4 +1,4 @@
-<?php
+ <?php
 /**
  * Create and run worker processes.
  * Use message queues and shared memory to coordinate worker processes and return work product to the daemon.
@@ -51,23 +51,21 @@ abstract class Core_Worker_Mediator
      * The forking strategy of the Worker
      *
      * @example self::LAZY
-     * In Lazy forking, the first worker is forked the first time a worker method is called. At that time, only one process is forked,
-     * regardless of how many concurrent workers you've set using workers(). When subsequent worker methods are called,
-     * additional workers will be forked (up to the workers() limit), if the existing workers are currently busy. Work prefers to be
-     * assigned to existing workers. This strategy is used when daemon loop_intervals are over 2 seconds. The fork itself could cause shorter loop intervals to run too long.
+     * Daemon Startup:      No processes are forked
+     * Worker Method Call:  If existing process(es) are busy, fork another worker process for this call, up to the workers() limit.
+     * In Lazy forking, processes are only forked as-needed
      *
      * @example self::MIXED
-     * In Mixed forking, the first worker is forked the first time a worker method is called. At that time, ALL worker processes
-     * are forked, up to the limit set in workers().
-     *
-     * This strategy is used when daemon loop_intervals in intervals shorter than we use for self::LAZY. We want to save time/RAM by
-     * forking only if necessary, but when we fork, we want to do it all at once.
+     * Daemon Startup:      No processes are forked
+     * Worker Method Call:  Fork maximum number of worker processes (as set via workers())
+     * In Mixed forking, nothing is forked until the first method call but all forks are done simultaneously.
      *
      * @example self::AGGRESSIVE
-     * In Aggressive forking, all the worker processes are forked during daemon startup.
-     * This strategy is used for short loop intervals.
+     * Daemon Startup:      All processes are forked up front
+     * Worker Method Call:  Processes are forked as-needed to maintain the max number of available workers
      *
      * @var int
+     * @todo improve the intelligence behind the strategy selection to vary strategy by idle time in the daemon event loop, not the duration of the loop itself.
      */
     protected $forking_strategy = self::MIXED;
 
@@ -176,7 +174,7 @@ abstract class Core_Worker_Mediator
 
     /**
      * How big, at any time, can the IPC shared memory allocation be.
-     * Default is 1MB. May need to be increased if you are passing very large datasets as Arguments and Return values.
+     * Default is 5MB. May need to be increased if you are passing very large datasets as Arguments and Return values.
      * @see memory_allocation()
      * @var float
      */
@@ -207,7 +205,7 @@ abstract class Core_Worker_Mediator
     public function __construct($alias, Core_Daemon $daemon) {
         $this->alias = $alias;
         $this->daemon = $daemon;
-        $this->memory_allocation = 1024 * 1000;
+        $this->memory_allocation = 5 * pow(2,20); // 5MB Default allocation per worker. Ideally this will be overloaded per-worker.
 
         $interval = $this->daemon->loop_interval();
         switch(true) {
@@ -257,16 +255,17 @@ abstract class Core_Worker_Mediator
             if (!is_numeric($this->id))
                 $this->fatal_error("Unable to create Worker ID. Ftok failed. Could not write to /tmp directory");
 
-            $this->fork();
-            $this->daemon->on(Core_Daemon::ON_RUN, array($this, 'run'));
-
             if (!$this->daemon->recover_workers())
                 $this->ipc_destroy();
+
+            $this->fork();
+            $this->daemon->on(Core_Daemon::ON_RUN, array($this, 'run'));
 
             $this->ipc_create();
             $this->shm_header();
 
         } else {
+            unset($this->calls, $this->processes, $this->running_calls, $this->call_count);
             $this->ipc_create();
             $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'signal'));
             $this->log('Worker Process Started...');
@@ -289,10 +288,10 @@ abstract class Core_Worker_Mediator
             $timeout = $this->timeout;
         else
             $timeout = 30;
-        $timeout = 10;
+
         foreach(array_keys($this->processes) as $pid) {
             if (!isset($state[$pid])) {
-               // posix_kill($pid, SIGTERM);
+                posix_kill($pid, SIGTERM);
                 $state[$pid] = time();
                 continue;
             }
@@ -446,19 +445,21 @@ abstract class Core_Worker_Mediator
 
         switch ($this->forking_strategy) {
             case self::LAZY:
-                if ($processes > count($this->running_calls) || count($this->calls) == 0)
+                $stat = $this->ipc_status();
+                if ($processes > count($this->running_calls) || count($this->calls) == 0 && $stat['messages'] == 0)
                     $forks = 0;
                 else
                     $forks = 1;
                 break;
             case self::MIXED:
-                $forks = $this->workers - $processes;
-                break;
             case self::AGGRESSIVE:
             default:
-                $forks = $this->workers;
+                $forks = $this->workers - $processes;
                 break;
         }
+
+        if (!$this->prompt("Forking {$forks}. Current Processes: " . count($this->processes)))
+            return;
 
         $errors = array();
         for ($i=0; $i<$forks; $i++) {
@@ -486,12 +487,32 @@ abstract class Core_Worker_Mediator
     }
 
     /**
-     * Called in the Daemon to inform a worker one of it's forked processes has exited
+     * Called in the Daemon to inform a worker one of it's forked processes has ed
      * @param int $pid
      * @param int $status
      * @return void
      */
     public function reap($pid, $status) {
+        static $failures = 0;
+        static $last_failure = null;
+
+        // Keep track of processes that fail within the first 30 seconds of being forked.
+        if (time() - $this->processes[$pid] < 30) {
+            $failures++;
+            $last_failure = time();
+        }
+
+        if ($failures == 5) {
+            $this->fatal_error("Unsuccessful Fork: Recently forked processes are continuously failing. See error log for additional details.");
+        }
+
+        // If there hasn't been a failure in 90 seconds, reset the counter.
+        // The counter only exists to prevent an endless fork loop due to child processes fatal-erroring right after a successful fork.
+        // Other types of errors will be handled elsewhere
+        if ($failures && time() - $last_failure > 90) {
+            $failures = 0;
+            $last_failure = null;
+        }
         unset($this->processes[$pid]);
     }
 
@@ -530,12 +551,6 @@ abstract class Core_Worker_Mediator
                 else
                     $this->log('No onReturn Callback Available');
 
-                // Periodically garbage-collect call stats
-                if (mt_rand(1, 50) == 25)
-                    foreach ($this->calls as $item_id => $item)
-                        if (in_array($item->status, array(self::TIMEOUT, self::RETURNED)))
-                            unset($this->calls[$item_id]);
-
                 $this->log('Job ' . $call_id . ' Is Complete');
             } else {
                 $this->message_error($message_error);
@@ -550,6 +565,10 @@ abstract class Core_Worker_Mediator
                 foreach(array_keys($this->running_calls) as $call_id) {
                     $call = $this->calls[$call_id];
                     if (isset($call->time[self::RUNNING]) && $now > ($call->time[self::RUNNING] + $this->timeout)) {
+
+                        if (!$this->prompt("Sending KILL Signal to timeout call '$call_id' on pid '$call->pid'"))
+                            continue;
+
                         @posix_kill($call->pid, SIGKILL);
                         unset($this->running_calls[$call_id], $this->processes[$call->pid]);
                         $call->status = self::TIMEOUT;
@@ -583,14 +602,23 @@ abstract class Core_Worker_Mediator
      * @return void
      */
     public function start() {
+        $count = 0;
+        $pid = getmypid();
+
         while($this->shutdown == false) {
             $message_type = $message = $message_error = null;
             if (msg_receive($this->queue, self::WORKER_CALL, $message_type, $this->memory_allocation, $message, true, 0, $message_error)) {
                 try {
+                    // Auto-Kill each worker after they process 25 jobs AND live at least 5 minutes
+                    if (++$count > 5 && $this->daemon->runtime() > (60 * .5)) {
+                        if ($this->prompt("Shutting Down Worker: Job Limit Reached"))
+                            $this->shutdown = true;
+                    }
+
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
 
-                    $call->pid = getmypid();
+                    $call->pid = $pid;
                     $call->status = self::RUNNING;
                     if (!$this->message_encode($call_id)) {
                         $this->log("Call {$call_id} Could Not Ack Running.");
@@ -605,11 +633,11 @@ abstract class Core_Worker_Mediator
                 catch (Exception $e) {
                     $this->log($e->getMessage(), true);
                 }
+
                 // Give the CPU a break - Sleep for 1/50 a second.
                 usleep(50000);
                 continue;
             }
-
             $this->message_error($message_error);
         }
     }
@@ -842,6 +870,12 @@ abstract class Core_Worker_Mediator
 
         $this->calls[$call_id] = $call;
 
+        // Periodically garbage-collect call structs
+        if (mt_rand(1, 50) == 25)
+            foreach ($this->calls as $item_id => $item)
+                if (in_array($item->status, array(self::TIMEOUT, self::RETURNED)))
+                    unset($this->calls[$item_id]);
+
         // If the message status matches the status of the object in memory, we know there aren't any more queued messages
         // presently that will be using the shared memory. This works because we enforce strict ordering: We first
         // read any running acks from the queue, then we read the complete acks.
@@ -865,6 +899,9 @@ abstract class Core_Worker_Mediator
      * @param $message
      */
     public function fatal_error($message) {
+        if (!$this->prompt("Fatal Error: $message"))
+            return;
+
         $this->daemon->fatal_error("$message\nFatal Error: Worker process will restart", $this->alias);
     }
 
