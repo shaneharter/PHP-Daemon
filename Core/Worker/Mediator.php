@@ -860,6 +860,13 @@ abstract class Core_Worker_Mediator
      */
     protected function message_decode(Array $message) {
 
+        // Periodically garbage-collect call structs
+        if (mt_rand(1, 50) == 25)
+            foreach ($this->calls as $item_id => $item)
+                if (in_array($item->status, array(self::TIMEOUT, self::RETURNED)))
+                    unset($this->calls[$item_id]);
+
+        // Now get on with decoding the $message
         $call = null;
         $tries = 0;
         do {
@@ -872,12 +879,6 @@ abstract class Core_Worker_Mediator
             throw new Exception(__METHOD__ . " Failed. Expected stdClass object in {$this->id}:{$call_id}. Given: " . gettype($call));
 
         $this->calls[$call_id] = $call;
-
-        // Periodically garbage-collect call structs
-        if (mt_rand(1, 50) == 25)
-            foreach ($this->calls as $item_id => $item)
-                if (in_array($item->status, array(self::TIMEOUT, self::RETURNED)))
-                    unset($this->calls[$item_id]);
 
         // If the message status matches the status of the object in memory, we know there aren't any more queued messages
         // presently that will be using the shared memory. This works because we enforce strict ordering: We first
