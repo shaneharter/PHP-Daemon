@@ -262,7 +262,7 @@ abstract class Core_Worker_Mediator
             $this->daemon->on(Core_Daemon::ON_RUN, array($this, 'run'));
 
             $this->ipc_create();
-            $this->shm_header();
+            $this->shm_init();
 
         } else {
             unset($this->calls, $this->processes, $this->running_calls, $this->call_count);
@@ -415,7 +415,9 @@ abstract class Core_Worker_Mediator
      * @return void
      * @throws Exception
      */
-    private function shm_header() {
+    private function shm_init() {
+
+        // Write a header to the shared memory block
         if (!shm_has_var($this->shm, self::HEADER_ADDRESS)) {
             $header = array(
                 'version' => self::VERSION,
@@ -426,10 +428,21 @@ abstract class Core_Worker_Mediator
                 throw new Exception(__METHOD__ . " Failed. Could Not Read Header. If this problem persists, try running the daemon with the --resetworkers option.");
         }
 
+        // Check memory allocation and warn the user if their malloc() is not actually applicable
         $header = shm_get_var($this->shm, self::HEADER_ADDRESS);
         if ($header['memory_allocation'] <> $this->memory_allocation)
-            $this->log('Warning: Seems you\'ve made a change to the memory_limit. To apply this change you will have to restart the daemon with the --resetworkers option. Memory limits are otherwise immutable.' .
+            $this->log('Warning: Seems you\'ve using --recoverworkers after making a change to the worker malloc memory limit. To apply this change you will have to restart the daemon without the --recoverworkers option.' .
                 PHP_EOL . 'The existing memory_limit is ' . $header['memory_allocation'] . ' bytes.');
+
+        // If we're trying to recover previous messages/shm, figure out where we left-off so we can avoid colliding our call ID's
+        if ($this->daemon->recover_workers()) {
+            $max_id = $this->call_count;
+            for ($i=0; $i<100000; $i++) {
+                if(shm_has_var($this->shm, $i))
+                    $max_id = $i;
+            }
+            $this->log("Starting Job Numbering at $max_id.");
+        }
     }
 
     /**
@@ -457,9 +470,6 @@ abstract class Core_Worker_Mediator
                 $forks = $this->workers - $processes;
                 break;
         }
-
-        if (!$this->prompt("Forking {$forks}. Current Processes: " . count($this->processes)))
-            return;
 
         $errors = array();
         for ($i=0; $i<$forks; $i++) {
@@ -565,10 +575,6 @@ abstract class Core_Worker_Mediator
                 foreach(array_keys($this->running_calls) as $call_id) {
                     $call = $this->calls[$call_id];
                     if (isset($call->time[self::RUNNING]) && $now > ($call->time[self::RUNNING] + $this->timeout)) {
-
-                        if (!$this->prompt("Sending KILL Signal to timeout call '$call_id' on pid '$call->pid'"))
-                            continue;
-
                         @posix_kill($call->pid, SIGKILL);
                         unset($this->running_calls[$call_id], $this->processes[$call->pid]);
                         $call->status = self::TIMEOUT;
@@ -610,10 +616,7 @@ abstract class Core_Worker_Mediator
             if (msg_receive($this->queue, self::WORKER_CALL, $message_type, $this->memory_allocation, $message, true, 0, $message_error)) {
                 try {
                     // Auto-Kill each worker after they process 25 jobs AND live at least 5 minutes
-                    if (++$count > 5 && $this->daemon->runtime() > (60 * .5)) {
-                        if ($this->prompt("Shutting Down Worker: Job Limit Reached"))
-                            $this->shutdown = true;
-                    }
+                    $this->shutdown = (++$count > 25 && $this->daemon->runtime() > (60 * 5));
 
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
@@ -899,9 +902,6 @@ abstract class Core_Worker_Mediator
      * @param $message
      */
     public function fatal_error($message) {
-        if (!$this->prompt("Fatal Error: $message"))
-            return;
-
         $this->daemon->fatal_error("$message\nFatal Error: Worker process will restart", $this->alias);
     }
 
