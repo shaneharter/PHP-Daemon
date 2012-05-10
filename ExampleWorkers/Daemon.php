@@ -46,7 +46,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
         $this->worker('PrimeNumbers', new ExampleWorkers_Workers_Primes());
         $this->PrimeNumbers->timeout(60);
-        $this->PrimeNumbers->workers(2);
+        $this->PrimeNumbers->workers(4);
         $this->PrimeNumbers->malloc(2 * pow(2,20));
 
         $this->PrimeNumbers->onReturn(function($call) use($that) {
@@ -79,27 +79,27 @@ class ExampleWorkers_Daemon extends Core_Daemon
         // Add a GetFactors Function as a Named Worker
         // It will accept a single integer and return all of its factors.
         // In the Return handler, we are using the PrimeNumbers worker to return all the items from the getFactors result that are also prime numbers.
-//        $this->worker('GetFactors', function($integer)  {
-//            if (!is_integer($integer))
-//                throw new Exception('Invalid Input! Expected Integer. Given: ' . gettype($integer));
-//
-//            $factors = array();
-//            for ($i=2; $i<($integer/2); $i++)
-//                if ($integer % $i == 0)
-//                    $factors[] = $i;
-//
-//            return $factors;
-//        });
+        $this->worker('GetFactors', function($integer)  {
+            if (!is_integer($integer))
+                throw new Exception('Invalid Input! Expected Integer. Given: ' . gettype($integer));
 
-//        $this->GetFactors->timeout(60);
-//        $this->GetFactors->workers(3);
-//        $this->GetFactors->onReturn(function($call) use($that) {
-//            $that->log("Factoring Complete for `{$call->args[0]}`");
-//            $that->log("Factors: " . count($call->return));
-//
-//            //$that->log("Finding Prime Factors...");
-//            //$that->PrimeNumbers->primes_among($call->return);
-//        });
+            $factors = array();
+            for ($i=2; $i<($integer/2); $i++)
+                if ($integer % $i == 0)
+                    $factors[] = $i;
+
+            return $factors;
+        });
+
+        $this->GetFactors->timeout(60);
+        $this->GetFactors->workers(2);
+        $this->GetFactors->onReturn(function($call) use($that) {
+            $that->log("Factoring Complete for `{$call->args[0]}`");
+            $that->log("Factors: " . count($call->return));
+
+            $that->log("Finding Prime Factors...");
+            $that->PrimeNumbers->primes_among($call->return);
+        });
 
 
     }
@@ -150,18 +150,17 @@ class ExampleWorkers_Daemon extends Core_Daemon
                 $this->run_getfactors = $this->auto_run;
 
             case 6:
-            case 7:
                 $this->run_sieve = $this->auto_run;
                 break;
         }
-//
-//        if ($this->run_getfactors) {
-//            $this->run_getfactors = false;
-//            $rand = mt_rand(500000, 10000000);
-//            $this->log("Finding Factors of `{$rand}`");
-//            $this->GetFactors($rand);
-//
-//        }
+
+        if ($this->run_getfactors) {
+            $this->run_getfactors = false;
+            $rand = mt_rand(500000, 10000000);
+            $this->log("Finding Factors of `{$rand}`");
+            $this->GetFactors($rand);
+
+        }
 
         if ($this->run_sieve) {
             $this->run_sieve = false;
