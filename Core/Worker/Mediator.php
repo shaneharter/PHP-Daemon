@@ -265,7 +265,7 @@ abstract class Core_Worker_Mediator
             $this->shm_init();
 
         } else {
-            unset($this->calls, $this->processes, $this->running_calls, $this->call_count);
+            $this->calls = $this->processes = $this->running_calls = array();
             $this->ipc_create();
             $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'signal'));
             $this->log('Worker Process Started...');
