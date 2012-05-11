@@ -16,6 +16,11 @@ class ExampleWorkers_Daemon extends Core_Daemon
     public $run_getfactors   = false;
     public $auto_run         = false;
 
+    /**
+     * @var Resource
+     */
+    public $db;
+
     protected function load_plugins()
     {
         $this->plugin('Lock_File');
@@ -40,14 +45,14 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
         // Instantiate an App_Primes object as a Worker
         // L oad 3 workers in the pool
-        // Allocate 2MB of shared memory to pass args to the workers and receive results back: If you omit this, it will use 1MB by default.
+        // Allocate 10MB of shared memory to pass args to the workers and receive results back: If you omit this, it will use 1MB by default.
         // By convention, workers are named in UpperCase
         // Look at App_Prime to see the available methods. They are: sieve, is_prime, primes_among
 
         $this->worker('PrimeNumbers', new ExampleWorkers_Workers_Primes());
         $this->PrimeNumbers->timeout(60);
         $this->PrimeNumbers->workers(4);
-        $this->PrimeNumbers->malloc(2 * pow(2,20));
+        $this->PrimeNumbers->malloc(10 * pow(2,20));
 
         $this->PrimeNumbers->onReturn(function($call) use($that) {
             $that->log("Prime Number {$call->method} Complete");
@@ -61,6 +66,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
                     $that->log(sprintf('Return. Among [%s], Primes Are [%s]', implode(', ', $call->args[0]), implode(', ', $call->return)));
             }
 
+            $that->job_return($call);
         });
 
         $this->PrimeNumbers->onTimeout(function($call) use($that) {
@@ -73,6 +79,8 @@ class ExampleWorkers_Daemon extends Core_Daemon
             } else {
                 $that->log("Retries Concluded. I Give Up.");
             }
+
+            $that->job_timeout($call);
         });
 
 
@@ -97,11 +105,17 @@ class ExampleWorkers_Daemon extends Core_Daemon
             $that->log("Factoring Complete for `{$call->args[0]}`");
             $that->log("Factors: " . count($call->return));
 
-            $that->log("Finding Prime Factors...");
-            $that->PrimeNumbers->primes_among($call->return);
+            if (count($call->return)) {
+                $that->log("Finding Prime Factors...");
+                $that->PrimeNumbers->primes_among($call->return);
+            }
+
+            $that->job_return($call);
         });
 
-
+        $this->GetFactors->onTimeout(function($call) use($that) {
+            $that->job_timeout($call);
+        });
     }
 
 
@@ -131,6 +145,10 @@ class ExampleWorkers_Daemon extends Core_Daemon
             // This is because signal handlers are not re-entrant. So worker processes forked within a signal handler
             // will not respond to any signals themselves. So here we're setting a flag that is polled in the execute() method.
 
+            // Connect to the DB
+            $this->db = mysqli_connect('localhost', 'root', 'root');
+            mysqli_select_db($this->db, 'daemon');
+
             $this->log("ExampleWorkers Daemon is Ready: To run a Factoring job, send signal 12. To run a Prime Numbers job, send signal 13. To toggle the random job-runner send signal 14.");
         }
     }
@@ -156,17 +174,70 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
         if ($this->run_getfactors) {
             $this->run_getfactors = false;
-            $rand = mt_rand(500000, 10000000);
-            $this->log("Finding Factors of `{$rand}`");
-            $this->GetFactors($rand);
 
+            // Pick a random number to factor. The call will return an ID we can use, later, if we want, to check the status of the call
+            $rand = mt_rand(500000, 10000000);
+            $job = $this->GetFactors($rand);
+
+            if ($job)
+                $sql = sprintf('INSERT INTO jobs (pid, job, worker) values(%s, %s, "%s")', $this->pid(), $job, 'execute');
+            else
+                $this->log("Job Failed.");
+
+            if ($sql)
+                if (false == mysqli_query($this->db, $sql))
+                    $this->log(mysqli_error($this->db));
+
+            unset($sql);
         }
 
         if ($this->run_sieve) {
             $this->run_sieve = false;
+
+            // Same Thing as we do for GetFactors
             $rand = mt_rand(10000, 1000000);
-            $this->PrimeNumbers->sieve($rand, $rand + $rand);
+            $job = $this->PrimeNumbers->sieve($rand, $rand + $rand);
+
+            if ($job)
+                $sql = sprintf('INSERT INTO jobs (pid, job, worker) values(%s, %s, "%s")', $this->pid(), $job, 'sieve');
+            else
+                $this->log("Job Failed.");
+
+            if ($sql)
+                if (false == mysqli_query($this->db, $sql))
+                    $this->log(mysqli_error($this->db));
+
+            unset($sql);
         }
+    }
+
+    /**
+     * Update the database record for the job specified by the $call struct
+     * Intended to be used in an onReturn callback, which is called by the Worker and passed an object w/
+     * all the call datails
+     *
+     * @param stdClass $call
+     * @return void
+     */
+    public function job_return(stdClass $call) {
+        $sql = sprintf('UPDATE jobs set is_complete=1, completed_at=NOW() where pid=%s and worker="%s" and job=%s', $this->pid(), $call->method, $call->id);
+        if (false == mysqli_query($this->db, $sql))
+            $this->log(mysqli_error($this->db));
+    }
+
+    /**
+     * Update the database record for the job specified by the $call struct
+     * Intended to be used in an onTimeout callback, which is called by the Worker and passed an object w/
+     * all the call datails
+     *
+     * @param stdClass $call
+     * @return void
+     */
+    public function job_timeout(stdClass $call) {
+        $sql = sprintf('UPDATE jobs set is_timeout=1, retries=%s, completed_at=NOW() where pid=%s and worker="%s" and job=%s',
+                        $call->retries, $this->pid(), $call->method, $call->id);
+        if (false == mysqli_query($this->db, $sql))
+            $this->log(mysqli_error($this->db));
     }
 
     protected function log_file()

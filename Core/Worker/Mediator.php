@@ -93,6 +93,14 @@ abstract class Core_Worker_Mediator
     protected $calls = array();
 
     /**
+     * The Calls array can get very large (since it stores the arguments passed-to and return values passed-from).
+     * So we garbage-collect Returned and Timed-Out items periodically to keep memory usage under control. When we do
+     * that we move the call_id and the status (but nothing else) to this archive array
+     * @var array
+     */
+    protected $calls_archive = array();
+
+    /**
      * Call Counter - Used to assign keys in the local and shm $calls array
      * Note: Start at 1 because the first key in shm memory is reserved for the header
      * @var int
@@ -507,7 +515,7 @@ abstract class Core_Worker_Mediator
         static $last_failure = null;
 
         // Keep track of processes that fail within the first 30 seconds of being forked.
-        if (time() - $this->processes[$pid] < 30) {
+        if (isset($this->processes[$pid]) && time() - $this->processes[$pid] < 30) {
             $failures++;
             $last_failure = time();
         }
@@ -863,8 +871,10 @@ abstract class Core_Worker_Mediator
         // Periodically garbage-collect call structs
         if (mt_rand(1, 50) == 25)
             foreach ($this->calls as $item_id => $item)
-                if (in_array($item->status, array(self::TIMEOUT, self::RETURNED)))
+                if (in_array($item->status, array(self::TIMEOUT, self::RETURNED))) {
+                    $this->calls_archive[$item_id] = $item->status;
                     unset($this->calls[$item_id]);
+                }
 
         // Now get on with decoding the $message
         $call = null;
@@ -911,7 +921,8 @@ abstract class Core_Worker_Mediator
      * @param string $method
      * @param array $args
      * @param int $retries
-     * @return bool
+     * @return A unique identifier for the call (unique to this execution only. After a restart the worker re-uses call IDs) OR false on error.
+     *         Can be passed to the status() method for call status
      * @throws Exception
      */
     protected function call($method, Array $args, $retries=0, $errors=0) {
@@ -937,7 +948,7 @@ abstract class Core_Worker_Mediator
             if ($this->message_encode($call->id)) {
                 $call->status = self::CALLED;
                 $this->fork();
-                return true;
+                return $call->id;
             }
         } catch (Exception $e) {
             $this->log('Call Failed: ' . $e->getMessage(), true);
@@ -963,6 +974,16 @@ abstract class Core_Worker_Mediator
 
         $this->log("Retrying Call {$call->id} To `{$call->method}`");
         return $this->call($call->method, $call->args, ++$call->retries);
+    }
+
+    public function status($call_id) {
+        if (isset($this->calls[$call_id]))
+            return $this->calls[$call_id]->status;
+
+        if (isset($this->calls_archive[$call_id]))
+            return $this->calls_archive[$call_id];
+
+        return null;
     }
 
     /**
