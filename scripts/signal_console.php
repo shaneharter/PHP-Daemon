@@ -45,7 +45,7 @@ function out($out)
 }
 
 function macro($id) {
-    global $input, $macro_input, $prompt, $pid;
+    global $input, $macro_input, $prompt, $address;
     if ($macro_input)
         $macro_input = '';
 
@@ -111,7 +111,7 @@ while(true) {
                 $out[] = 'Available Commands:';
                 $out[] = 'exit';
                 $out[] = 'help                Display this help';
-                $out[] = 'pid                 Display a PID prompt to enter a new PID';
+                $out[] = 'pid [integer]       Display a PID prompt to enter a new PID, and optionally pass a PID to switch directly to';
                 $out[] = '[integer]           A valid signal';
                 $out[] = '';
 
