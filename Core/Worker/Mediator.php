@@ -172,7 +172,7 @@ abstract class Core_Worker_Mediator
      * @example set using $this->onTimeout();
      * @var callable
      */
-    protected $on_timeout;
+    protected  $on_timeout;
 
     /**
      * Is the current instance the Parent (daemon-side) mediator, or the Child (worker-side) mediator?
@@ -230,19 +230,8 @@ abstract class Core_Worker_Mediator
     }
 
     public function __destruct() {
-        if (!$this->is_parent)
-            return;
-
-//        $e = new Exception();
-//        echo $e->getTraceAsString();
-//        echo PHP_EOL, "---", PHP_EOL;
-//        // During a normal, graceful shutdown of the daemon, shutdown() will have already been called and processes will be empty.
-//        // But if a fatal error occurred, or just this worker was removed, etc, we need to be sure that all forked processes are killed.
-//        while(count($this->processes) > 0) {
-//            $this->log("DESTRUCT LLLL");
-//            $this->shutdown();
-//            sleep(1);
-//        }
+        // This method intentionally left blank
+        // The Daemon destructor calls teardown() on each worker
     }
 
     public function setup() {
@@ -286,7 +275,7 @@ abstract class Core_Worker_Mediator
             throw new Exception(__METHOD__ . " Failed. Could not address shared memory block {$this->id}");
     }
 
-    public function shutdown() {
+    public function teardown() {
         static $state = array();
 
         if (!$this->is_parent)
@@ -385,6 +374,150 @@ abstract class Core_Worker_Mediator
 
         return $tuple;
     }
+
+    /**
+     * Handle IPC Errors
+     * @param $error_code
+     * @return boolean  Returns true if the operation should be retried.
+     */
+    protected function ipc_error($error_code) {
+
+        static $error_count = 0;
+
+        // The cost and risk of restarting a worker process is lower than restarting the daemon
+        if ($this->is_parent)
+            $error_threshold = 50;
+        else
+            $error_threshold = 10;
+
+        switch($error_code) {
+            case 0:             // Success
+            case 4:             // System Interrupt
+            case MSG_ENOMSG:    // No message of desired type
+            case MSG_EAGAIN:    // Temporary Problem, Try Again
+
+                // Ignored Errors
+                usleep(20000);
+                return true;
+                break;
+
+            case 22:
+                // Invalid Argument
+                // Probably because the queue was removed in another process.
+
+            case 43:
+                // Identifier Removed
+                // A message queue was re-created at this address but the resource identifier we have needs to be re-created
+                if ($this->is_parent)
+                    usleep(20000);
+                else
+                    sleep(3);
+
+                $this->ipc_create();
+                return true;
+                break;
+
+            case null:
+                // Almost certainly an issue with shared memory
+                $this->log("Shared Memory I/O Error at Address {$this->id}.");
+
+                $error_count++;
+
+                // If this is a worker, all we can do is try to re-attach the shared memory.
+                // Any corruption or OOM errors will be handled by the parent exclusively.
+                if (!$this->is_parent) {
+                    sleep(3);
+                    $this->ipc_create();
+                    return true;
+                }
+
+                // If this is the parent, do some diagnostic checks and attempt correction.
+                usleep(20000);
+
+                // Test writing to shared memory using an array that should come to a few kilobytes.
+                for($i=0; $i<2; $i++) {
+                    $arr = array_fill(0, 20, mt_rand(1000,1000 * 1000));
+                    $key = mt_rand(1000 * 1000, 2000 * 1000);
+                    @shm_put_var($this->shm, $key, $arr);
+
+                    if (@shm_get_var($this->shm, $key) == $arr)
+                        return true;
+
+                    // Re-attach the shared memory and try the diagnostic again
+                    $this->ipc_create();
+                }
+
+                // Attempt to re-connect the shared memory
+                // See if we can read what's in shared memory and re-write it later
+                $items_to_copy = array();
+                $items_to_call = array();
+                for ($i=0; $i<$this->call_count; $i++) {
+                    $call = @shm_get_var($this->shm, $i);
+                    if (!is_object($call))
+                        continue;
+
+                    if (!isset($this->calls[$i]))
+                        continue;
+
+                    if ($this->calls[$i]->status == self::TIMEOUT)
+                        continue;
+
+                    if ($this->calls[$i]->status == self::UNCALLED) {
+                        $items_to_call[$i] = $call;
+                        continue;
+                    }
+
+                    $items_to_copy[$i] = $call;
+                }
+
+                for($i=0; $i<2; $i++) {
+                    $this->ipc_destroy(false, true);
+                    $this->ipc_create();
+
+                    if (!empty($items_to_copy))
+                        foreach($items_to_copy as $key => $value)
+                            @shm_put_var($this->shm, $key, $value);
+
+                    // Run a simple diagnostic
+                    $arr = array_fill(0, 20, mt_rand(1000,1000 * 1000));
+                    $key = mt_rand(1000 * 1000, 2000 * 1000);
+                    @shm_put_var($this->shm, $key, $arr);
+
+                    if (@shm_get_var($this->shm, $key) != $arr) {
+                        if (empty($items_to_copy)) {
+                            $this->fatal_error("Shared Memory Failure: Unable to proceed.");
+                        } else {
+                            $this->log('Purging items from shared memory: ' . implode(', ', array_keys($items_to_copy)));
+                            unset($items_to_copy);
+                        }
+                    }
+                }
+
+                foreach($items_to_call as $call) {
+                    $this->retry($call);
+                }
+
+                return true;
+
+            default:
+                if ($error_code)
+                    $this->log("Message Queue Error {$error_code}: " . posix_strerror($error_code));
+
+                $error_count++;
+                if ($this->is_parent)
+                    usleep(20000);
+                else
+                    sleep(3);
+
+                if ($error_count > $error_threshold) {
+                    $this->fatal_error("IPC Error Threshold Reached");
+                }
+
+                $this->ipc_create();
+                return false;
+        }
+    }
+
 
     /**
      * Allocate the total size of shared memory that will be allocated for passing arguments and return values to/from the
@@ -553,7 +686,7 @@ abstract class Core_Worker_Mediator
                 $this->running_calls[$call_id] = true;
                 $this->log('Job ' . $call_id . ' Is Running');
             } else {
-                $this->message_error($message_error);
+                $this->ipc_error($message_error);
             }
 
             $message_type = $message = $message_error = null;
@@ -571,7 +704,7 @@ abstract class Core_Worker_Mediator
 
                 $this->log('Job ' . $call_id . ' Is Complete');
             } else {
-                $this->message_error($message_error);
+                $this->ipc_error($message_error);
             }
 
             // Enforce Timeouts
@@ -649,7 +782,7 @@ abstract class Core_Worker_Mediator
                 usleep(50000);
                 continue;
             }
-            $this->message_error($message_error);
+            $this->ipc_error($message_error);
         }
     }
 
@@ -685,149 +818,6 @@ abstract class Core_Worker_Mediator
     }
 
     /**
-     * Handle Message Queue errors
-     * @param $error_code
-     * @return boolean  Returns true if the operation should be retried.
-     */
-    protected  function message_error($error_code) {
-
-        static $error_count = 0;
-
-        // The cost and risk of restarting a worker process is lower than restarting the daemon
-        if ($this->is_parent)
-            $error_threshold = 50;
-        else
-            $error_threshold = 10;
-
-        switch($error_code) {
-            case 0:             // Success
-            case 4:             // System Interrupt
-            case MSG_ENOMSG:    // No message of desired type
-            case MSG_EAGAIN:    // Temporary Problem, Try Again
-
-                // Ignored Errors
-                usleep(20000);
-                return true;
-                break;
-
-            case 22:
-                // Invalid Argument
-                // Probably because the queue was removed in another process.
-
-            case 43:
-                // Identifier Removed
-                // A message queue was re-created at this address but the resource identifier we have needs to be re-created
-                if ($this->is_parent)
-                    usleep(20000);
-                else
-                    sleep(3);
-
-                $this->ipc_create();
-                return true;
-                break;
-
-            case null:
-                // Almost certainly an issue with shared memory
-                $this->log("Shared Memory I/O Error at Address {$this->id}.");
-
-                $error_count++;
-
-                // If this is a worker, all we can do is try to re-attach the shared memory.
-                // Any corruption or OOM errors will be handled by the parent exclusively.
-                if (!$this->is_parent) {
-                    sleep(3);
-                    $this->ipc_create();
-                    return true;
-                }
-
-                // If this is the parent, do some diagnostic checks and attempt correction.
-                usleep(20000);
-
-                // Test writing to shared memory using an array that should come to a few kilobytes.
-                for($i=0; $i<2; $i++) {
-                    $arr = array_fill(0, 20, mt_rand(1000,1000 * 1000));
-                    $key = mt_rand(1000 * 1000, 2000 * 1000);
-                    @shm_put_var($this->shm, $key, $arr);
-
-                    if (@shm_get_var($this->shm, $key) == $arr)
-                        return true;
-
-                    // Re-attach the shared memory and try the diagnostic again
-                    $this->ipc_create();
-                }
-
-                // Attempt to re-connect the shared memory
-                // See if we can read what's in shared memory and re-write it later
-                $items_to_copy = array();
-                $items_to_call = array();
-                for ($i=0; $i<$this->call_count; $i++) {
-                    $call = @shm_get_var($this->shm, $i);
-                    if (!is_object($call))
-                        continue;
-
-                    if (!isset($this->calls[$i]))
-                        continue;
-
-                    if ($this->calls[$i]->status == self::TIMEOUT)
-                        continue;
-
-                    if ($this->calls[$i]->status == self::UNCALLED) {
-                        $items_to_call[$i] = $call;
-                        continue;
-                    }
-
-                    $items_to_copy[$i] = $call;
-                }
-
-                for($i=0; $i<2; $i++) {
-                    $this->ipc_destroy(false, true);
-                    $this->ipc_create();
-
-                    if (!empty($items_to_copy))
-                        foreach($items_to_copy as $key => $value)
-                            @shm_put_var($this->shm, $key, $value);
-
-                    // Run a simple diagnostic
-                    $arr = array_fill(0, 20, mt_rand(1000,1000 * 1000));
-                    $key = mt_rand(1000 * 1000, 2000 * 1000);
-                    @shm_put_var($this->shm, $key, $arr);
-
-                    if (@shm_get_var($this->shm, $key) != $arr) {
-                        if (empty($items_to_copy)) {
-                            $this->fatal_error("Shared Memory Failure: Unable to proceed.");
-                        } else {
-                            $this->log('Purging items from shared memory: ' . implode(', ', array_keys($items_to_copy)));
-                            unset($items_to_copy);
-                        }
-                    }
-                }
-
-                foreach($items_to_call as $call) {
-                    $this->retry($call);
-                }
-
-                return true;
-
-            default:
-                if ($error_code)
-                    $this->log("Message Queue Error {$error_code}: " . posix_strerror($error_code));
-
-                $error_count++;
-                if ($this->is_parent)
-                    usleep(20000);
-                else
-                    sleep(3);
-
-                if ($error_count > $error_threshold) {
-                    $this->fatal_error("IPC Error Threshold Reached");
-                }
-
-                $this->ipc_create();
-                return false;
-        }
-    }
-
-    /**
      * Send messages for the given $call_id to the right queue based on that call's state. Writes call data
      * to shared memory at the address specified in the message.
      * @param $call_id
@@ -853,7 +843,7 @@ abstract class Core_Worker_Mediator
             }
         }
 
-        if ($this->message_error($error_code) && $call->errors++ < 3) {
+        if ($this->ipc_error($error_code) && $call->errors++ < 3) {
             return $this->message_encode($call_id);
         }
 
@@ -883,7 +873,7 @@ abstract class Core_Worker_Mediator
             if ($call_id = $message['call']) {
                 $call = shm_get_var($this->shm, $call_id);
             }
-        } while($call_id && empty($call) && $this->message_error(null) && $tries++ < 3);
+        } while($call_id && empty($call) && $this->ipc_error(null) && $tries++ < 3);
 
         if (!is_object($call))
             throw new Exception(__METHOD__ . " Failed. Expected stdClass object in {$this->id}:{$call_id}. Given: " . gettype($call));
@@ -940,8 +930,6 @@ abstract class Core_Worker_Mediator
         $call->id            = $this->call_count;
         $call->retries       = $retries;
         $call->errors        = $errors;
-
-        // It's not a local method -- add it to the call stack and send to a worker process
         $this->calls[$call->id] = $call;
 
         try {

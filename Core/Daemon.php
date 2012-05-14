@@ -1,6 +1,6 @@
 <?php
 
-declare(ticks = 5) ;
+declare(ticks = 5);
 
 /**
  * Daemon Base Class - Extend this to build daemons.
@@ -130,7 +130,7 @@ abstract class Core_Daemon
      * Map of PID's to Worker aliases
      * @var array
      */
-    private $worker_map = array();
+    private $worker_pids = array();
 
     /**
      * Array of plugin aliases
@@ -344,16 +344,33 @@ abstract class Core_Daemon
         $this->log('Process Initialization Complete. Starting timer at a ' . $this->loop_interval . ' second interval.');
     }
 
+    /**
+     * Teardown all plugins and workers and reap any zombie processes before exiting
+     * @return void
+     */
     public function __destruct()
     {
-        $this->dispatch(array(self::ON_SHUTDOWN));
-        foreach ($this->plugins as $plugin)
-            $this->{$plugin}->teardown();
+        try
+        {
+            $this->dispatch(array(self::ON_SHUTDOWN));
+            foreach($this->plugins as $plugin)
+                $this->{$plugin}->teardown();
 
-        //  Worker teardown()'s are handled by the mediator objects
+            while($this->is_parent && count($this->worker_pids) > 0) {
+                foreach(array_unique($this->worker_pids) as $worker)
+                    $this->{$worker}->teardown();
 
-        // @todo reaping...
-        //$this->reap(true);
+                $this->reap(false);
+                usleep(50000);
+            }
+        }
+        catch (Exception $e)
+        {
+            $this->fatal_error(sprintf('Exception Thrown in Shutdown: %s [file] %s [line] %s%s%s',
+                $e->getMessage(), $e->getFile(), $e->getLine(), PHP_EOL, $e->getTraceAsString()));
+        }
+
+        $this->reap(false);
         if ($this->is_parent && !empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
             unlink($this->pid_file);
     }
@@ -382,7 +399,6 @@ abstract class Core_Daemon
             return call_user_func_array($this->$method, $args);
         }
 
-
         throw new Exception("Invalid Method Call '$method'");
     }
 
@@ -407,25 +423,6 @@ abstract class Core_Daemon
         catch (Exception $e)
         {
             $this->fatal_error(sprintf('Exception Thrown in Event Loop: %s [file] %s [line] %s%s%s',
-                $e->getMessage(), $e->getFile(), $e->getLine(), PHP_EOL, $e->getTraceAsString()));
-        }
-
-        if (!$this->is_parent)
-            return;
-
-        // During Shutdown, we need to ensure that all worker processes are killed and reaped.
-        // The run loop is broken. Release locks (allowing another instance to begin) and shutdown worker processes.
-        try
-        {
-            $this->log('Releasing Lock and Shutting Down... ');
-            foreach($this->plugins as $plugin)
-                $this->{$plugin}->teardown();
-
-            $this->shutdown_workers();
-        }
-        catch (Exception $e)
-        {
-            $this->fatal_error(sprintf('Exception Thrown in Shutdown: %s [file] %s [line] %s%s%s',
                 $e->getMessage(), $e->getFile(), $e->getLine(), PHP_EOL, $e->getTraceAsString()));
         }
     }
@@ -534,7 +531,7 @@ abstract class Core_Daemon
                     if ($object != $worker)
                         unset($this->{$object});
 
-                $this->workers = $this->worker_map = $this->plugins = array();
+                $this->workers = $this->worker_pids = $this->plugins = array();
 
                 if ($run_setup) {
                     $this->log("Running Setup in forked PID " . $this->pid . ($worker ? ' worker ' . $worker : ''));
@@ -563,7 +560,7 @@ abstract class Core_Daemon
 
                 if ($worker) {
                     if (in_array($worker, $this->workers)) {
-                        $this->worker_map[$pid] = $worker;
+                        $this->worker_pids[$pid] = $worker;
                     }
                 }
 
@@ -702,9 +699,9 @@ abstract class Core_Daemon
             SIGWINCH, SIGIO, SIGSYS, SIGBABY, SIGCHLD
         );
 
-		if (defined('SIGPOLL')) $signals[] = SIGPOLL;
-		if (defined('SIGPWR')) $signals[] = SIGPWR;
-		if (defined('SIGSTKFLT')) $signals[] = SIGSTKFLT;
+        if (defined('SIGPOLL')) $signals[] = SIGPOLL;
+        if (defined('SIGPWR')) $signals[] = SIGPWR;
+        if (defined('SIGSTKFLT')) $signals[] = SIGSTKFLT;
 
         foreach(array_unique($signals) as $signal) {
             pcntl_signal($signal, array($this, 'signal'));
@@ -830,7 +827,6 @@ abstract class Core_Daemon
         $stats['duration']  = microtime(true) - $start_time;
         $stats['idle']      = $this->loop_interval - $stats['duration'];
 
-        // usleep accepts microseconds, 1 second in microseconds = 1,000,000
         // Suppress child signals during sleep to stop exiting forks/workers from interrupting the timer.
         // Note: SIGCONT (-18) signals are not suppressed and can be used to "wake up" the daemon.
         if ($stats['idle'] > 0) {
@@ -872,37 +868,14 @@ abstract class Core_Daemon
      */
     private function reap($block = false)
     {
-//        if (!$this->is_parent)
-//            return;
-
-        if ($block)
-            $this->log("Reaping. Block: " . (int) $block);
-
         do {
             $pid = pcntl_wait($status, ($block && $this->is_parent) ? NULL : WNOHANG);
-            if (isset($this->worker_map[$pid])) {
-                $alias = $this->worker_map[$pid];
+            if (isset($this->worker_pids[$pid])) {
+                $alias = $this->worker_pids[$pid];
                 $this->{$alias}->reap($pid, $status);
-                unset($this->worker_map[$pid]);
+                unset($this->worker_pids[$pid]);
             }
         } while($pid > 0);
-    }
-
-    /**
-     * Shutdown all forked worker processes
-     * It will attempt to shutdown all workers asynchronously so the longest this should take is max() of all worker timeouts.
-     * If no timeout is set, the worker is given 30 seconds to shutdown.
-     * @return void
-     */
-    private function shutdown_workers()
-    {
-        while($this->is_parent && count($this->worker_map) > 0) {
-            foreach(array_unique($this->worker_map) as $worker) {
-                $this->{$worker}->shutdown();
-            }
-            $this->reap(false);
-            sleep(1);
-        }
     }
 
     /**
@@ -920,7 +893,6 @@ abstract class Core_Daemon
         foreach($this->plugins as $plugin)
             $this->{$plugin}->teardown();
 
-        // Remove any registered callback handlers...
         $this->callbacks = array();
 
         // Close the resource handles to prevent this process from hanging on the exec() output.
@@ -930,30 +902,37 @@ abstract class Core_Daemon
         exec($this->getFilename());
 
         // A new daemon process has been created. This one will stick around just long enough to clean up the worker processes.
-        $this->shutdown_workers();
         exit();
     }
 
     /**
      * Load any plugin that implements the Core_IPluginInterface.
-     * A single instance of a Core plugin can be created by passing the significant-part of the class name
-     * as the $alias. It will instantiate the plugin object and assign it to the name you passed-in.
      *
-     * If you want to load custom plugins, or multiple instances of built-in plugins, you can provide any alias you want
-     * and an instance of the plugin as the 2nd argument. Plugins have to implement Core_IPluginInterface.
+     * A single instance of any plugin in the /Core/Plugin directory can be created just by passing-in the significant
+     * part of the class name as the alias. See the first ini example below.
      *
-     * Both of these examples are equivalent. In both cases, an Ini plugin will be instantiated at $this->ini
+     * If you want to load custom plugins (or multiple instances of built-in plugins with different aliases) you can
+     * provide any valid alias with an instance of the plugin as the 2nd argument.
+     *
+     * It's important to understand that plugins and workers are both created as public instance variables (properties)
+     * so aliases must be unique among plugins and workers and cannot overwrite any existing instance variables in either
+     * Core_Daemon or your superclass.
+     *
+     * Both of the following examples are equivalent. In both cases, an Ini plugin will be instantiated at $this->ini:
      * @example $this->plugin('ini');
      * @example $this->plugin('ini', new Core_Plugins_Ini());
      *
-     * The significant part of Lock plugins must include "Lock_" so the loader can distinguish eg. Core_Plugins_File
-     * from Core_Lock_File:
+     * To use two ini files just give them unique aliases:
+     * @example $this->plugin('credentials', new Core_Plugins_Ini());
+     *          $this->plugin('settings', new Core_Plugins_Ini());
+     *          $this->credentials->filename = '~/prod/credentials.ini';
+     *          $this->settings->filename = BASE_PATH . '/MyDaemon/settings.ini';
+     *          echo $this->credentials['mysql']['user']; // Echo the 'user' key in the 'mysql' section
+     *
+     * You can implicitly load Lock plugins if your alias includes "Lock_" (since they are not located in /Core/Plugin):
      * @example $this->plugin('Lock_File'); // Instantiated at $this->Lock_File
      *
-     * Obviously the $alias must be unique within the class hierarchy. This will fail:
-     * @example $this->plugin('plugins', new Core_Lock_File); // plugins is reserved, this will throw an exception
-     *
-     * @param $alias
+     * @param string $alias
      * @param Core_IPluginInterface|null $instance
      * @return Core_IPluginInterface Returns an instance of the plugin
      * @throws Exception
@@ -966,7 +945,7 @@ abstract class Core_Daemon
             // This if wouldn't be necessary if /Lock lived inside /Plugin.
             // Now that Locks are plugins in every other way, maybe it should be moved. OTOH, do we really need 4
             // levels of directory depth in a project with like 10 files...?
-            if (substr($alias, 0, 5) == 'Lock_')
+            if (substr(strtolower($alias), 0, 5) == 'lock_')
                 $class = 'Core_' . ucfirst($alias);
             else
                 $class = 'Core_Plugin_' . ucfirst($alias);
@@ -997,6 +976,11 @@ abstract class Core_Daemon
      */
     protected function worker($alias, $worker)
     {
+        if (!$this->is_parent)
+            // While in theory there is nothing preventing you from creating workers in child processes, supporting it
+            // would require changing a lot of error handling and process management code and I don't really see the value in it.
+            throw new Exception(__METHOD__ . ' Failed. You cannot create workers in a forked (child) processes.');
+
         $this->check_alias($alias);
 
         switch (true) {
@@ -1033,15 +1017,11 @@ abstract class Core_Daemon
      * @throws Exception
      */
     private function check_alias($alias) {
-        if (empty($alias) || !is_scalar($alias)) {
+        if (empty($alias) || !is_scalar($alias))
             throw new Exception("Invalid Alias. Identifiers must be scalar.");
-        }
 
-        $is_class_var = in_array($alias, array_keys(get_class_vars(get_called_class())));
-        $is_obj_var = in_array($alias, array_keys(get_object_vars($this)));
-        if ($is_class_var || $is_obj_var) {
+        if (isset($this->{$alias}))
             throw new Exception("Invalid Alias. The identifier `{$alias}` is already in use or is reserved");
-        }
     }
 
     /**
@@ -1103,7 +1083,7 @@ abstract class Core_Daemon
 
         echo get_class($this);
         $out[] =  'USAGE:';
-        $out[] =  ' # ' . basename(self::$filename) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-v] [-p PID_FILE] [--resetworkers] [--debugworkers]';
+        $out[] =  ' # ' . basename(self::$filename) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-v] [-p PID_FILE] [--recoverworkers] [--debugworkers]';
         $out[] =  '';
         $out[] =  'OPTIONS:';
         $out[] =  ' -H Shows this help';
@@ -1118,8 +1098,8 @@ abstract class Core_Daemon
         $out[] =  ' -v Verbose, echo any logged messages. Ignored in Daemon mode. Ignored in --debugworkers mode.';
         $out[] =  ' -p PID_FILE File to write process ID out to';
         $out[] =  '';
-        $out[] =  ' --resetworkers';
-        $out[] =  '   Release and reallocate any shared memory and message queues used by workers.';
+        $out[] =  ' --recoverworkers';
+        $out[] =  '   Attempt to recover pending and incomplete calls from a previous instance of the daemon. Should be run under supervision after a daemon crash. Experimental.';
         $out[] =  '';
         $out[] =  ' --debugworkers';
         $out[] =  '   Run workers under a debug console. Provides tools to debug the inter-process communication between workers.';

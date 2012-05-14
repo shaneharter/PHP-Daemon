@@ -186,7 +186,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
             if ($sql)
                 if (false == mysqli_query($this->db, $sql))
-                    $this->log(mysqli_error($this->db));
+                    $this->reconnect_db($sql);
 
             unset($sql);
         }
@@ -205,7 +205,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
             if ($sql)
                 if (false == mysqli_query($this->db, $sql))
-                    $this->log(mysqli_error($this->db));
+                    $this->reconnect_db($sql);
 
             unset($sql);
         }
@@ -222,7 +222,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
     public function job_return(stdClass $call) {
         $sql = sprintf('UPDATE jobs set is_complete=1, completed_at=NOW() where pid=%s and worker="%s" and job=%s', $this->pid(), $call->method, $call->id);
         if (false == mysqli_query($this->db, $sql))
-            $this->log(mysqli_error($this->db));
+            $this->reconnect_db($sql);
     }
 
     /**
@@ -237,6 +237,14 @@ class ExampleWorkers_Daemon extends Core_Daemon
         $sql = sprintf('UPDATE jobs set is_timeout=1, retries=%s, completed_at=NOW() where pid=%s and worker="%s" and job=%s',
                         $call->retries, $this->pid(), $call->method, $call->id);
         if (false == mysqli_query($this->db, $sql))
+            $this->reconnect_db($sql);
+    }
+
+    public function reconnect_db($sql) {
+        usleep(25000);
+        $this->db = mysqli_connect('localhost', 'root', 'root');
+        mysqli_select_db($this->db, 'daemon');
+        if (!mysqli_query($this->db, $sql))
             $this->log(mysqli_error($this->db));
     }
 
