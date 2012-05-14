@@ -39,6 +39,7 @@ $input          = '';
 $macro_input    = '';
 $prompt         = true;
 $header_exists  = true;
+$files          = array();
 
 function out($out)
 {
@@ -75,6 +76,15 @@ function macro($id) {
     if ($macro_input)
         $input = '';
 }
+
+function shutdown() {
+    global $address;
+    if ($address) {
+        @exec("rm -f /tmp/shm_{$address}_*");
+    }
+}
+register_shutdown_function("shutdown");
+
 
 while(true) {
 
@@ -172,10 +182,24 @@ while(true) {
 
             case $address && is_numeric($input) && $input > 0:
                 out("Shared Memory Contents:");
-                if (!shm_has_var($shm, $input))
+                if (!shm_has_var($shm, $input)) {
                     out("Null");
-                else
-                    out(print_r(shm_get_var($shm, $input), true));
+                    continue;
+                }
+
+                $contents = print_r(shm_get_var($shm, $input), true);
+                if (strlen($contents) > 1024) {
+                    $filename = "/tmp/shm_{$address}_{$input}";
+                    if (file_put_contents($filename, $contents)) {
+                        $files[] = $filename;
+                        $size = filesize($filename);
+                        out("Contents too big for console; Redirected {$size} bytes to {$filename}");
+                        out("File will be removed when this Console is closed");
+                        continue;
+                    }
+                }
+
+                out($contents);
 
                 continue;
 
