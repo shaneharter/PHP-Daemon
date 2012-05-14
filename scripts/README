@@ -1,1 +1,20 @@
-These shell scripts are used for a smoother development process. There's nothing about them that is production ready. Use with care.
+These shell scripts are used for a smoother development process.
+
+Signal Console
+* Easily attach to a process and send signals
+* Save PID file locations in an array at the top of the file and the console will read the PID from the file automatically.
+
+SHM Console
+* Easily attach to a shared memory block
+* Scan the block for active keys and easily inspect the contents
+
+Clean IPC
+* Easily remove errant Semaphores, Shared Memory blocks and Inter-Process messages
+* Often during development, crashed or killed daemons will leave these resources behind that have to be manually cleaned
+
+Everything Else
+* Scripts that we've used to easily start a daemon with various commandline options
+* Scripts to View and Kill daemon processes
+
+
+

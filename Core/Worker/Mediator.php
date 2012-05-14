@@ -3,19 +3,13 @@
  * Create and run worker processes.
  * Use message queues and shared memory to coordinate worker processes and return work product to the daemon.
  * Uses system v message queues because afaik there's no existing PHP implementation of posix  queues.
- * Note: During development, crashes or `kill -9`s may cause the workers to leak IPC resources. You can clean up the
- * leaks using the /scripts/clean_ipc.php script.
  *
  * @author Shane Harter
- *
- * @todo graceful handling when forking fails for some reason
- * @todo retry limits?
- * @todo more/better logging, maybe a debug/verbose mode..
  */
 abstract class Core_Worker_Mediator
 {
     /**
-     * The version is used in case SHM memory formats change in the future. The goal is being able to upgrade in the future without affecting workers.
+     * The version is used in case SHM memory formats change in the future.
      */
     const VERSION = 2.0;
 
@@ -108,7 +102,9 @@ abstract class Core_Worker_Mediator
     protected $call_count = 1;
 
     /**
-     * Calls currently running on one of the worker processes.
+     * Array of Call ID's of calls currently running on one of the worker processes.
+     * Calls are added when we receive a Running ack from a worker, and they're removed when the worker returns
+     * or when the $timeout is reached.
      * @var array
      */
     protected $running_calls = array();
@@ -139,37 +135,44 @@ abstract class Core_Worker_Mediator
 
     /**
      * The number of allowed concurrent workers
+     * @example Set the worker count using $this->workers();
      * @var int
      */
     protected $workers = 1;
 
     /**
-     * How long, in seconds, can worker methods take before being killed?
+     * How long, in seconds, can worker methods take before they should be killed?
+     * Timeouts are an important tool in call processing guarantees: Workers that are killed or crash cannot notify the
+     * daemon of the error. In these cases, the daemon only knows that the job was not acked as complete. In that way,
+     * all errors are just timeouts. Your timeout handler will be called and your daemon will have the chance to retry
+     * or otherwise handle the failure.
+     *
+     * Note: If you use your Timeout handler to retry a call, notice the $call->retries count that is kept for you. If your
+     * call consistently leads to a fatal error in your worker processes, unlimited retries will result in continued worker
+     * failure until the daemon reaches its error tolerance limit and tries to restart itself. Even then it's possible for the
+     * queued call to persist until a manual intervention. By limiting retries the daemon can recover from a series of worker
+     * fatal errors without affecting the application's stability.
+     *
      * Note: There may be deviation in enforcement up to the length of your loop_interval. So if you set this ot "5" and
      * your loop interval is 2.5 second, workers may be allowed to run for up to 7.5 seconds before timing out. This
      * happens because timeouts and the on_return and on_timeout calls are all handled inside the run() loop just before
      * your execute() method is called.
-     * Note: You can set a callback using $this->onTimeout that will be called when a worker times-out.
-     * Note: Timeouts are used by the parent daemon process to clear local copies of calls that will never return an ack
-     * from the worker due to, say, fatal errors or the worker process being killed. Not setting a timeout will have
-     * deleterious effects.
+     *
+     * @example set a Timeout using $this->timeout();
      * @var float
      */
     protected $timeout = 60;
 
     /**
      * Callback that's called when a worker completes it's job.
-     * @example set using $this->onReturn();
+     * @example set a Return Handler using $this->onReturn();
      * @var callable
      */
     protected $on_return;
 
     /**
-     * Callback that's called when a worker times-out. A timeout could be due to a worker taking too long to process
-     * a call or it could also be due to a fatal error in the worker. When a fatal error happens in a worker it has
-     * no way to communicate that to the daemon. The result is that it just looks to the daemon as if the job is running
-     * for too long so it triggers a timeout.
-     * @example set using $this->onTimeout();
+     * Callback that's called when a worker timeout is reached. See phpdoc comments on the $timeout property
+     * @example set a Timeout Handler using $this->onTimeout();
      * @var callable
      */
     protected  $on_timeout;
@@ -183,7 +186,7 @@ abstract class Core_Worker_Mediator
     /**
      * How big, at any time, can the IPC shared memory allocation be.
      * Default is 5MB. May need to be increased if you are passing very large datasets as Arguments and Return values.
-     * @see memory_allocation()
+     * @example Allocate shared memory using $this->malloc();
      * @var float
      */
     protected $memory_allocation;
@@ -213,7 +216,7 @@ abstract class Core_Worker_Mediator
     public function __construct($alias, Core_Daemon $daemon) {
         $this->alias = $alias;
         $this->daemon = $daemon;
-        $this->memory_allocation = 5 * pow(2,20); // 5MB Default allocation per worker. Ideally this will be overloaded per-worker.
+        $this->memory_allocation = 5 * 1024 * 1024;
 
         $interval = $this->daemon->loop_interval();
         switch(true) {
@@ -232,6 +235,14 @@ abstract class Core_Worker_Mediator
     public function __destruct() {
         // This method intentionally left blank
         // The Daemon destructor calls teardown() on each worker
+    }
+
+
+    public function check_environment(Array $errors = array()) {
+        if (function_exists('posix_kill') == false)
+            $errors[] = 'The POSIX Extension is Not Installed';
+
+        return $errors;
     }
 
     public function setup() {
@@ -257,12 +268,11 @@ abstract class Core_Worker_Mediator
 
             $this->fork();
             $this->daemon->on(Core_Daemon::ON_RUN, array($this, 'run'));
-
             $this->ipc_create();
             $this->shm_init();
 
         } else {
-            $this->calls = $this->processes = $this->running_calls = array();
+            $this->calls = $this->calls_archive = $this->processes = $this->running_calls = array();
             $this->ipc_create();
             $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'signal'));
             $this->log('Worker Process Started...');
@@ -275,6 +285,11 @@ abstract class Core_Worker_Mediator
             throw new Exception(__METHOD__ . " Failed. Could not address shared memory block {$this->id}");
     }
 
+    /**
+     * Called in the Daemon (parent) process during shutdown/restart to shutdown any worker processes.
+     * Will attempt a graceful shutdown first and kill -9 only if the worker processes seem to be hanging.
+     * @return mixed
+     */
     public function teardown() {
         static $state = array();
 
@@ -311,13 +326,6 @@ abstract class Core_Worker_Mediator
             @unlink($this->ftok);
             $this->ipc_destroy();
         }
-    }
-
-    public function check_environment(Array $errors = array()) {
-        if (function_exists('posix_kill') == false)
-            $errors[] = 'The POSIX Extension is Not Installed';
-
-        return $errors;
     }
 
     /**
@@ -520,38 +528,6 @@ abstract class Core_Worker_Mediator
 
 
     /**
-     * Allocate the total size of shared memory that will be allocated for passing arguments and return values to/from the
-     * worker processes. Should be sufficient to hold the working set of each worker pool.
-     *
-     * This is can be calculated roughly as:
-     * ([Max Size Of Arguments Passed] + [Max Size of Return Value]) * ([Number of Jobs Running Concurrently] + [Number of Jobs Queued, Waiting to Run])
-     *
-     * The memory used by a job is freed after a worker ack's the job as complete and the onReturn handler is called.
-     * The total pool of memory allocated here is freed when:
-     * 1) The daemon is stopped and no messages are left in the queue.
-     * 2) The daemon is started with a --resetworkers flag (In this case the memory is freed and released and then re-allocated.
-     *    This is useful if you need to resize the shared memory the worker uses or you just want to purge any stale messages)
-     *
-     * @default 1 MB
-     * @param $bytes
-     * @throws Exception
-     * @return int
-     */
-    public function malloc($bytes = null) {
-        if ($bytes !== null) {
-            if (!is_int($bytes))
-                throw new Exception(__METHOD__ . " Failed. Could not set SHM allocation size. Expected Integer. Given: " . gettype($bytes));
-
-            if (is_resource($this->shm))
-                throw new Exception(__METHOD__ . " Failed. Can Not Re-Allocate SHM Size. You will have to restart the daemon with the --resetworkers option to resize.");
-
-            $this->memory_allocation = $bytes;
-        }
-
-        return $this->memory_allocation;
-    }
-
-    /**
      * Write and Verify the SHM header
      * @return void
      * @throws Exception
@@ -666,7 +642,6 @@ abstract class Core_Worker_Mediator
         }
         unset($this->processes[$pid]);
     }
-
 
     /**
      * Called in the parent process, once per each iteration in the daemons run() loop. Checks messages queues for information from worker
@@ -787,37 +762,6 @@ abstract class Core_Worker_Mediator
     }
 
     /**
-     * Attached to the Daemon's ON_SIGNAL event
-     * @param $signal
-     */
-    public function signal($signal) {
-        switch ($signal)
-        {
-            case SIGHUP:
-                $this->log("Restarting Worker Process...");
-
-            case SIGINT:
-            case SIGTERM:
-                $this->shutdown = true;
-                break;
-        }
-    }
-
-    /**
-     * Access daemon properties from within your workers
-     * @example [inside a worker class] $this->mediator->daemon('dbconn');
-     * @example [inside a worker class] $ini = $this->mediator->daemon('ini'); $ini['database']['password']
-     * @param $property
-     * @return mixed
-     */
-    public function daemon($property) {
-        if (isset($this->daemon->{$property}) && !is_callable($this->daemon->{$property})) {
-            return $this->daemon->{$property};
-        }
-        return null;
-    }
-
-    /**
      * Send messages for the given $call_id to the right queue based on that call's state. Writes call data
      * to shared memory at the address specified in the message.
      * @param $call_id
@@ -859,9 +803,13 @@ abstract class Core_Worker_Mediator
     protected function message_decode(Array $message) {
 
         // Periodically garbage-collect call structs
-        if (mt_rand(1, 50) == 25)
+        if (mt_rand(1, 20) == 10)
             foreach ($this->calls as $item_id => $item)
-                if (in_array($item->status, array(self::TIMEOUT, self::RETURNED))) {
+                if (in_array($item->status, array(self::UNCALLED, self::TIMEOUT, self::RETURNED))) {
+                    // Give UNCALLED items 30 seconds before we consider them eligible for garbage collection
+                    if ($item->status == self::UNCALLED && (time() - $item->time[0]) < 30)
+                        continue;
+
                     $this->calls_archive[$item_id] = $item->status;
                     unset($this->calls[$item_id]);
                 }
@@ -887,23 +835,6 @@ abstract class Core_Worker_Mediator
             shm_remove_var($this->shm, $call_id);
 
         return $call_id;
-    }
-
-    /**
-     * Write do the Daemon's event log
-     * @param $message
-     * @param bool $is_error
-     */
-    public function log($message, $is_error = false) {
-        $this->daemon->log("$message", $is_error, $this->alias);
-    }
-
-    /**
-     * Log a fatal error and restart the worker process
-     * @param $message
-     */
-    public function fatal_error($message) {
-        $this->daemon->fatal_error("$message\nFatal Error: Worker process will restart", $this->alias);
     }
 
     /**
@@ -945,33 +876,19 @@ abstract class Core_Worker_Mediator
         return false;
     }
 
-
     /**
-     * Re-run a previous call by passing in the call's struct.
-     * Note: When calls are re-run a retry=1 property is added, and that is incremented for each re-call. You should check
-     * that value to avoid re-calling failed methods in an infinite loop.
-     *
-     * @example You set a timeout handler using onTimeout. The worker will pass the timed-out call to the handler as a
-     * stdClass object. You can re-run it by passing the object here.
-     * @param stdClass $call
-     * @return bool
+     * Get the worker ID
+     * @return int
      */
-    public function retry(stdClass $call) {
-        if (empty($call->method))
-            throw new Exception(__METHOD__ . " Failed. A valid call struct is required.");
-
-        $this->log("Retrying Call {$call->id} To `{$call->method}`");
-        return $this->call($call->method, $call->args, ++$call->retries);
+    public function id() {
+        return $this->id;
     }
 
-    public function status($call_id) {
-        if (isset($this->calls[$call_id]))
-            return $this->calls[$call_id]->status;
-
-        if (isset($this->calls_archive[$call_id]))
-            return $this->calls_archive[$call_id];
-
-        return null;
+    /**
+     * Satisfy the debugging interface in case there are user-created prompt() calls in their workers
+     */
+    public function prompt($prompt, $args = null, Closure $on_interrupt = null) {
+        return true;
     }
 
     /**
@@ -994,9 +911,118 @@ abstract class Core_Worker_Mediator
     }
 
     /**
+     * Attached to the Daemon's ON_SIGNAL event
+     * @param $signal
+     */
+    public function signal($signal) {
+        switch ($signal)
+        {
+            case SIGHUP:
+                $this->log("Restarting Worker Process...");
+
+            case SIGINT:
+            case SIGTERM:
+                $this->shutdown = true;
+                break;
+        }
+    }
+
+
+
+
+
+    /**
+     * Write do the Daemon's event log
+     *
+     * Part of the Worker API - Use from your workers to log events to the Daemon error log
+     *
+     * @param $message
+     * @param bool $is_error
+     * @return void
+     */
+    public function log($message, $is_error = false) {
+        $this->daemon->log("$message", $is_error, $this->alias);
+    }
+
+    /**
+     * Log a fatal error and restart the worker process
+     *
+     * Part of the Worker API - Use from your worker to log a fatal error message and restart the current process.
+     *
+     * @param $message
+     * @return void
+     */
+    public function fatal_error($message) {
+        $this->daemon->fatal_error("$message\nFatal Error: Worker process will restart", $this->alias);
+    }
+
+    /**
+     * Access daemon properties from within your workers
+     *
+     * Part of the Worker API - Use from your worker to access data set on your Daemon class
+     *
+     * @example [inside a worker class] $this->mediator->daemon('dbconn');
+     * @example [inside a worker class] $ini = $this->mediator->daemon('ini'); $ini['database']['password']
+     * @param $property
+     * @return mixed
+     */
+    public function daemon($property) {
+        if (isset($this->daemon->{$property}) && !is_callable($this->daemon->{$property})) {
+            return $this->daemon->{$property};
+        }
+        return null;
+    }
+
+
+
+
+
+    /**
+     * Re-run a previous call by passing in the call's struct.
+     * Note: When calls are re-run a retry=1 property is added, and that is incremented for each re-call. You should check
+     * that value to avoid re-calling failed methods in an infinite loop.
+     *
+     * Part of the Daemon API - Use from your daemon to retry a given call
+     *
+     * @example You set a timeout handler using onTimeout. The worker will pass the timed-out call to the handler as a
+     * stdClass object. You can re-run it by passing the object here.
+     * @param stdClass $call
+     * @return bool
+     */
+    public function retry(stdClass $call) {
+        if (empty($call->method))
+            throw new Exception(__METHOD__ . " Failed. A valid call struct is required.");
+
+        $this->log("Retrying Call {$call->id} To `{$call->method}`");
+        return $this->call($call->method, $call->args, ++$call->retries);
+    }
+
+    /**
+     * Determine the status of a given call. Call ID's are returned when a job is called. Important to note that
+     * call ID's are only unique within this worker and this execution.
+     *
+     * Part of the Daemon API - Use from your daemon to determine the status of a given call
+     *
+     * @param integer $call_id
+     * @return int  Return a status int - See status constants in this class
+     */
+    public function status($call_id) {
+        if (isset($this->calls[$call_id]))
+            return $this->calls[$call_id]->status;
+
+        if (isset($this->calls_archive[$call_id]))
+            return $this->calls_archive[$call_id];
+
+        return null;
+    }
+
+    /**
      * Set a callable that will called whenever a timeout is enforced on a worker.
      * The offending $call stdClass will be passed-in. Can be passed to retry() to re-try the call. Will have a
      * `retries=N` property containing the number of times it's been sent thru retry().
+     *
+     * Part of the Daemon API - Use from your daemon to set a Timeout handler
+     *
      * @param callable $on_timeout
      * @throws Exception
      */
@@ -1011,6 +1037,9 @@ abstract class Core_Worker_Mediator
     /**
      * Set a callable that will be called when a worker method completes.
      * The $call stdClass will be passed-in -- with a `return` property.
+     *
+     * Part of the Daemon API - Use from your daemon to set a Return handler
+     *
      * @param callable $on_return
      * @throws Exception
      */
@@ -1024,6 +1053,9 @@ abstract class Core_Worker_Mediator
 
     /**
      * Set the timeout for methods called on this worker. When a timeout happens, the onTimeout() callback is called.
+     *
+     * Part of the Daemon API - Use from your daemon to set a timeout for all worker calls.
+     *
      * @param $timeout
      * @throws Exception
      */
@@ -1041,6 +1073,9 @@ abstract class Core_Worker_Mediator
      * needed. This is avoided when your loop_interval is very short (we don't want to be forking processes if you
      * need to loop every half second, for example) but it's the most ideal setting. Read more about the forking strategy
      * for more information.
+     *
+     * Part of the Daemon API - Use from your daemon to set the number of concurrent asynchronous worker processes.
+     *
      * @param int $workers
      * @throws Exception
      */
@@ -1054,6 +1089,9 @@ abstract class Core_Worker_Mediator
 
     /**
      * Does the worker have at least one idle process?
+     *
+     * Part of the Daemon API - Use from your daemon to determine if any of your daemon's worker processes are idle
+     *
      * @example Use this to implement a pattern where there is always a background worker working. Suppose your daemon writes results to a file
      *          that you want to upload to S3 continuously. You could create a worker to do the upload and set ->workers(1). In your execute() method
      *          if the worker is idle, call the upload() method. This way it should, at all times, be uploading the latest results.
@@ -1065,17 +1103,36 @@ abstract class Core_Worker_Mediator
     }
 
     /**
-     * Get the worker ID
+     * Allocate the total size of shared memory that will be allocated for passing arguments and return values to/from the
+     * worker processes. Should be sufficient to hold the working set of each worker pool.
+     *
+     * This is can be calculated roughly as:
+     * ([Max Size Of Arguments Passed] + [Max Size of Return Value]) * ([Number of Jobs Running Concurrently] + [Number of Jobs Queued, Waiting to Run])
+     *
+     * The memory used by a job is freed after a worker ack's the job as complete and the onReturn handler is called.
+     * The total pool of memory allocated here is freed when:
+     * 1) The daemon is stopped and no messages are left in the queue.
+     * 2) The daemon is started with a --resetworkers flag (In this case the memory is freed and released and then re-allocated.
+     *    This is useful if you need to resize the shared memory the worker uses or you just want to purge any stale messages)
+     *
+     * Part of the Daemon API - Use from your Daemon to allocate shared memory used among all worker processes.
+     *
+     * @default 1 MB
+     * @param $bytes
+     * @throws Exception
      * @return int
      */
-    public function id() {
-        return $this->id;
-    }
+    public function malloc($bytes = null) {
+        if ($bytes !== null) {
+            if (!is_int($bytes))
+                throw new Exception(__METHOD__ . " Failed. Could not set SHM allocation size. Expected Integer. Given: " . gettype($bytes));
 
-    /**
-     * Satisfy the debugging interface in case there are user-created prompt() calls in their workers
-     */
-    public function prompt($prompt, $args = null, Closure $on_interrupt = null) {
-        return true;
+            if (is_resource($this->shm))
+                throw new Exception(__METHOD__ . " Failed. Can Not Re-Allocate SHM Size. You will have to restart the daemon with the --resetworkers option to resize.");
+
+            $this->memory_allocation = $bytes;
+        }
+
+        return $this->memory_allocation;
     }
 }
