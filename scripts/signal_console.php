@@ -37,37 +37,11 @@ $pid            = false;
 $input          = '';
 $macro_input    = '';
 $prompt         = true;
-
-
-function out($out)
-{
-    echo $out, PHP_EOL;
-}
-
-function macro($id) {
-    global $input, $macro_input, $prompt, $address;
-    if ($macro_input)
-        $macro_input = '';
-
-    switch($id){
-        case 1:
-            // Macro 1 reads an optional PID from a pid-reset command.
-            // Example:   SIG> pid 12345    The current pid will be released and this macro will pull 12345 out and set
-            //                              it as the new pid.
-            $arg = @func_get_arg(1);
-            if (!$arg || strlen(trim($arg)) < 4)
-                return;
-
-            $macro_input = trim(str_replace('pid', '', $arg));
-            break;
-    }
-
-    if ($macro_input)
-        $input = '';
-}
-
+$flash          = '';
 
 while(true) {
+
+    $flash = '';
 
     // Every few iterations verify that the pid still exists
     if ($pid && ($input || mt_rand(1,3) == 2) && (file_exists("/proc") && !file_exists("/proc/{$pid}"))) {
@@ -101,10 +75,10 @@ while(true) {
             case empty($input):
                 continue;
 
-            case $input == 'exit':
+            case input() == 'exit':
                 exit;
 
-            case $pid && $input == 'help':
+            case $pid && input() == 'help':
 
                 $out = array();
                 $out[] = '';
@@ -118,7 +92,7 @@ while(true) {
                 out(implode(PHP_EOL, $out));
                 continue;
 
-            case $input == 'help':
+            case input() == 'help':
                 $out = array();
                 $out[] = '';
                 $out[] = 'Available Commands:';
@@ -142,7 +116,7 @@ while(true) {
                 posix_kill($pid, $input);
                 continue;
 
-            case substr($input, 0, 3) == 'pid':
+            case input(substr($input, 0, 3)) == 'pid':
                 if ($pid) {
                     out("Releasing PID...");
                     $pid = false;
@@ -184,4 +158,63 @@ while(true) {
     }
 
     usleep(20 * 1000);
+}
+
+function out($out)
+{
+    global $flash;
+    if ($flash) {
+        echo $flash, PHP_EOL;
+        $flash = '';
+    }
+
+    echo $out, PHP_EOL;
+}
+
+function macro($id) {
+    global $input, $macro_input, $prompt, $address;
+    if ($macro_input)
+        $macro_input = '';
+
+    switch($id){
+        case 1:
+            // Macro 1 reads an optional PID from a pid-reset command.
+            // Example:   SIG> pid 12345    The current pid will be released and this macro will pull 12345 out and set
+            //                              it as the new pid.
+            $arg = @func_get_arg(1);
+            if (!$arg || strlen(trim($arg)) < 4)
+                return;
+
+            $macro_input = trim(str_replace('pid', '', $arg));
+            break;
+    }
+
+    if ($macro_input)
+        $input = '';
+}
+
+function input($in = null, Array $commands = array('pid', 'help', 'exit')) {
+    global $input, $flash;
+    if (empty($in))
+        $in = $input;
+
+    if (empty($in))
+        return null;
+
+    $matches = array();
+    foreach ($commands as $command)
+        if ($in == substr($command, 0, strlen($in)))
+            $matches[] = $command;
+
+    if (count($matches) > 1)
+        out("Ambiguous Command. Matches: " . implode(', ', $matches));
+
+    if (count($matches)) {
+        if ($in != $matches[0])
+            $flash = $matches[0];
+
+        return $matches[0];
+    }
+
+    return null;
 }

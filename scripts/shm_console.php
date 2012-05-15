@@ -4,7 +4,6 @@
  * A simple console that lets you view and interact with a shared memory address
  * Use the shortcut $addresses array to store commonly-attached memory addresses
  * @author Shane Harter
- * @todo A "watch" command that will log all memory block changes by doing a scan, array_diff()'ing keys, and possibly even comparing hashes of values
  */
 
 define('BASE_PATH', dirname(dirname(__FILE__)));
@@ -39,59 +38,16 @@ $input          = '';
 $macro_input    = '';
 $prompt         = true;
 $header_exists  = true;
-$files          = array();
-
-function out($out)
-{
-    echo $out, PHP_EOL;
-}
-
-function macro($id) {
-    global $input, $macro_input, $prompt, $address;
-    if ($macro_input)
-        $macro_input = '';
-
-    switch($id){
-        case 1:
-            // Macro 1 reads an optional Address from a address-reset command.
-            // Example:   ID > addr 12345    The current address will be released and this macro will pull 12345 out and set
-            //                               it as the new address.
-            $arg = @func_get_arg(1);
-            if (!$arg || strlen(trim($arg)) < 4)
-                return;
-
-            $macro_input = trim(str_replace('addr', '', $arg));
-            break;
-
-        case 2:
-            // Macro 2 takes a saved address from the addresses array and reads it into $input
-            $arg = @func_get_arg(1);
-            if (!$arg || !is_numeric($arg))
-                return;
-
-            $macro_input = $arg;
-            break;
-    }
-
-    if ($macro_input)
-        $input = '';
-}
-
-function shutdown() {
-    global $address;
-    if ($address) {
-        @exec("rm -f /tmp/shm_{$address}_*");
-    }
-}
-register_shutdown_function("shutdown");
-
+$flash          = '';
 
 while(true) {
+
+    $flash = '';
 
     // Every few iterations check to see if the header still exists (if not the memory block
     // has probably been detached and released by the daemon) If the header didn't exist when the memory
     // was attached just skip the check and let the user figure out if the memory is detached.
-    if ($address && $header_exists && ($input || mt_rand(1,3) == 2) && !shm_has_var($shm, 1)) {
+    if (!$macro_input && $address && $header_exists && ($input || mt_rand(1,3) == 2) && !shm_has_var($shm, 1)) {
         out("Shared Memory Block {$address} Has Been Released");
         $prompt = true;
         $address = false;
@@ -124,10 +80,14 @@ while(true) {
             case empty($input):
                 continue;
 
-            case $input == 'exit':
+            case $address && input('exit'):
+                @exec("rm -f /tmp/shm_{$address}_*");
                 exit;
 
-            case $address && $input == 'help':
+            case input('exit'):
+                exit;
+
+            case $address && input('help'):
 
                 $out = array();
                 $out[] = '';
@@ -136,12 +96,15 @@ while(true) {
                 $out[] = 'help                Display this help';
                 $out[] = 'addr [integer]      Display an ADDR prompt to enter a new Address, and optionally pass an Address to switch directly to';
                 $out[] = '[integer]           A valid memory address';
+                $out[] = 'scan                Scan the shared memory block for items currently in-memory';
+                $out[] = 'watch               Watch the shared memory block and log all Additions, Removals and Updates - Use [Enter] to break a Watch.';
+                $out[] = 'rewatch             Pick-up a previous Watch where you left-off';
                 $out[] = '';
 
                 out(implode(PHP_EOL, $out));
                 continue;
 
-            case $input == 'help':
+            case input('help'):
                 $out = array();
                 $out[] = '';
                 $out[] = 'Available Commands:';
@@ -158,7 +121,7 @@ while(true) {
                 out(implode(PHP_EOL, $out));
                 continue;
 
-            case substr($input, 0, 4) == 'addr':
+            case input('addr'):
                 if ($address) {
                     out("Releasing Address...");
                     $address = false;
@@ -167,7 +130,7 @@ while(true) {
                 macro(1, $input);
                 continue;
 
-            case $address && substr($input, 0, 4) == 'scan':
+            case $address && input('scan'):
                 $out = '';
                 for ($i=0; $i<100000; $i++)
                     if(shm_has_var($shm, $i))
@@ -180,6 +143,55 @@ while(true) {
                     out("None");
                 continue;
 
+            case $address && input('watch'):
+                // Watch resets the registry (which is used to compare the snapshot to)
+                // You can interrupt a Watch by pressing enter and then re-enter it by using rewatch
+                out("\nWatching Shared Memory..");
+                out("Note: The `watch` command uses polling to determine changes. Changes made in between polling iterations will not be logged.\n");
+                $registry = array();
+                $max = 1;
+
+            case $address && input('rewatch'):
+                $snapshot = array();
+                $statuses = array();
+
+                // Build a Snapshot
+                for ($i=0; $i<$max+1000; $i++) {
+                    if(shm_has_var($shm, $i)) {
+                        $x = shm_get_var($shm, $i);
+                        if (is_object($x) && isset($x->status))
+                            $statuses[$i] = $x->status;
+                        $snapshot[$i] = md5(print_r($x, true));
+                        if ($i > $max)
+                            $max = $i;
+                        $x = null;
+                    }
+                }
+
+                // Compare to Array
+                $removed = array_diff_key($registry, $snapshot);
+                foreach(array_keys($removed) as $item)
+                    out("Item {$item} Removed");
+
+                $added = array_diff_key($snapshot, $registry);
+                foreach(array_keys($added) as $item)
+                    if (isset($statuses[$item]))
+                        out ("Item {$item} Added at Status " . $statuses[$item]);
+                    else
+                        out ("Item {$item} Added");
+
+                foreach(array_diff_key($registry, $removed) as $item => $hash)
+                    if ($hash != $snapshot[$item])
+                        if (isset($statuses[$item]))
+                            out ("Item {$item} Updated at Status " . $statuses[$item]);
+                        else
+                            out ("Item {$item} Updated");
+
+
+                $registry = $snapshot;
+                macro(3);
+                continue;
+
             case $address && is_numeric($input) && $input > 0:
                 out("Shared Memory Contents:");
                 if (!shm_has_var($shm, $input)) {
@@ -188,19 +200,22 @@ while(true) {
                 }
 
                 $contents = print_r(shm_get_var($shm, $input), true);
-                if (strlen($contents) > 1024) {
+                $sizeof = strlen($contents);
+                $cutoff = 1024 * 1.5;
+                if ($sizeof > $cutoff) {
                     $filename = "/tmp/shm_{$address}_{$input}";
+                    $sizeof = number_format($sizeof, 0);
                     if (file_put_contents($filename, $contents)) {
-                        $files[] = $filename;
-                        $size = filesize($filename);
-                        out("Contents too big for console; Redirected {$size} bytes to {$filename}");
-                        out("File will be removed when this Console is closed");
+                        out("Contents too big for console; Redirected {$sizeof} bytes to {$filename}");
+                        out("Note: The file(s) will be removed when you `exit` this console");
                         continue;
                     }
+
+                    out("Contents too big for console but output redirection to '{$filename}' failed.");
+                    out("Displaying the first 1024 bytes (of {$sizeof} bytes total)");
                 }
 
-                out($contents);
-
+                out(substr($contents, 0, $cutoff));
                 continue;
 
             case !$address && $input <= 0 && isset($index[abs($input)]):
@@ -239,3 +254,78 @@ while(true) {
 }
 
 
+function out($out)
+{
+    global $flash;
+    if ($flash) {
+        echo $flash, PHP_EOL;
+        $flash = '';
+    }
+
+    echo $out, PHP_EOL;
+}
+
+function macro($id) {
+    global $input, $macro_input, $prompt, $address;
+    if ($macro_input)
+        $macro_input = '';
+
+    switch($id){
+        case 1:
+            // Macro 1 reads an optional Address from a address-reset command.
+            // Example:   ID > addr 12345    The current address will be released and this macro will pull 12345 out and set
+            //                               it as the new address.
+            $arg = @func_get_arg(1);
+            if (!$arg || strlen(trim($arg)) < 4)
+                return;
+
+            $macro_input = trim(str_replace('addr', '', $arg));
+            break;
+
+        case 2:
+            // Macro 2 takes a saved address from the addresses array and reads it into $input
+            $arg = @func_get_arg(1);
+            if (!$arg || !is_numeric($arg))
+                return;
+
+            $macro_input = $arg;
+            break;
+
+        case 3:
+            if (fgets(STDIN) == "\n")
+                return;
+
+            $macro_input = 'rewatch';
+            break;
+    }
+
+    if ($macro_input)
+        $input = '';
+}
+
+function input($command, $in = null, Array $candidates = array('scan', 'addr', 'watch', 'rewatch', 'help', 'exit')) {
+    global $input, $flash;
+    if (empty($in))
+        $in = $input;
+
+    if (empty($in))
+        return null;
+
+    $in = substr($in, 0, strlen($command));
+    $matches = array();
+    foreach ($candidates as $candidate)
+        if ($in == substr($candidate, 0, strlen($in)))
+            $matches[] = $candidate;
+
+    if (count($matches) > 1)
+        out("Ambiguous Command. Matches: " . implode(', ', $matches));
+
+    if (count($matches) && $matches[0] == $command) {
+        if ($in != $matches[0])
+            $flash = $matches[0];
+
+        return true;
+    }
+
+    return false;
+}
