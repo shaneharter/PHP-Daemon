@@ -45,4 +45,8 @@ final class Core_Worker_FunctionMediator extends Core_Worker_Mediator
                 throw new Exception("$call->method() is Not Callable.");
         }
     }
+
+    public function inline() {
+        call_user_func_array($this->function, func_get_args());
+    }
 }

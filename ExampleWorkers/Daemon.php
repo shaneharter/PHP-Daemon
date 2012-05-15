@@ -44,15 +44,21 @@ class ExampleWorkers_Daemon extends Core_Daemon
         $that = $this;
 
         // Instantiate an App_Primes object as a Worker
-        // L oad 3 workers in the pool
-        // Allocate 10MB of shared memory to pass args to the workers and receive results back: If you omit this, it will use 1MB by default.
-        // By convention, workers are named in UpperCase
-        // Look at App_Prime to see the available methods. They are: sieve, is_prime, primes_among
+        // - Load 4 workers in the pool
+        // - Allocate 50MB of shared memory to pass args to the workers and receive results back: If you omit this, it will use 5MB by default.
+        //
+        //      It's VERY important to allocate enough shared memory: You should allocate enough memory that when a job returns it uses no more than 2%
+        //      of the allocation. Remember: When a call returns, the struct that is passed to your onReturn method contains the arguments passed to the worker
+        //      AND the return value. If both are large, you could easily end up needing 50, 100, 200MB of shared memory.
+        //      If you allocate to little memory, a WARNING will be logged to the Event log: Keep an eye out for it during your development process.
+        //
+        // - By convention, workers are named in UpperCase
+        // - Look at App_Prime to see the available methods. They are: sieve, is_prime, primes_among
 
         $this->worker('PrimeNumbers', new ExampleWorkers_Workers_Primes());
         $this->PrimeNumbers->timeout(60);
         $this->PrimeNumbers->workers(4);
-        $this->PrimeNumbers->malloc(10 * pow(2,20));
+        $this->PrimeNumbers->malloc(30 * 1024 * 1024);
 
         $this->PrimeNumbers->onReturn(function($call) use($that) {
             $that->log("Prime Number {$call->method} Complete");
@@ -85,8 +91,10 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
 
         // Add a GetFactors Function as a Named Worker
-        // It will accept a single integer and return all of its factors.
-        // In the Return handler, we are using the PrimeNumbers worker to return all the items from the getFactors result that are also prime numbers.
+        // - It will accept a single integer and return all of its factors.
+        // - Load 2 workers in the pool
+        // - Leave the memory allocation at the default: We will not be passing very much data back-and-forth.
+        // - In the Return handler, we are using the PrimeNumbers worker to return all the items from the getFactors result that are also prime numbers.
         $this->worker('GetFactors', function($integer)  {
             if (!is_integer($integer))
                 throw new Exception('Invalid Input! Expected Integer. Given: ' . gettype($integer));
@@ -203,7 +211,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
             else
                 $this->log("Job Failed.");
 
-            if ($sql)
+            if (isset($sql))
                 if (false == mysqli_query($this->db, $sql))
                     $this->reconnect_db($sql);
 

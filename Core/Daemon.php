@@ -534,9 +534,7 @@ abstract class Core_Daemon
                 $this->workers = $this->worker_pids = $this->plugins = array();
 
                 if ($run_setup) {
-                    $this->log("Running Setup in forked PID " . $this->pid . ($worker ? ' worker ' . $worker : ''));
                     $this->setup();
-
                     if ($worker) {
                         $this->{$worker}->is_parent = false;
                         $this->{$worker}->setup();
@@ -585,7 +583,7 @@ abstract class Core_Daemon
 
         try
         {
-            $header = "Date                  PID   LABEL        Message\n";
+            $header = "\nDate                  PID   LABEL        Message\n";
             $date = date("Y-m-d H:i:s");
             $pid = str_pad($this->pid, 5, " ", STR_PAD_LEFT);
             $label = str_pad(substr($label, 0, 12), 12, " ", STR_PAD_RIGHT);
@@ -671,7 +669,9 @@ abstract class Core_Daemon
                 break;
             case SIGINT:
             case SIGTERM:
-                $this->log("Shutdown Signal Received\n");
+                if ($this->is_parent)
+                    $this->log("Shutdown Signal Received\n");
+
                 $this->shutdown = true;
                 break;
             default:

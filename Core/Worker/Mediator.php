@@ -4,6 +4,27 @@
  * Use message queues and shared memory to coordinate worker processes and return work product to the daemon.
  * Uses system v message queues because afaik there's no existing PHP implementation of posix  queues.
  *
+ * At a high level, workers are implemented using a Mediator pattern. When a worker is created (by passing a Callable or
+ * an instance of Core_IWorkerInterface to the Core_Daemon::worker() method) the Daemon creates a Mediator instance and
+ * passes-in the worker.
+ *
+ * When worker methods are called the Daemon is actually interacting with the Mediator instance. Calls are serialized in
+ * a very simple proprietary serialization format (to avoid any additional dependencies) and dispatched to worker processes.
+ * The Mediator is responsible for keeping worker processes running, mediating calls and returns, and enforcing timeouts on jobs.
+ *
+ * The daemon does have the option of disintermediating work by calling methods directly on the worker object. If a worker
+ * alias was Acme, a disintermediated call to doSomething() from the Daemon execute() method would look like:
+ * @example $this->Acme->inline()->doSomething();   // Call doSomething() in-process (blocking)
+ *
+ * And if Acme was a Function worker it would work in a similar way:
+ * @example $this->Acme->inline();
+ *
+ *
+ * @todo A health-check feature that will listen for a Usr signal and dump vital stats (number of calls, average
+ *       duration, average wait, etc) and most importantly make data-driven advice about the suggested memory allocation
+ *       and number of workers. It's very hard for a novice to have any feeling for those things and they are vital to
+ *       having a worker that runs flawlessly.
+ *
  * @author Shane Harter
  */
 abstract class Core_Worker_Mediator
@@ -192,6 +213,13 @@ abstract class Core_Worker_Mediator
     protected $memory_allocation;
 
     /**
+     * Under-allocated shared memory is perhaps the largest possible cause of Worker failures, so if the Mediator believes
+     * the memory is under-allocated it will set this variable and write the warning to the event log
+     * @var Boolean
+     */
+    protected $memory_allocation_warning = false;
+
+    /**
      * The ID of this worker pool -- used to address shared IPC resources
      * @var int
      */
@@ -275,7 +303,7 @@ abstract class Core_Worker_Mediator
             $this->calls = $this->calls_archive = $this->processes = $this->running_calls = array();
             $this->ipc_create();
             $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'signal'));
-            $this->log('Worker Process Started...');
+            $this->log('Worker Process Started');
         }
 
         if (!is_resource($this->queue))
@@ -338,9 +366,10 @@ abstract class Core_Worker_Mediator
     }
 
     /**
-     * Remove and Reset any data in shared resources. A "Hard Reset" of the queue. In normal operation, this happens every
-     * time you restart the daemon. To preserve any buffered calls and try to pick them up where they left off, you can
-     * start a daemon with a --recoverworkers flag.
+     * Remove and Reset any data in shared resources left over from previous instances of the Daemon.
+     * In normal operation, this happens every time you restart the daemon.
+     * To preserve the data and pick up where you left off, you can start a daemon with the --recoverworkers flag.
+     * Note: Doing so can sometimes cause problems if the cause of the daemon restart was a broken/flawed call.
      * @param bool $mq   Destroy the message queue?
      * @param bool $shm  Destroy the shared memory?
      * @return void
@@ -655,41 +684,60 @@ abstract class Core_Worker_Mediator
             return;
 
         try {
-            $message_type = $message = $message_error = null;
-            if (msg_receive($this->queue, self::WORKER_RUNNING, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
-                $call_id = $this->message_decode($message);
-                $this->running_calls[$call_id] = true;
-                $this->log('Job ' . $call_id . ' Is Running');
-            } else {
+
+            while(true) {
+                $message_type = $message = $message_error = null;
+                if (msg_receive($this->queue, self::WORKER_RUNNING, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
+                    $call_id = $this->message_decode($message);
+                    $this->running_calls[$call_id] = true;
+                    $this->log('Job ' . $call_id . ' Is Running');
+                    continue;
+                }
+
                 $this->ipc_error($message_error);
+                break;
             }
 
-            $message_type = $message = $message_error = null;
-            if (msg_receive($this->queue, self::WORKER_RETURN, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
-                $call_id = $this->message_decode($message);
-                $call = $this->calls[$call_id];
+            while(true) {
+                $message_type = $message = $message_error = null;
+                if (msg_receive($this->queue, self::WORKER_RETURN, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
+                    $call_id = $this->message_decode($message);
+                    $call = $this->calls[$call_id];
 
-                unset($this->running_calls[$call_id]);
+                    unset($this->running_calls[$call_id]);
 
-                $on_return = $this->on_return; // Callbacks have to be in a local variable...
-                if (is_callable($on_return))
-                    call_user_func($on_return, $call);
-                else
-                    $this->log('No onReturn Callback Available');
+                    $on_return = $this->on_return;
+                    if (is_callable($on_return))
+                        call_user_func($on_return, $call);
+                    else
+                        $this->log('No onReturn Callback Available');
 
-                $this->log('Job ' . $call_id . ' Is Complete');
-            } else {
+                    if (!$this->memory_allocation_warning && $call->size > ($this->memory_allocation / 50)) {
+                        $this->memory_allocation_warning = true;
+                        $suggested_size = $call->size * 60;
+                        $this->log("WARNING: The memory allocated to this worker is too low and may lead to failures and fatal out-of-shared-memory errors.\n".
+                                   "         Based on this job, the memory allocation should be no less than {$suggested_size} bytes. Current allocation: {$this->memory_allocation} bytes.");
+                    }
+
+                    $this->log('Job ' . $call_id . ' Is Complete');
+                    continue;
+                }
+
                 $this->ipc_error($message_error);
+                break;
             }
 
             // Enforce Timeouts
             // Timeouts will either be simply that the worker is taking longer than expected to return the call,
-            // or the worker actually fatal-errored and killed itself. We could build a mechanism that's triggered on
-            // reap but for simplicity, fatal errors are treated as timeouts. We need to
+            // or the worker actually fatal-errored and killed itself.
             if ($this->timeout > 0) {
                 $now = microtime(true);
                 foreach(array_keys($this->running_calls) as $call_id) {
                     $call = $this->calls[$call_id];
+
+                    if (!isset($this->calls[$call_id]))
+                        $this->log("Runnings calls has {$call_id} but it's not in Calls...");
+
                     if (isset($call->time[self::RUNNING]) && $now > ($call->time[self::RUNNING] + $this->timeout)) {
                         @posix_kill($call->pid, SIGKILL);
                         unset($this->running_calls[$call_id], $this->processes[$call->pid]);
@@ -703,9 +751,8 @@ abstract class Core_Worker_Mediator
                 }
             }
 
-            // If we've killed all our processes -- either timeouts or maybe they fatal-errored, and we have pending calls
-            // in the queue, create process(es) to run them. Not perfect -- it's possible the messages are Ack's and not Calls
-            // But since we just read all the Ack's at the top of this method, that's unlikely
+            // If we've killed all our processes -- either timeouts or maybe they fatal-errored -- and we have pending calls
+            // in the queue, create process(es) to run them.
             if (count($this->processes) == 0) {
                 $stat = $this->ipc_status();
                 if ($stat['messages'] > 0) {
@@ -720,14 +767,14 @@ abstract class Core_Worker_Mediator
 
     /**
      * Starts the event loop in the Forked process that will listen for messages
-     * Note: Run only in the child (forked) process
+     * Note: Runs only in the child (forked) process
      * @return void
      */
     public function start() {
         $count = 0;
         $pid = getmypid();
 
-        while($this->shutdown == false) {
+        while(!$this->is_parent && !$this->shutdown) {
             $message_type = $message = $message_error = null;
             if (msg_receive($this->queue, self::WORKER_CALL, $message_type, $this->memory_allocation, $message, true, 0, $message_error)) {
                 try {
@@ -745,6 +792,7 @@ abstract class Core_Worker_Mediator
 
                     $call->return = call_user_func_array($this->get_callback($call), $call->args);
                     $call->status = self::RETURNED;
+                    $call->size   = strlen(print_r($call, true));
                     if (!$this->message_encode($call_id)) {
                         $this->log("Call {$call_id} Could Not Ack Complete.");
                     }
@@ -802,7 +850,7 @@ abstract class Core_Worker_Mediator
      */
     protected function message_decode(Array $message) {
 
-        // Periodically garbage-collect call structs
+        // Periodically garbage-collect the local and shm $calls array
         if (mt_rand(1, 20) == 10)
             foreach ($this->calls as $item_id => $item)
                 if (in_array($item->status, array(self::UNCALLED, self::TIMEOUT, self::RETURNED))) {
@@ -812,6 +860,7 @@ abstract class Core_Worker_Mediator
 
                     $this->calls_archive[$item_id] = $item->status;
                     unset($this->calls[$item_id]);
+                    shm_remove_var($this->shm, $item_id);
                 }
 
         // Now get on with decoding the $message
@@ -861,6 +910,7 @@ abstract class Core_Worker_Mediator
         $call->id            = $this->call_count;
         $call->retries       = $retries;
         $call->errors        = $errors;
+        $call->size          = null;
         $this->calls[$call->id] = $call;
 
         try {
@@ -1112,7 +1162,7 @@ abstract class Core_Worker_Mediator
      * The memory used by a job is freed after a worker ack's the job as complete and the onReturn handler is called.
      * The total pool of memory allocated here is freed when:
      * 1) The daemon is stopped and no messages are left in the queue.
-     * 2) The daemon is started with a --resetworkers flag (In this case the memory is freed and released and then re-allocated.
+     * 2) The daemon is restarted without the --recoverworkers flag (In this case the memory is freed and released and then re-allocated.
      *    This is useful if you need to resize the shared memory the worker uses or you just want to purge any stale messages)
      *
      * Part of the Daemon API - Use from your Daemon to allocate shared memory used among all worker processes.
@@ -1128,7 +1178,7 @@ abstract class Core_Worker_Mediator
                 throw new Exception(__METHOD__ . " Failed. Could not set SHM allocation size. Expected Integer. Given: " . gettype($bytes));
 
             if (is_resource($this->shm))
-                throw new Exception(__METHOD__ . " Failed. Can Not Re-Allocate SHM Size. You will have to restart the daemon with the --resetworkers option to resize.");
+                throw new Exception(__METHOD__ . " Failed. Can Not Re-Allocate SHM Size. You will have to restart the daemon without the --recoverworkers option to resize.");
 
             $this->memory_allocation = $bytes;
         }
