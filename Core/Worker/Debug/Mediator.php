@@ -169,7 +169,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
     protected function call($method, Array $args, $retries=0, $errors=0) {
         $status = ($this->is_idle()) ? 'Realtime' : 'Queued';
         $prompt = ($method == 'execute') ? '' : "->{$method}";
-        $call_id = count($this->calls) + 2;
+        $call_id = $this->call_count + 1;
         $indent = ($call_id - 1) % self::INDENT_DEPTH;
         $indent = str_repeat("\t", $indent);
         if ($this->prompt("{$indent}[{$call_id}] Call to {$this->alias}{$prompt}()", $args))
@@ -235,13 +235,13 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
             };
         }
 
-        if (!$state('enabled') || $state("skip_$breakpoint"))
+        if ((!$state('enabled') || $state("skip_$breakpoint") || ($state('skip_until') !== null && $state('skip_until') > time())))
             return true;
 
         if (!$this->mutex_acquired) {
             $this->mutex_acquired = sem_acquire($this->mutex);
             // Just in case another process changed settings while we were waiting for the mutex...
-            if (!$state('enabled') || $state("skip_$breakpoint"))
+            if ((!$state('enabled') || $state("skip_$breakpoint") || ($state('skip_until') !== null && $state('skip_until') > time())))
                 return true;
         }
 
@@ -319,6 +319,12 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                     $message = "Signal Sent";
                 }
 
+                if (!$matches && preg_match('/^skipfor (\d+)/i', $input, $matches) == 1) {
+                    $time = time() + $matches[1];
+                    $state("skip_until", $time);
+                    $message = "Skipping Breakpoints for $matches[1] seconds. Will resume at " . date('H:i:s', $time);
+                }
+
                 if (!$matches && preg_match('/^call ([A-Z_0-9]+) (.*)?/i', $input, $matches) == 1) {
                     if (count($matches) == 3) {
                         $args = str_replace(',', ' ', $matches[2]);
@@ -366,11 +372,12 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                         $out[] = 'call [f] [a,b..]  Call a worker\'s function in the local process, passing remaining values as args. Return true: a "continue" will be implied. Non-true: keep you at the prompt';
                         $out[] = 'cleanipc          Clean all systemv resources including shared memory and message queues. Does not remove semaphores. REQUIRES CONFIRMATION.  ';
                         $out[] = 'end               End the debugging session, continue the daemon as normal.';
-                        $out[] = 'skip              Skip this breakpoint from now on.';
                         $out[] = 'eval [php]        Eval the supplied code. Passed to eval() as-is. Any return values will be printed. Run context is the Core_Worker_Mediator class.';
                         $out[] = 'help              Print This Help';
                         $out[] = 'indent [y|n]      When turned-on, indentation will be used to group messages from the same call in a column so you can easily match them together.';
                         $out[] = 'kill              Kill the daemon and all of its worker processes.';
+                        $out[] = 'skip              Skip this breakpoint from now on.';
+                        $out[] = 'skipfor [n]       Run the daemon (and skip ALL breakpoints) for N seconds, then return to normal break point operation.';
                         $out[] = 'show [n]          Display the Nth item in shared memory. If no ID is passed, `show` will show the shared memory header.';
                         $out[] = 'show args         Display any arguments that may have been passed at the breakpoint.';
                         $out[] = 'show local [n]    Display the Nth item in local memory - from the $this->calls array';
