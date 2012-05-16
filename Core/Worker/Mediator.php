@@ -102,18 +102,11 @@ abstract class Core_Worker_Mediator
     protected $methods = array();
 
     /**
-     * All Calls (Garbage collection will occur periodically)
-     * @var array
+     * All Calls
+     * A periodic garbage collection routine unsets ->args, ->return, leaving just the lightweight call meta-data behind
+     * @var array of stdClass objects
      */
     protected $calls = array();
-
-    /**
-     * The Calls array can get very large (since it stores the arguments passed-to and return values passed-from).
-     * So we garbage-collect Returned and Timed-Out items periodically to keep memory usage under control. When we do
-     * that we move the call_id and the status (but nothing else) to this archive array
-     * @var array
-     */
-    protected $calls_archive = array();
 
     /**
      * Call Counter - Used to assign keys in the local and shm $calls array
@@ -150,9 +143,12 @@ abstract class Core_Worker_Mediator
 
     /**
      * A handle to the IPC Shared Memory resource
+     * This should be a `protected` property but in a few instances in this class closures are used in a way that
+     * really makes a lot of sense and they need access. I think these issues will be fixed with the improvements
+     * to $this lexical scoping in PHP5.4
      * @var Resource
      */
-    protected $shm;
+    public $shm;
 
     /**
      * The number of allowed concurrent workers
@@ -300,7 +296,7 @@ abstract class Core_Worker_Mediator
             $this->shm_init();
 
         } else {
-            $this->calls = $this->calls_archive = $this->processes = $this->running_calls = array();
+            $this->calls = $this->processes = $this->running_calls = array();
             $this->ipc_create();
             $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'signal'));
             $this->log('Worker Process Started');
@@ -471,13 +467,21 @@ abstract class Core_Worker_Mediator
                 // If this is the parent, do some diagnostic checks and attempt correction.
                 usleep(20000);
 
-                // Test writing to shared memory using an array that should come to a few kilobytes.
-                for($i=0; $i<2; $i++) {
+                $that = $this;
+                $diagnostic = function() use($that) {
                     $arr = array_fill(0, 20, mt_rand(1000,1000 * 1000));
                     $key = mt_rand(1000 * 1000, 2000 * 1000);
-                    @shm_put_var($this->shm, $key, $arr);
+                    @shm_put_var($that->shm, $key, $arr);
 
-                    if (@shm_get_var($this->shm, $key) == $arr)
+                    if (@shm_get_var($that->shm, $key) == $arr)
+                        return true;
+
+                    return false;
+                };
+
+                // Test writing to shared memory using an array that should come to a few kilobytes.
+                for($i=0; $i<2; $i++) {
+                    if ($diagnostic())
                         return true;
 
                     // Re-attach the shared memory and try the diagnostic again
@@ -515,12 +519,7 @@ abstract class Core_Worker_Mediator
                         foreach($items_to_copy as $key => $value)
                             @shm_put_var($this->shm, $key, $value);
 
-                    // Run a simple diagnostic
-                    $arr = array_fill(0, 20, mt_rand(1000,1000 * 1000));
-                    $key = mt_rand(1000 * 1000, 2000 * 1000);
-                    @shm_put_var($this->shm, $key, $arr);
-
-                    if (@shm_get_var($this->shm, $key) != $arr) {
+                    if (!$diagnostic()) {
                         if (empty($items_to_copy)) {
                             $this->fatal_error("Shared Memory Failure: Unable to proceed.");
                         } else {
@@ -685,6 +684,13 @@ abstract class Core_Worker_Mediator
 
         try {
 
+            // If there are any callbacks registered (onReturn, onTimeout, etc), we will pass
+            // the $call struct to them and this $logger closure
+            $that = $this;
+            $logger = function($message) use($that) {
+                $that->log($message);
+            };
+
             while(true) {
                 $message_type = $message = $message_error = null;
                 if (msg_receive($this->queue, self::WORKER_RUNNING, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
@@ -708,7 +714,7 @@ abstract class Core_Worker_Mediator
 
                     $on_return = $this->on_return;
                     if (is_callable($on_return))
-                        call_user_func($on_return, $call);
+                        call_user_func($on_return, $call, $logger);
                     else
                         $this->log('No onReturn Callback Available');
 
@@ -734,18 +740,15 @@ abstract class Core_Worker_Mediator
                 $now = microtime(true);
                 foreach(array_keys($this->running_calls) as $call_id) {
                     $call = $this->calls[$call_id];
-
-                    if (!isset($this->calls[$call_id]))
-                        $this->log("Runnings calls has {$call_id} but it's not in Calls...");
-
                     if (isset($call->time[self::RUNNING]) && $now > ($call->time[self::RUNNING] + $this->timeout)) {
+                        $this->log("Enforcing Timeout on Call $call_id in pid " . $call->pid);
                         @posix_kill($call->pid, SIGKILL);
                         unset($this->running_calls[$call_id], $this->processes[$call->pid]);
                         $call->status = self::TIMEOUT;
 
                         $on_timeout = $this->on_timeout;
                         if (is_callable($on_timeout))
-                            call_user_func($on_timeout, $call);
+                            call_user_func($on_timeout, $call, $logger);
 
                     }
                 }
@@ -786,6 +789,7 @@ abstract class Core_Worker_Mediator
 
                     $call->pid = $pid;
                     $call->status = self::RUNNING;
+                    $call->time[self::RUNNING] = microtime(true);
                     if (!$this->message_encode($call_id)) {
                         $this->log("Call {$call_id} Could Not Ack Running.");
                     }
@@ -793,6 +797,7 @@ abstract class Core_Worker_Mediator
                     $call->return = call_user_func_array($this->get_callback($call), $call->args);
                     $call->status = self::RETURNED;
                     $call->size   = strlen(print_r($call, true));
+                    $call->time[self::RETURNED] = microtime(true);
                     if (!$this->message_encode($call_id)) {
                         $this->log("Call {$call_id} Could Not Ack Complete.");
                     }
@@ -825,17 +830,39 @@ abstract class Core_Worker_Mediator
             self::RETURNED  => self::WORKER_RETURN
         );
 
-        $call->time[$call->status] = microtime(true);
+        $that = $this;
+        switch($call->status) {
+            case self::UNCALLED:
+            case self::RETURNED:
+                $encoder = function($call) use ($that) {
+                    shm_put_var($that->shm, $call->id, $call);
+                    return shm_has_var($that->shm, $call->id);
+                };
+                break;
+
+            default:
+                $encoder = function($call) {
+                    return true;
+                };
+        }
 
         $error_code = null;
-        if (shm_put_var($this->shm, $call->id, $call) && shm_has_var($this->shm, $call->id)) {
-            $message = array('call' => $call->id, 'status' => $call->status);
+        if ($encoder($call)) {
+
+            $message = array (
+                'call_id'   => $call->id,
+                'status'    => $call->status,
+                'microtime' => $call->time[$call->status],
+                'pid'       => $this->daemon->pid(),
+            );
+
             if (msg_send($this->queue, $queue_lookup[$call->status], $message, true, false, $error_code)) {
                 return true;
             }
         }
 
         if ($this->ipc_error($error_code) && $call->errors++ < 3) {
+            $this->log("Message Encode Failed for call_id {$call_id}: Retrying.");
             return $this->message_encode($call_id);
         }
 
@@ -851,39 +878,45 @@ abstract class Core_Worker_Mediator
     protected function message_decode(Array $message) {
 
         // Periodically garbage-collect the local and shm $calls array
-        if (mt_rand(1, 20) == 10)
+        if (mt_rand(1, 50) == 10)
             foreach ($this->calls as $item_id => $item)
-                if (in_array($item->status, array(self::UNCALLED, self::TIMEOUT, self::RETURNED))) {
-                    // Give UNCALLED items 30 seconds before we consider them eligible for garbage collection
-                    if ($item->status == self::UNCALLED && (time() - $item->time[0]) < 30)
-                        continue;
-
-                    $this->calls_archive[$item_id] = $item->status;
-                    unset($this->calls[$item_id]);
-                    shm_remove_var($this->shm, $item_id);
+                if (!$item->gc && in_array($item->status, array(self::TIMEOUT, self::RETURNED))) {
+                    unset($this->calls[$item_id]->args, $this->calls[$item_id]->return);
+                    $this->calls[$item_id]->gc = true;
+                    if (shm_has_var($this->shm, $item_id))
+                        shm_remove_var($this->shm, $item_id);
                 }
 
+        $that = $this;
+        switch($message['status']) {
+            case self::UNCALLED:
+            case self::RETURNED:
+                $decoder = function($message) use($that) {
+                    return shm_get_var($that->shm, $message['call_id']);
+                };
+                break;
+
+            default:
+                $decoder = function($message) use($that) {
+                    $call = $that->_call($message['call_id']);
+                    $call->status               = $message['status'];
+                    $call->time[$call->status]  = $message['microtime'];
+                    $call->pid                  = $message['pid'];
+                    return $call;
+                };
+        }
+
         // Now get on with decoding the $message
-        $call = null;
         $tries = 0;
         do {
-            if ($call_id = $message['call']) {
-                $call = shm_get_var($this->shm, $call_id);
-            }
-        } while($call_id && empty($call) && $this->ipc_error(null) && $tries++ < 3);
+            $call = $decoder($message);
+        } while(empty($call) && $this->ipc_error(null) && $tries++ < 3);
 
         if (!is_object($call))
-            throw new Exception(__METHOD__ . " Failed. Expected stdClass object in {$this->id}:{$call_id}. Given: " . gettype($call));
+            throw new Exception(__METHOD__ . " Failed. Expected stdClass object in {$this->id}:{$call->id}. Given: " . gettype($call));
 
-        $this->calls[$call_id] = $call;
-
-        // If the message status matches the status of the object in memory, we know there aren't any more queued messages
-        // presently that will be using the shared memory. This works because we enforce strict ordering: We first
-        // read any running acks from the queue, then we read the complete acks.
-        if ($call->status == $message['status'])
-            shm_remove_var($this->shm, $call_id);
-
-        return $call_id;
+        $this->calls[$call->id] = $call;
+        return $call->id;
     }
 
     /**
@@ -911,11 +944,13 @@ abstract class Core_Worker_Mediator
         $call->retries       = $retries;
         $call->errors        = $errors;
         $call->size          = null;
+        $call->gc            = false;
         $this->calls[$call->id] = $call;
 
         try {
             if ($this->message_encode($call->id)) {
                 $call->status = self::CALLED;
+                $call->time[self::CALLED] = microtime(true);
                 $this->fork();
                 return $call->id;
             }
@@ -923,6 +958,9 @@ abstract class Core_Worker_Mediator
             $this->log('Call Failed: ' . $e->getMessage(), true);
         }
 
+        // The call failed -- args could be big so trim it back proactively, leaving
+        // the call metadata the same way the GC process works
+        $call->args = null;
         return false;
     }
 
@@ -939,6 +977,19 @@ abstract class Core_Worker_Mediator
      */
     public function prompt($prompt, $args = null, Closure $on_interrupt = null) {
         return true;
+    }
+
+    /**
+     * Hack to work around deficient $this lexical scoping in PHP5.3 closures. Gives closures used in various
+     * methods herein access to the $calls array. Hopefully can get rid of this when we move to require PHP5.4
+     * @param integer $call_id
+     * @return stdClass
+     */
+    public function _call($call_id) {
+        if (isset($this->calls[$call_id]))
+            return $this->calls[$call_id];
+
+        return null;
     }
 
     /**
@@ -1059,9 +1110,6 @@ abstract class Core_Worker_Mediator
     public function status($call_id) {
         if (isset($this->calls[$call_id]))
             return $this->calls[$call_id]->status;
-
-        if (isset($this->calls_archive[$call_id]))
-            return $this->calls_archive[$call_id];
 
         return null;
     }

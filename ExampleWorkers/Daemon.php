@@ -60,30 +60,28 @@ class ExampleWorkers_Daemon extends Core_Daemon
         $this->PrimeNumbers->workers(4);
         $this->PrimeNumbers->malloc(30 * 1024 * 1024);
 
-        $this->PrimeNumbers->onReturn(function($call) use($that) {
-            $that->log("Prime Number {$call->method} Complete");
+        $this->PrimeNumbers->onReturn(function($call, $log) use($that) {
+            $log("Job {$call->id} to {$call->method}() Complete");
 
             switch($call->method) {
                 case "sieve":
-                    $that->log( sprintf('Return: There are %s items in the resultset, from %s to %s.', count($call->return), $call->return[0], $call->return[count($call->return)-1])  );
+                    $log( sprintf('Return: There are %s items in the resultset, from %s to %s.', count($call->return), $call->return[0], $call->return[count($call->return)-1])  );
                     break;
 
                 case "primes_among":
-                    $that->log(sprintf('Return. Among [%s], Primes Are [%s]', implode(', ', $call->args[0]), implode(', ', $call->return)));
+                    $log(sprintf('Return. Among [%s], Primes Are [%s]', implode(', ', $call->args[0]), implode(', ', $call->return)));
             }
 
             $that->job_return($call);
         });
 
-        $this->PrimeNumbers->onTimeout(function($call) use($that) {
-            $that->log("Job Timed Out!");
-            $that->log("Method: " . $call->method);
-
+        $this->PrimeNumbers->onTimeout(function($call, $log) use($that) {
+            $log("Job {$call->id} Timed Out!");
             if ($call->retries < 3) {
-                $that->log("Retrying...");
+                $log("Retrying...");
                 $that->PrimeNumbers->retry($call);
             } else {
-                $that->log("Retries Concluded. I Give Up.");
+                $log("Retries Concluded. I Give Up.");
             }
 
             $that->job_timeout($call);
@@ -94,7 +92,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
         // - It will accept a single integer and return all of its factors.
         // - Load 2 workers in the pool
         // - Leave the memory allocation at the default: We will not be passing very much data back-and-forth.
-        // - In the Return handler, we are using the PrimeNumbers worker to return all the items from the getFactors result that are also prime numbers.
+        // - In the Return handler, we are using the PrimeNumbers worker to determine the prime factors.
         $this->worker('GetFactors', function($integer)  {
             if (!is_integer($integer))
                 throw new Exception('Invalid Input! Expected Integer. Given: ' . gettype($integer));
@@ -109,13 +107,20 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
         $this->GetFactors->timeout(60);
         $this->GetFactors->workers(2);
-        $this->GetFactors->onReturn(function($call) use($that) {
-            $that->log("Factoring Complete for `{$call->args[0]}`");
-            $that->log("Factors: " . count($call->return));
+        $this->GetFactors->onReturn(function($call, $log) use($that) {
+            $log("Factoring Complete for `{$call->args[0]}`");
+            $log("Factors: " . count($call->return));
 
             if (count($call->return)) {
-                $that->log("Finding Prime Factors...");
-                $that->PrimeNumbers->primes_among($call->return);
+                $log("Finding Prime Factors");
+                $job = $that->PrimeNumbers->primes_among($call->return);
+                if ($job)
+                    $sql = sprintf('INSERT INTO jobs (pid, job, worker) values(%s, %s, "%s")', $that->pid(), $job, 'primes_among');
+                else
+                    $log("Job Failed: Finding Prime Factors");
+
+                if (false == mysqli_query($that->db, $sql))
+                    $that->reconnect_db($sql);
             }
 
             $that->job_return($call);
@@ -165,17 +170,19 @@ class ExampleWorkers_Daemon extends Core_Daemon
     protected function execute()
     {
         // Run our Factor and Prime workers randomly and in response to signals
-        switch (mt_rand(1, 10)) {
+        switch (mt_rand(1, 20)) {
             case 2:
             case 3:
             case 4:
+            case 5:
+            case 6:
                 $this->run_getfactors = $this->auto_run;
                 break;
 
-            case 5:
+            case 7:
                 $this->run_getfactors = $this->auto_run;
 
-            case 6:
+            case 8:
                 $this->run_sieve = $this->auto_run;
                 break;
         }
