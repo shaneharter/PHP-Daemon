@@ -135,7 +135,7 @@ while(true) {
                 out("Setting PID From Shortcut: {$pid}");
                 continue;
 
-            case (is_numeric($input) && $input < 40000 && $input > 1):
+            case !$pid && (is_numeric($input) && $input < 40000 && $input > 1):
                 // On linux systems, easily verify if the pid is valid by looking for the process in the /proc directory
                 if (file_exists("/proc") && !file_exists("/proc/$input"))
                     throw new Exception("Pid `$input` Does Not Exist");
