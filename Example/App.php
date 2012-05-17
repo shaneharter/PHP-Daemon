@@ -43,14 +43,11 @@ class Example_App extends Core_Daemon
 	/**
 	 * This is where you implement the tasks you want your daemon to perform. 
 	 * This method is called at the frequency defined by loop_interval. 
-	 * If this method takes longer than 90% of the loop_interval, a Warning will be raised. 
-	 * 
+	 *
 	 * @return void
 	 */
 	protected function execute()
 	{
-
-
 		// The Ini plugin implements the SPL ArrayAccess interface, so in your execute() method you can access the data like this:
 		$example_key = $this->ini['example_section']['example_key'];
 					

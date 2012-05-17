@@ -1,9 +1,11 @@
 <?php
 /**
- * Overlays a debug console so you can introspect and direct the inter-process communication between workers.
+ * Starts a debug console so you can introspect and direct the inter-process communication between workers.
  * Essentially sets "break points" each time a process is forked or messages are passed to/from it.
  * You can use the debug console to step forward, throw an exception, continue and turn off debugging, kill the
- * running daemon, and use several introspection and information commands.
+ * running daemon, and use several introspection and information commands. You can easily set breakpoints in your
+ * workers by calling `$this->mediator->prompt("label")` from your worker class (For function-based workers, you
+ * can pass the worker into the function as an argument and call prompt() on it)
  *
  * When we move to PHP 5.4 later in 2012, this functionality will be re-implemented as a mix-in. It really shouldn't
  * be in the inheritance chain and it does cause problems. I don't want this code to be executed at all when the

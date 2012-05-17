@@ -61,24 +61,25 @@ class ExampleWorkers_Daemon extends Core_Daemon
         $this->PrimeNumbers->malloc(30 * 1024 * 1024);
 
         $this->PrimeNumbers->onReturn(function($call, $log) use($that) {
-            $log("Job {$call->id} to {$call->method}() Complete");
 
+            // Log the results of the call to the event log
+            $log("Job {$call->id} to {$call->method}() Complete");
             switch($call->method) {
                 case "sieve":
-                    $log( sprintf('Return: There are %s items in the resultset, from %s to %s.', count($call->return), $call->return[0], $call->return[count($call->return)-1])  );
+                    $log(sprintf('Return: There are %s items in the resultset, from %s to %s.', count($call->return), $call->return[0], $call->return[count($call->return)-1])  );
                     break;
 
                 case "primes_among":
                     $log(sprintf('Return. Among [%s], Primes Are [%s]', implode(', ', $call->args[0]), implode(', ', $call->return)));
             }
 
+            // Update MySQL with the results of this call
             $that->job_return($call);
         });
 
         $this->PrimeNumbers->onTimeout(function($call, $log) use($that) {
             $log("Job {$call->id} Timed Out!");
             if ($call->retries < 3) {
-                $log("Retrying...");
                 $that->PrimeNumbers->retry($call);
             } else {
                 $log("Retries Concluded. I Give Up.");
@@ -108,8 +109,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
         $this->GetFactors->timeout(60);
         $this->GetFactors->workers(2);
         $this->GetFactors->onReturn(function($call, $log) use($that) {
-            $log("Factoring Complete for `{$call->args[0]}`");
-            $log("Factors: " . count($call->return));
+            $log(sprintf('Return: %s has %s factors', $call->args[0], count($call->return)));
 
             if (count($call->return)) {
                 $log("Finding Prime Factors");
@@ -117,7 +117,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
                 if ($job)
                     $sql = sprintf('INSERT INTO jobs (pid, job, worker) values(%s, %s, "%s")', $that->pid(), $job, 'primes_among');
                 else
-                    $log("Job Failed: Finding Prime Factors");
+                    $log("Call Failed");
 
                 if (false == mysqli_query($that->db, $sql))
                     $that->reconnect_db($sql);
@@ -126,7 +126,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
             $that->job_return($call);
         });
 
-        $this->GetFactors->onTimeout(function($call) use($that) {
+        $this->GetFactors->onTimeout(function($call, $log) use($that) {
             $that->job_timeout($call);
         });
     }

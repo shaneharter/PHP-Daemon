@@ -583,10 +583,10 @@ abstract class Core_Daemon
 
         try
         {
-            $header = "\nDate                  PID   LABEL        Message\n";
+            $header = "\nDate                  PID   LABEL         Message\n";
             $date = date("Y-m-d H:i:s");
             $pid = str_pad($this->pid, 5, " ", STR_PAD_LEFT);
-            $label = str_pad(substr($label, 0, 12), 12, " ", STR_PAD_RIGHT);
+            $label = str_pad(substr($label, 0, 12), 13, " ", STR_PAD_RIGHT);
             $prefix = "[$date] $pid $label";
 
             if ($handle === false) {

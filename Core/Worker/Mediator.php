@@ -411,17 +411,25 @@ abstract class Core_Worker_Mediator
     /**
      * Handle IPC Errors
      * @param $error_code
+     * @param int $try    Inform ipc_error of repeated failures of the same $error_code
      * @return boolean  Returns true if the operation should be retried.
      */
-    protected function ipc_error($error_code) {
+    protected function ipc_error($error_code, $try=1) {
 
         static $error_count = 0;
 
-        // The cost and risk of restarting a worker process is lower than restarting the daemon
+        // At some point we need to bubble-up failures to the Daemon level and log a Daemon error and restart
+        // Use a more liberal threshold for workers which are designed to be discarded and re-spawned easily.
         if ($this->is_parent)
-            $error_threshold = 50;
+            $error_threshold = 25;
         else
             $error_threshold = 10;
+
+        // Most of the error handling strategy is simply: Sleep for a moment and try again.
+        // We use a simple back-off strategy: starting with 2 seconds, it would increase to 8, then 16, etc
+        $backoff = function($delay) use ($try) {
+            return $delay * pow(2, min($try, 1));
+        };
 
         switch($error_code) {
             case 0:             // Success
@@ -430,7 +438,7 @@ abstract class Core_Worker_Mediator
             case MSG_EAGAIN:    // Temporary Problem, Try Again
 
                 // Ignored Errors
-                usleep(20000);
+                usleep($backoff(20000));
                 return true;
                 break;
 
@@ -442,9 +450,9 @@ abstract class Core_Worker_Mediator
                 // Identifier Removed
                 // A message queue was re-created at this address but the resource identifier we have needs to be re-created
                 if ($this->is_parent)
-                    usleep(20000);
+                    usleep($backoff(20000));
                 else
-                    sleep(3);
+                    sleep($backoff(2));
 
                 $this->ipc_create();
                 return true;
@@ -459,29 +467,26 @@ abstract class Core_Worker_Mediator
                 // If this is a worker, all we can do is try to re-attach the shared memory.
                 // Any corruption or OOM errors will be handled by the parent exclusively.
                 if (!$this->is_parent) {
-                    sleep(3);
+                    sleep($backoff(3));
                     $this->ipc_create();
                     return true;
                 }
 
                 // If this is the parent, do some diagnostic checks and attempt correction.
-                usleep(20000);
+                usleep($backoff(20000));
 
                 $that = $this;
-                $diagnostic = function() use($that) {
-                    $arr = array_fill(0, 20, mt_rand(1000,1000 * 1000));
+                $test = function() use($that) {
+                    $arr = array_fill(0, mt_rand(10, 100), mt_rand(1000, 1000 * 1000));
                     $key = mt_rand(1000 * 1000, 2000 * 1000);
                     @shm_put_var($that->shm, $key, $arr);
-
-                    if (@shm_get_var($that->shm, $key) == $arr)
-                        return true;
-
-                    return false;
+                    usleep(5000);
+                    return @shm_get_var($that->shm, $key) == $arr;
                 };
 
                 // Test writing to shared memory using an array that should come to a few kilobytes.
                 for($i=0; $i<2; $i++) {
-                    if ($diagnostic())
+                    if ($test())
                         return true;
 
                     // Re-attach the shared memory and try the diagnostic again
@@ -519,7 +524,7 @@ abstract class Core_Worker_Mediator
                         foreach($items_to_copy as $key => $value)
                             @shm_put_var($this->shm, $key, $value);
 
-                    if (!$diagnostic()) {
+                    if (!$test()) {
                         if (empty($items_to_copy)) {
                             $this->fatal_error("Shared Memory Failure: Unable to proceed.");
                         } else {
@@ -541,9 +546,9 @@ abstract class Core_Worker_Mediator
 
                 $error_count++;
                 if ($this->is_parent)
-                    usleep(20000);
+                    usleep($backoff(20000));
                 else
-                    sleep(3);
+                    sleep($backoff(3));
 
                 if ($error_count > $error_threshold) {
                     $this->fatal_error("IPC Error Threshold Reached");
@@ -861,7 +866,8 @@ abstract class Core_Worker_Mediator
             }
         }
 
-        if ($this->ipc_error($error_code) && $call->errors++ < 3) {
+        $call->errors++;
+        if ($this->ipc_error($error_code, $call->errors) && $call->errors < 3) {
             $this->log("Message Encode Failed for call_id {$call_id}: Retrying.");
             return $this->message_encode($call_id);
         }
@@ -907,13 +913,13 @@ abstract class Core_Worker_Mediator
         }
 
         // Now get on with decoding the $message
-        $tries = 0;
+        $tries = 1;
         do {
             $call = $decoder($message);
-        } while(empty($call) && $this->ipc_error(null) && $tries++ < 3);
+        } while(empty($call) && $this->ipc_error(null, $tries) && $tries++ < 3);
 
         if (!is_object($call))
-            throw new Exception(__METHOD__ . " Failed. Expected stdClass object in {$this->id}:{$call->id}. Given: " . gettype($call));
+            throw new Exception(__METHOD__ . " Failed. Could Not Decode Message: " . print_r($message, true));
 
         $this->calls[$call->id] = $call;
         return $call->id;
@@ -921,33 +927,14 @@ abstract class Core_Worker_Mediator
 
     /**
      * Mediate all calls to methods on the contained $object and pass them to instances of $object running in the background.
-     * @param string $method
-     * @param array $args
-     * @param int $retries
+     * @param stdClass $call
      * @return A unique identifier for the call (unique to this execution only. After a restart the worker re-uses call IDs) OR false on error.
      *         Can be passed to the status() method for call status
-     * @throws Exception
      */
-    protected function call($method, Array $args, $retries=0, $errors=0) {
-
-        if (!in_array($method, $this->methods))
-            throw new Exception(__METHOD__ . " Failed. Method `{$method}` is not callable.");
-
-        $this->call_count++;
-        $call = new stdClass();
-        $call->method        = $method;
-        $call->args          = $args;
-        $call->status        = self::UNCALLED;
-        $call->time          = array(microtime(true));
-        $call->pid           = null;
-        $call->id            = $this->call_count;
-        $call->retries       = $retries;
-        $call->errors        = $errors;
-        $call->size          = null;
-        $call->gc            = false;
-        $this->calls[$call->id] = $call;
+    protected function call(stdClass $call) {
 
         try {
+            $this->calls[$call->id] = $call;
             if ($this->message_encode($call->id)) {
                 $call->status = self::CALLED;
                 $call->time[self::CALLED] = microtime(true);
@@ -1000,7 +987,24 @@ abstract class Core_Worker_Mediator
      * @throws Exception
      */
     public function __call($method, $args) {
-        return $this->call($method, $args);
+
+        if (!in_array($method, $this->methods))
+            throw new Exception(__METHOD__ . " Failed. Method `{$method}` is not callable.");
+
+        $this->call_count++;
+        $call = new stdClass();
+        $call->method        = $method;
+        $call->args          = $args;
+        $call->status        = self::UNCALLED;
+        $call->time          = array(microtime(true));
+        $call->pid           = null;
+        $call->id            = $this->call_count;
+        $call->retries       = 0;
+        $call->errors        = 0;
+        $call->size          = null;
+        $call->gc            = false;
+
+        return $this->call($call);
     }
 
     /**
@@ -1008,7 +1012,7 @@ abstract class Core_Worker_Mediator
      * @return bool
      */
     public function __invoke() {
-        return $this->call('execute', func_get_args());
+        return $this->__call('execute', func_get_args());
     }
 
     /**
@@ -1094,8 +1098,12 @@ abstract class Core_Worker_Mediator
         if (empty($call->method))
             throw new Exception(__METHOD__ . " Failed. A valid call struct is required.");
 
+        $call->status = self::UNCALLED;
+        $call->time = array(microtime(true));
+        $call->retries++;
+
         $this->log("Retrying Call {$call->id} To `{$call->method}`");
-        return $this->call($call->method, $call->args, ++$call->retries);
+        return $this->call($call);
     }
 
     /**

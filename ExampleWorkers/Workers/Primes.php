@@ -66,7 +66,6 @@ class ExampleWorkers_Workers_Primes implements Core_IWorkerInterface
     }
 
     public function sieve($start, $end) {
-
         $primes = array();
 
         // The sieve is designed to work from 3 and above.
@@ -83,6 +82,8 @@ class ExampleWorkers_Workers_Primes implements Core_IWorkerInterface
             $start = 3;
         }
 
+        // This is an example of how you can add in custom breakpoints that will be active when you run
+        // your daemon with the --debugworkers flag set.
         $this->mediator->prompt("Something Is Happeneing in sieve! Oh Noes!", array($start, $end));
 
         for ($i = $start; $i <= $end; $i++)
