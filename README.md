@@ -2,8 +2,6 @@
 
 Create solid, long-running PHP daemon processes by extending this Core_Daemon base class. Use a built-in timer to run your `execute()` method at every-second or sub-second intervals, or use blocking APIs in the event loop `Core_Daemon` provides. Build simple single-process applications or create background workers using familiar async patterns for parallel processing. Includes an integrated debug console and tooling to create a first-class development experience.
 
-I've built and deployed a large number of mission-critical daemons using this library.
-
 
 #### Requires: ###
 * PHP 5.3 or Higher
