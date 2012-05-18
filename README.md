@@ -1,6 +1,6 @@
 # PHP Simple Daemon #
 
-Create solid, long-running PHP daemon processes by extending this Core_Daemon base class. Use a built-in timer to run your `execute()` method at every-second or sub-second intervals, or use blocking APIs in the event loop `Core_Daemon` provides. Build simple single-process applications or create background workers using familiar async patterns for parallel processing. Includes an integrated debug console and tooling to create a first-class development experience.
+Create solid, long-running PHP daemon processes by extending the Core_Daemon class. Use a built-in timer to run your `execute()` method in second or sub-second intervals, or use blocking APIs in the event loop `Core_Daemon` provides. Build simple single-process applications or create background workers using familiar async patterns for parallel processing.
 
 Note: For many reasons PHP is not an optimal language choice for creating servers or daemons. I created this library so if you *must* use PHP for these things, you can do it with ease and produce great results. But if you have the choice, Java, Python, Ruby, etc, are all better suited for this. 
 
