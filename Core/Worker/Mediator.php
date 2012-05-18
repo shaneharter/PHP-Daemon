@@ -1094,14 +1094,11 @@ abstract class Core_Worker_Mediator
      * @param stdClass $call
      * @return bool
      */
-    public function retry(stdClass $call) {
+    public function retry(Call $call) {
         if (empty($call->method))
             throw new Exception(__METHOD__ . " Failed. A valid call struct is required.");
 
-        $call->status = self::UNCALLED;
-        $call->time = array(microtime(true));
-        $call->retries++;
-
+        $call->retry();
         $this->log("Retrying Call {$call->id} To `{$call->method}`");
         return $this->call($call);
     }
@@ -1242,3 +1239,43 @@ abstract class Core_Worker_Mediator
         return $this->memory_allocation;
     }
 }
+
+
+ class Call extends stdClass {
+     public $method;
+     public $args;
+     public $status;
+     public $time    = array();
+     public $pid;
+     public $id;
+     public $retries = 0;
+     public $errors  = 0;
+     public $size;
+     public $gc      = false;
+     public $return;
+
+
+     public function __construct($id) {
+         $this->id = $id;
+         $this->status(Core_Worker_Mediator::UNCALLED);
+     }
+
+     public function status($status) {
+         if ($status < $this->status)
+             throw new Exception(__METHOD__ . " Failed: Cannot Rewind Status. Current Status: {$this->status} Given: {$status}");
+
+         $this->status = $status;
+         $this->time[$status] = microtime(true);
+     }
+
+     public function retry() {
+         $this->status = Core_Worker_Mediator::UNCALLED;
+         $this->time = array(microtime(true));
+         $this->errors = 0;
+         $this->retries++;
+         $this->size = null;
+         $this->gc = false;
+         $this->pid = null;
+
+     }
+ }
