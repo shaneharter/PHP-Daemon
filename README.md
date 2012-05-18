@@ -9,10 +9,11 @@ I've built and deployed a large number of mission-critical daemons using this li
 * PHP 5.3 or Higher
 * POSIX and PCNTL Extensions for PHP
  
-#### Version 2.0 Announcement: 
-* Version 2.0 can be previewed in the `named-workers` branch. It will be released in the beginning of May and includes dozens of bug fixes and some fantastic new features. 
-* The most significant feature is a new API to create persistent, asynchronous background workers with a focus on simplicity and fault tolerance. 
-* See the announcement in the Wiki for more information and check back for updates: https://github.com/shaneharter/PHP-Daemon/wiki/Introducing-Version-2.0-Beta
+#### Changes in 2.0:
+* Create long-running async background workers with very little code (See the ExampleWorkers daemon or the docs in the Wiki)
+* Hook into a simple callback system using familiar on()/off() syntax: Create custom signal handlers, run code before daemon restarts, etc.
+* Create event loops that are not timer-based (build socket-servers, or use blocking system calls with ease)
+* Dozens of small enhancements and bug fixes.
 
 #### Changes in 1.1.1:
 * Several Bugfixes
