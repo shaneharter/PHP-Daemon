@@ -8,6 +8,11 @@ I've built and deployed a large number of mission-critical daemons using this li
 #### Requires: ###
 * PHP 5.3 or Higher
 * POSIX and PCNTL Extensions for PHP
+ 
+#### Version 2.0 Announcement: 
+* Version 2.0 can be previewed in the `named-workers` branch. It will be released in the beginning of May and includes dozens of bug fixes and some fantastic new features. 
+* The most significant feature is a new API to create persistent, asynchronous background workers with a focus on simplicity and fault tolerance. 
+* See the announcement in the Wiki for more information and check back for updates: https://github.com/shaneharter/PHP-Daemon/wiki/Introducing-Version-2.0-Beta
 
 #### Changes in 1.1.1:
 * Several Bugfixes
