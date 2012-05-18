@@ -2,6 +2,8 @@
 
 Create solid, long-running PHP daemon processes by extending this Core_Daemon base class. Use a built-in timer to run your `execute()` method at every-second or sub-second intervals, or use blocking APIs in the event loop `Core_Daemon` provides. Build simple single-process applications or create background workers using familiar async patterns for parallel processing. Includes an integrated debug console and tooling to create a first-class development experience.
 
+Note: For many reasons PHP is not an optimal language choice for creating servers or daemons. I created this library so if you *must* use PHP for these things, you can do it with ease and produce great results. But if you have the choice, Java, Python, Ruby, etc, are all better suited for this. 
+
 #### Requires: ###
 * PHP 5.3 or Higher
 * A POSIX compatible operating system (Linux, OSX, BSD)
@@ -23,20 +25,33 @@ Most daemon applications will either use a blocking API library (libevent, socke
 
   You can implement a clock with 1 line of code or leave it out for an event loop that runs at the pace of your application.
   
-  `protected $loop_interval = 0.5 // run every half second`
 
 * ###True parallel processing in PHP 
 In a few lines of code you can create asynchronous background processes that let you offload the hard work and keep your daemon process light and responsive. After you pass an object or callback to the workers API, you can call the methods and functions normally. The API intercepts your call and passes the arguments through to the object running in a background process. The method returns instantly and your daemon continues normally.  When work is complete any `onReturn` callbacks you set are called. If things go wrong you've got the ability to enforce a timeout and easily retry the call. 
 
   PHP Simple Daemon workers are a simple and powerful multi-processing tool in a language with very few of them. (But don't go trying to build a PHP version of Node.js)
 
+  https://github.com/shaneharter/PHP-Daemon/wiki/Named-Workers-Spec
   https://github.com/shaneharter/PHP-Daemon/wiki/Forking-Example
 
+* ###Integrated Debugging Tools
+Debugging multi-process applications is notoriously painful and several integrated debugging tools are shipped with the library. 
+
+  Since you cannot run an application like this under xdebug or zend debugger, a debug console is provided that lets you set psuedo breakpoints in your code. Your daemon turns into an interactive shell that gives you the ability to proceed or abort as well as a dozen+ commands to figure out exactly what is happening at any given time. Dump function arguments, eval() custom code, print stack traces, the list goes on. 
+  
+  In addition to the integrated debug console, the `/scripts` directory includes a useful signal_console app: Attach to your daemon and easily send and re-send signals. Checkout the `ExampleWorkers` daemon for an example of using a signal handler to mimic occassional real-world events. 
+
+  You'll also find the shm_console app that lets you attach to a shared memory address, scan for keys, view them, and even run a `watch` command that prints out a transactional log of creations, updates and deletes.
+  
+  https://github.com/shaneharter/PHP-Daemon/wiki/Debugging-workers
+  
 * ###Simple Callbacks: Because decoupled is better.
 A simple jQuery-like API lets you add callbacks to daemon lifecycle events (think: startup, teardown, fork, etc) and create your own. Attach an event listener using `on()`, remove it using `off()`, and create your own using `dispatch()`. Like all PHP Simple Daemon APIs it accepts a Closure or any valid PHP Callback. 
 
 * ###Simple Plugins: Because code reuse is better.
 If you care more about building a reusable component with the ability to execute code during the daemon startup process before your application code is called than you do about decoupling, you can create a Plugin simply by implementing the `Core_IPluginInterface`. Plugins are the easiest way to share code between multiple daemon applications and it can literally be implemented in 3 lines of code. We've got several general-purpose plugins on the drawing board to ship with the Core_Daemon library but currently we're shipping just one. The Ini plugin gives you an easy tool to read and validate any config files you ship with your application. 
+
+  https://github.com/shaneharter/PHP-Daemon/wiki/Daemon-Startup-Order-Explained
 
 * ###Lock files (and lock keys, and lock mutexes, and...)
 Several plugins are shipped with the library that implement different ways to create a lock for your daemon process. Running more than once instance of a daemon is often a problem and implementing a locking mechnism is often a headache. We've been paged at 2 AM when supervisord couldn't restart a daemon because of a stale lock file. We've bundled the Lock plugins to try to save you from that same fate. In all cases locks are self-expiring and you can chose between using a Memcache key, a lockfile, or a shared memory address. A faux lock plugin is also shipped to make your life easier during application development. 
