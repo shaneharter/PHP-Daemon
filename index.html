@@ -43,20 +43,19 @@
 <p>Note: For many reasons PHP is not an optimal language choice for creating servers or daemons. I created this library so if you <em>must</em> use PHP for these things, you can do it with ease and produce great results. But if you have the choice, Java, Python, Ruby, etc, are all better suited for this. </p>
 
 <h4>Requires:</h4>
-
 <ul>
 <li>PHP 5.3 or Higher</li>
 <li>A POSIX compatible operating system (Linux, OSX, BSD)</li>
 <li>POSIX and PCNTL Extensions for PHP</li>
-</ul><h4>Changes in 2.0:</h4>
+</ul>
 
+<h4>Announcements:</h4>
 <ul>
-<li>Create long-running async background workers with very little code (See the ExampleWorkers daemon or the docs in the Wiki)</li>
-<li>Hook into a simple callback system using familiar <code>on()</code> &amp; <code>off()</code> syntax: Create custom signal handlers, run code before daemon restarts, etc.</li>
-<li>Create event loops that are not timer-based (build socket-servers, or use blocking system calls with ease)</li>
-<li>Dozens of small enhancements and bug fixes.</li>
-</ul><h2>Notable Features:</h2>
+<li>May 15, 2012:<br/>Version 2.0 Released! Introduces asynchronous background workers, integrated debugging tools, and dozens of other features and bug fixes.</li>
+<li>April 17, 2012:<br/>Version 2.0 Beta available in the `named-workers` branch: Issues and Pull Requests encouraged.</li>
+</ul>
 
+<h2>Notable Features:</h2>
 <ul>
 <li>
 <h3>We provide the event loop: Build your application free of boilerplate.</h3>
