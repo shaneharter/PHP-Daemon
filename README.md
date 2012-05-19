@@ -51,7 +51,7 @@ A simple jQuery-like API lets you add callbacks to daemon lifecycle events (thin
 * ###Simple Plugins: Because code reuse is better.
 If you care more about building a reusable component with the ability to execute code during the daemon startup process before your application code is called than you do about decoupling, you can create a Plugin simply by implementing the `Core_IPluginInterface`. Plugins are the easiest way to share code between multiple daemon applications and it can literally be implemented in 3 lines of code. We've got several general-purpose plugins on the drawing board to ship with the Core_Daemon library but currently we're shipping just one. The Ini plugin gives you an easy tool to read and validate any config files you ship with your application. 
 
-  https://github.com/shaneharter/PHP-Daemon/wiki/Daemon-Startup-Order-Explained
+  https://github.com/shaneharter/PHP-Daemon/wiki/Creating-and-Using-Plugins
 
 * ###Lock files (and lock keys, and lock mutexes, and...)
 Several plugins are shipped with the library that implement different ways to create a lock for your daemon process. Running more than once instance of a daemon is often a problem and implementing a locking mechnism is often a headache. We've been paged at 2 AM when supervisord couldn't restart a daemon because of a stale lock file. We've bundled the Lock plugins to try to save you from that same fate. In all cases locks are self-expiring and you can chose between using a Memcache key, a lockfile, or a shared memory address. A faux lock plugin is also shipped to make your life easier during application development. 
@@ -78,6 +78,8 @@ Out of the box, your application will respond to 4 signals. You can add-to or ov
 
     **SIGCONT `kill -18`:**
     If your daemon is currently blocked or sleeping, wake it up and continue. (Will always wake it up from a sleep(), may not always return from a blocking API call.)
+ 
+    https://github.com/shaneharter/PHP-Daemon/wiki/Creating-Custom-Signal-Handlers
  
 * ###Command Line Switches
 You can run a '-H' help command when you run the Daemon. It will dump a help menu that looks like this, but can be easily overridden for your daemon:
