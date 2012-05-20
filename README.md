@@ -64,6 +64,8 @@ The library ships with an insanely basic event log. While the features of off-th
 
   If you have an internal logging tool, or just a favorite logging library, you can replace the internal tool as simply as overloading the `log()` method. Just be sure the only require parameter is the message being logged and everything internally that uses the event log -- Core_Daemon, signal handlers, the Workers API, etc -- will play nice. 
 
+  https://github.com/shaneharter/PHP-Daemon/wiki/Logging
+
 * ###Built-in Signal Handling
 Out of the box, your application will respond to 4 signals. You can add-to or overload that behavior by adding an `ON_SIGNAL` callback. The four built-in behaviors are: 
     
