@@ -45,6 +45,8 @@ Debugging multi-process applications is notoriously painful and several integrat
   
   https://github.com/shaneharter/PHP-Daemon/wiki/Debugging-workers
   
+  https://github.com/shaneharter/PHP-Daemon/wiki/Debug-Tools
+  
 * ###Simple Callbacks: Because decoupled is better.
 A simple jQuery-like API lets you add callbacks to daemon lifecycle events (think: startup, teardown, fork, etc) and create your own. Attach an event listener using `on()`, remove it using `off()`, and create your own using `dispatch()`. Like all PHP Simple Daemon APIs it accepts a Closure or any valid PHP Callback. 
 
