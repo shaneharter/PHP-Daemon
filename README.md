@@ -48,6 +48,8 @@ Debugging multi-process applications is notoriously painful and several integrat
 * ###Simple Callbacks: Because decoupled is better.
 A simple jQuery-like API lets you add callbacks to daemon lifecycle events (think: startup, teardown, fork, etc) and create your own. Attach an event listener using `on()`, remove it using `off()`, and create your own using `dispatch()`. Like all PHP Simple Daemon APIs it accepts a Closure or any valid PHP Callback. 
 
+  https://github.com/shaneharter/PHP-Daemon/wiki/Using-callbacks-and-custom-events
+
 * ###Simple Plugins: Because code reuse is better.
 If you care more about building a reusable component with the ability to execute code during the daemon startup process before your application code is called than you do about decoupling, you can create a Plugin simply by implementing the `Core_IPluginInterface`. Plugins are the easiest way to share code between multiple daemon applications and it can literally be implemented in 3 lines of code. We've got several general-purpose plugins on the drawing board to ship with the Core_Daemon library but currently we're shipping just one. The Ini plugin gives you an easy tool to read and validate any config files you ship with your application. 
 
