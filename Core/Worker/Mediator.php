@@ -418,12 +418,29 @@ abstract class Core_Worker_Mediator
 
         static $error_count = 0;
 
-        // At some point we need to bubble-up failures to the Daemon level and log a Daemon error and restart
-        // Use a more liberal threshold for workers which are designed to be discarded and re-spawned easily.
-        if ($this->is_parent)
-            $error_threshold = 25;
-        else
-            $error_threshold = 10;
+        static $error_counts = array(
+            'identifier' => 0,  // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle
+            'corruption' => 0,  // Corruption related errors: The underlying data structures are corrupt (or possibly just OOM)
+            'catchall'   => 0,
+        );
+
+        static $error_thresholds = array(
+            'identifier' => array(true => 100, false => 10),
+            'corruption' => array(true => 50,  false => 10),
+            'catchall'   => array(true => 50,  false => 10),
+        );
+
+        // Use $this in closures..
+        $that = $this;
+        $is_parent = $this->is_parent;
+
+        // Count errors and compare them against thresholds.
+        // Different thresholds for parent & children
+        $counter = function($type) use(&$error_counts, $error_thresholds, $that, $is_parent) {
+            $error_counts[$type]++;
+            if ($error_counts[$type] > $error_thresholds[$type][$is_parent]);
+            $that->fatal_error("IPC '$type' Error Threshold Reached");
+        };
 
         // Most of the error handling strategy is simply: Sleep for a moment and try again.
         // We use a simple back-off strategy: starting with 2 seconds, it would increase to 8, then 16, etc
@@ -461,8 +478,7 @@ abstract class Core_Worker_Mediator
             case null:
                 // Almost certainly an issue with shared memory
                 $this->log("Shared Memory I/O Error at Address {$this->id}.");
-
-                $error_count++;
+                $counter('corruption');
 
                 // If this is a worker, all we can do is try to re-attach the shared memory.
                 // Any corruption or OOM errors will be handled by the parent exclusively.
@@ -475,7 +491,6 @@ abstract class Core_Worker_Mediator
                 // If this is the parent, do some diagnostic checks and attempt correction.
                 usleep($backoff(20000));
 
-                $that = $this;
                 $test = function() use($that) {
                     $arr = array_fill(0, mt_rand(10, 100), mt_rand(1000, 1000 * 1000));
                     $key = mt_rand(1000 * 1000, 2000 * 1000);
@@ -544,21 +559,16 @@ abstract class Core_Worker_Mediator
                 if ($error_code)
                     $this->log("Message Queue Error {$error_code}: " . posix_strerror($error_code));
 
-                $error_count++;
                 if ($this->is_parent)
                     usleep($backoff(20000));
                 else
                     sleep($backoff(3));
 
-                if ($error_count > $error_threshold) {
-                    $this->fatal_error("IPC Error Threshold Reached");
-                }
-
+                $counter('catchall');
                 $this->ipc_create();
                 return false;
         }
     }
-
 
     /**
      * Write and Verify the SHM header
