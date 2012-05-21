@@ -326,11 +326,8 @@ abstract class Core_Daemon
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->setup();
 
-        // Setup each worker pool. If the loop interval is > 1 second, we will use a lazy forking strategy
-        // where workers will not be created until they're called.
-        $lazy_forking = ($this->loop_interval > 1);
         foreach ($this->workers as $worker)
-            $this->{$worker}->setup($lazy_forking);
+            $this->{$worker}->setup();
 
         // Our current use of the ON_INIT event is in the Lock provider plugins -- so we can prevent a duplicate daemon
         // process from starting-up. In that case, we want to do that check as early as possible. To accomplish that,
@@ -341,7 +338,7 @@ abstract class Core_Daemon
         if (!$this->daemon)
             $this->log('Note: The daemonize (-d) option was not set: This process is running inside your shell. Auto-Restart feature is disabled.');
 
-        $this->log('Process Initialization Complete. Starting timer at a ' . $this->loop_interval . ' second interval.');
+        $this->log('Process Initialization Complete. Starting Event Loop.');
     }
 
     /**
@@ -583,7 +580,7 @@ abstract class Core_Daemon
 
         try
         {
-            $header = "\nDate                  PID   LABEL         Message\n";
+            $header = "\nDate                  PID   Label         Message\n";
             $date = date("Y-m-d H:i:s");
             $pid = str_pad($this->pid, 5, " ", STR_PAD_LEFT);
             $label = str_pad(substr($label, 0, 12), 13, " ", STR_PAD_RIGHT);
@@ -835,8 +832,8 @@ abstract class Core_Daemon
             pcntl_sigprocmask(SIG_UNBLOCK, array(SIGCHLD));
         } else {
             // There is no time to sleep between intervals -- but we still need to give the CPU a break
-            // Sleep for 1/500 a second.
-            usleep(2000);
+            // Sleep for 1/100 a second.
+            usleep(10000);
             if ($this->loop_interval > 0)
                 $this->log('Run Loop Taking Too Long. Duration: ' . $stats['duration'] . ' Interval: ' . $this->loop_interval, true);
         }
@@ -1331,7 +1328,7 @@ abstract class Core_Daemon
                     } else {
                         $this->log(
                             "Warning: At configured loop_interval a process priorty of `{$priority}` is suggested but this process does not have setpriority privileges." . PHP_EOL .
-                            "         Consider running the daemon with `CAP_SYS_RESOURCE` privileges or set it manually using `sudo renice -n {$priority} -p {$this->pid}`"
+                                "         Consider running the daemon with `CAP_SYS_RESOURCE` privileges or set it manually using `sudo renice -n {$priority} -p {$this->pid}`"
                         );
                     }
                 }
