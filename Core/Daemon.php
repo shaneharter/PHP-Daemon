@@ -792,7 +792,7 @@ abstract class Core_Daemon
         $out[] = "Loaded Plugins:       " . implode(', ', $this->plugins);
         $out[] = "Loaded Workers:       " . $workers;
         $out[] = sprintf("Memory:               %s (%s)", memory_get_usage(true), $pretty_memory(memory_get_usage(true)));
-        $out[] = sprintf("Peak Memory:          %s (%s)", memory_get_usage(true), $pretty_memory(memory_get_peak_usage(true)));
+        $out[] = sprintf("Peak Memory:          %s (%s)", memory_get_peak_usage(true), $pretty_memory(memory_get_peak_usage(true)));
         $out[] = "Current User:         " . get_current_user();
         $out[] = "Priority:             " . pcntl_getpriority();
         $out[] = "Loop duration, idle:  " . implode(', ', $this->stats_mean()) . ' (Mean Seconds)';
