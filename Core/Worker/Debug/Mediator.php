@@ -168,14 +168,13 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
      * @return bool
      * @throws Exception
      */
-    protected function call($method, Array $args, $retries=0, $errors=0) {
+    protected function call(stdClass $call) {
         $status = ($this->is_idle()) ? 'Realtime' : 'Queued';
-        $prompt = ($method == 'execute') ? '' : "->{$method}";
-        $call_id = $this->call_count + 1;
-        $indent = ($call_id - 1) % self::INDENT_DEPTH;
+        $prompt = ($call->method == 'execute') ? '' : "->{$call->method}";
+        $indent = ($call->id - 1) % self::INDENT_DEPTH;
         $indent = str_repeat("\t", $indent);
-        if ($this->prompt("{$indent}[{$call_id}] Call to {$this->alias}{$prompt}()", $args))
-            return parent::call($method, $args, $retries, $errors);
+        if ($this->prompt("{$indent}[{$call->id}] Call to {$this->alias}{$prompt}()", $call->args))
+            return parent::call($call);
 
         return false;
     }

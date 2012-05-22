@@ -416,30 +416,27 @@ abstract class Core_Worker_Mediator
      */
     protected function ipc_error($error_code, $try=1) {
 
-        static $error_count = 0;
-
-        static $error_counts = array(
-            'identifier' => 0,  // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle
-            'corruption' => 0,  // Corruption related errors: The underlying data structures are corrupt (or possibly just OOM)
-            'catchall'   => 0,
+        $error_thresholds = array(
+            'identifier' => array(100, 10),
+            'corruption' => array(10,  50),
+            'catchall'   => array(10,  50),
         );
 
-        static $error_thresholds = array(
-            'identifier' => array(true => 100, false => 10),
-            'corruption' => array(true => 50,  false => 10),
-            'catchall'   => array(true => 50,  false => 10),
-        );
-
-        // Use $this in closures..
         $that = $this;
         $is_parent = $this->is_parent;
 
         // Count errors and compare them against thresholds.
         // Different thresholds for parent & children
-        $counter = function($type) use(&$error_counts, $error_thresholds, $that, $is_parent) {
+        $counter = function($type) use($error_thresholds, $that, $is_parent) {
+            static $error_counts = array(
+                'identifier' => 0,  // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle
+                'corruption' => 0,  // Corruption related errors: The underlying data structures are corrupt (or possibly just OOM)
+                'catchall'   => 0,
+            );
+
             $error_counts[$type]++;
-            if ($error_counts[$type] > $error_thresholds[$type][$is_parent]);
-            $that->fatal_error("IPC '$type' Error Threshold Reached");
+            if ($error_counts[$type] > $error_thresholds[$type][(int)$is_parent])
+                $that->fatal_error("IPC '$type' Error Threshold Reached");
         };
 
         // Most of the error handling strategy is simply: Sleep for a moment and try again.
@@ -894,7 +891,7 @@ abstract class Core_Worker_Mediator
     protected function message_decode(Array $message) {
 
         // Periodically garbage-collect the local and shm $calls array
-        if (mt_rand(1, 50) == 10)
+        if (mt_rand(1, 20) == 10)
             foreach ($this->calls as $item_id => $item)
                 if (!$item->gc && in_array($item->status, array(self::TIMEOUT, self::RETURNED))) {
                     unset($this->calls[$item_id]->args, $this->calls[$item_id]->return);
@@ -906,9 +903,18 @@ abstract class Core_Worker_Mediator
         $that = $this;
         switch($message['status']) {
             case self::UNCALLED:
-            case self::RETURNED:
                 $decoder = function($message) use($that) {
                     return shm_get_var($that->shm, $message['call_id']);
+                };
+                break;
+
+            case self::RETURNED:
+                $decoder = function($message) use($that) {
+                    $call = shm_get_var($that->shm, $message['call_id']);
+                    if ($call && $call->status == $message['status'])
+                        shm_remove_var($that->shm, $message['call_id']);
+
+                    return $call;
                 };
                 break;
 
