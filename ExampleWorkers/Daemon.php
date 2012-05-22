@@ -1,10 +1,18 @@
 <?php
 
+/**
+ * This Daemon has been created to demonstrate the Workers API in 2.0.
+ *
+ * It creates two workers: a simple closure-based worker that computers factors, and
+ * an object-based Prime Numbers worker.
+ *
+ * It runs jobs randomly and in response to signals and writes the jobs in a log to the MySQL table
+ * described in the db.sql file.
+ *
+ */
 class ExampleWorkers_Daemon extends Core_Daemon
 {
     protected $loop_interval = 1;
-
-    public $count = 0;
 
     /**
      * We want to be able to start workers by passing in signals. In a real daemon, workers would be used to process
