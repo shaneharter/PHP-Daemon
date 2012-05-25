@@ -1027,7 +1027,7 @@ abstract class Core_Daemon
      */
     protected function getopt()
     {
-        $opts = getopt('hHiI:o:dvp:', array('install', 'recoverworkers', 'debugworkers'));
+        $opts = getopt('hHiI:o:dp:', array('install', 'recoverworkers', 'debugworkers'));
 
         if (isset($opts['H']) || isset($opts['h']))
             $this->show_help();
@@ -1049,7 +1049,7 @@ abstract class Core_Daemon
 
         $this->recover_workers = isset($opts['recoverworkers']);
         $this->debug_workers = isset($opts['debugworkers']);
-        $this->verbose = isset($opts['v']) && $this->daemon == false && $this->debug_workers == false;
+        $this->verbose = $this->daemon == false && $this->debug_workers == false;
 
         if (isset($opts['p'])) {
             $handle = @fopen($opts['p'], 'w');
@@ -1080,7 +1080,7 @@ abstract class Core_Daemon
 
         echo get_class($this);
         $out[] =  'USAGE:';
-        $out[] =  ' # ' . basename(self::$filename) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-v] [-p PID_FILE] [--recoverworkers] [--debugworkers]';
+        $out[] =  ' # ' . basename(self::$filename) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--recoverworkers] [--debugworkers]';
         $out[] =  '';
         $out[] =  'OPTIONS:';
         $out[] =  ' -H Shows this help';
@@ -1092,7 +1092,6 @@ abstract class Core_Daemon
         $out[] =  '       Install the script to /etc/init.d. Otherwise just output the script to stdout.';
         $out[] =  '';
         $out[] =  ' -d Daemon, detach and run in the background';
-        $out[] =  ' -v Verbose, echo any logged messages. Ignored in Daemon mode. Ignored in --debugworkers mode.';
         $out[] =  ' -p PID_FILE File to write process ID out to';
         $out[] =  '';
         $out[] =  ' --recoverworkers';
