@@ -423,7 +423,7 @@ abstract class Core_Worker_Mediator
         // Different thresholds for parent & children
         $counter = function($type) use($that, $is_parent) {
             static $error_thresholds = array(
-                'identifier' => array(100, 10), // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle
+                'identifier' => array(10, 100), // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle (child, parent)
                 'corruption' => array(10,  50), // Corruption related errors: The underlying data structures are corrupt (or possibly just OOM)
                 'catchall'   => array(10,  50),
             );
@@ -441,8 +441,19 @@ abstract class Core_Worker_Mediator
 
         // Most of the error handling strategy is simply: Sleep for a moment and try again.
         // We use a simple back-off strategy: starting with 2 seconds, it would increase to 8, then 16, etc
+        // Return int
         $backoff = function($delay) use ($try) {
             return $delay * pow(2, min($try, 1));
+        };
+
+        // Create an array of random, moderate size and verify it can be written to shared memory
+        // Return boolean
+        $test = function() use($that) {
+            $arr = array_fill(0, mt_rand(10, 100), mt_rand(1000, 1000 * 1000));
+            $key = mt_rand(1000 * 1000, 2000 * 1000);
+            @shm_put_var($that->shm, $key, $arr);
+            usleep(5000);
+            return @shm_get_var($that->shm, $key) == $arr;
         };
 
         switch($error_code) {
@@ -487,14 +498,6 @@ abstract class Core_Worker_Mediator
 
                 // If this is the parent, do some diagnostic checks and attempt correction.
                 usleep($backoff(20000));
-
-                $test = function() use($that) {
-                    $arr = array_fill(0, mt_rand(10, 100), mt_rand(1000, 1000 * 1000));
-                    $key = mt_rand(1000 * 1000, 2000 * 1000);
-                    @shm_put_var($that->shm, $key, $arr);
-                    usleep(5000);
-                    return @shm_get_var($that->shm, $key) == $arr;
-                };
 
                 // Test writing to shared memory using an array that should come to a few kilobytes.
                 for($i=0; $i<2; $i++) {
@@ -591,14 +594,22 @@ abstract class Core_Worker_Mediator
             $this->log('Warning: Seems you\'ve using --recoverworkers after making a change to the worker malloc memory limit. To apply this change you will have to restart the daemon without the --recoverworkers option.' .
                 PHP_EOL . 'The existing memory_limit is ' . $header['memory_allocation'] . ' bytes.');
 
-        // If we're trying to recover previous messages/shm, figure out where we left-off so we can avoid colliding our call ID's
+        // If we're trying to recover previous messages/shm, scan the shared memory block for call structs and import them
         if ($this->daemon->recover_workers()) {
             $max_id = $this->call_count;
             for ($i=0; $i<100000; $i++) {
-                if(shm_has_var($this->shm, $i))
+                if(shm_has_var($this->shm, $i)) {
+                    $o = @shm_get_var($this->shm, $i);
+                    if (!is_object($o)) {
+                        @shm_remove_var($this->shm, $i);
+                        continue;
+                    }
+                    $this->calls[$i] = $o;
                     $max_id = $i;
+                }
             }
             $this->log("Starting Job Numbering at $max_id.");
+            $this->call_count = $max_id;
         }
     }
 
