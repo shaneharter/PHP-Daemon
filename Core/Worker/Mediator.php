@@ -416,21 +416,21 @@ abstract class Core_Worker_Mediator
      */
     protected function ipc_error($error_code, $try=1) {
 
-        $error_thresholds = array(
-            'identifier' => array(100, 10),
-            'corruption' => array(10,  50),
-            'catchall'   => array(10,  50),
-        );
-
         $that = $this;
         $is_parent = $this->is_parent;
 
         // Count errors and compare them against thresholds.
         // Different thresholds for parent & children
-        $counter = function($type) use($error_thresholds, $that, $is_parent) {
+        $counter = function($type) use($that, $is_parent) {
+            static $error_thresholds = array(
+                'identifier' => array(100, 10), // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle
+                'corruption' => array(10,  50), // Corruption related errors: The underlying data structures are corrupt (or possibly just OOM)
+                'catchall'   => array(10,  50),
+            );
+
             static $error_counts = array(
-                'identifier' => 0,  // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle
-                'corruption' => 0,  // Corruption related errors: The underlying data structures are corrupt (or possibly just OOM)
+                'identifier' => 0,
+                'corruption' => 0,
                 'catchall'   => 0,
             );
 
