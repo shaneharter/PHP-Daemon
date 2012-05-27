@@ -1,8 +1,15 @@
 <?php
 
+/**
+ * Objects that implement Core_IWorkerInterface can be passed to Core_Daemon::worker() to create persistent background
+ * workers. Your object's public methods (aside from the ones specified by the interface) will be intercepted when
+ * you call them, serialized, and run in the background process.
+ *
+ * You can use the Core_Daemon::on(ON_FORK) method to provide universal setup code that is run after every fork and
+ * in every worker. The setup() method defined here can be used if you want specific setup code run in this forked process.
+ */
 interface Core_IWorkerInterface
 {
-
     /**
      * Interfaces cannot specific properties, but note that a reference to the Mediator object will be set as $this->mediator in your Worker
      * Note: While this would in theory enable you to do crazy things like grab an instance of the mediator object from within a worker and use that
@@ -26,10 +33,4 @@ interface Core_IWorkerInterface
 	 * @return void
 	 */
 	public function teardown();
-	
-	/**
-	 * This is called during object construction to validate any dependencies
-	 * @return Array	Return array of error messages (Think stuff like "GD Library Extension Required" or "Cannot open /tmp for Writing") or an empty array
-	 */
-	public function check_environment();
 }

@@ -419,7 +419,7 @@ abstract class Core_Daemon
         }
         catch (Exception $e)
         {
-            $this->fatal_error(sprintf('Exception Thrown in Event Loop: %s [file] %s [line] %s%s%s',
+            $this->fatal_error(sprintf('Uncaught Exception in Event Loop: %s [file] %s [line] %s%s%s',
                 $e->getMessage(), $e->getFile(), $e->getLine(), PHP_EOL, $e->getTraceAsString()));
         }
     }
@@ -480,67 +480,76 @@ abstract class Core_Daemon
     }
 
     /**
-     * Parallelize any task by passing it as a callback or closure. Will fork into a child process, execute the supplied
-     * function, and exit. If the task uses MySQL or certain other outside resources, the connection will have to be
-     * re-established in the child process so in those cases, set the run_setup flag.
+     * Parallelize any task by passing it to this method. Will fork into a child process, execute the supplied
+     * code, and exit.
      *
-     * @link https://github.com/shaneharter/PHP-Daemon/wiki/Forking-Example
+     * The $callable provided can be a standard PHP Callback, a Closure, or any object that implements Core_ITask
      *
-     * @param callable $callback        A valid PHP callback or closure.
-     * @param Array $params             The params that will be passed into the Callback when it's called.
-     * @param boolean $run_setup        After the child process is created, it will re-run the setup() method.
-     * @param string $worker            Used by Named Workers to track forked workers. Do not use in any other situation.
-     * @return boolean                  Cannot know if the callback worked, returns true if the fork was successful.
+     * Note: If the task uses MySQL or certain other outside resources, the connection will have to be
+     * re-established in the child process. There are two options:
+     *
+     * 1. Run the same setup code in every background task:
+     *    Any event handlers you set using $this->on(ON_FORK, ...) will be run in every forked process (both Task and Worker
+     *    processes) before the callable is called.
+     *
+     * 2. Run setup code specific to the current background task:
+     *    If you need to run specific setup code for a task or worker you have to use an object, you can't use the shortened
+     *    form of passing a callback or closure. For tasks that means an object that implements Core_ITask. For workers,
+     *    it's Core_IWorker. These interfaces are very simple and define setup() and teardown() methods for this purpose.
+     *
+     * @link https://github.com/shaneharter/PHP-Daemon/wiki/Tasks
+     *
+     * @param callable|Core_ITask $callable     A valid PHP callback or closure.
+     * @param Mixed     All additional params are passed to the $callable
+     * @return int      Return the PID of the newly-forked task or -1 on failure
      */
-    public function fork($callback, array $params = array(), $run_setup = false, $worker = false)
+    public function task($callable)
     {
         if ($this->shutdown) {
-            $this->log("Daemon is shutting down... fork() ignored");
+            $this->log("Daemon is shutting down: Cannot run task()");
             return false;
         }
 
-        $this->dispatch(array(self::ON_FORK));
         $pid = pcntl_fork();
         switch ($pid)
         {
             case -1:
                 // Parent Process - Fork Failed
-                if ($callback instanceof Closure)
-                    $msg = 'Fork Request Failed. Uncalled Closure';
-                else
-                    $msg = 'Fork Request Failed. Uncalled Callback';
-
-                $this->log($msg, true);
+                $e = new Exception();
+                $this->log('Task Failed: Could not fork.', true);
+                $this->log($e->getTraceAsString());
                 return false;
                 break;
 
             case 0:
                 // Child Process
                 $this->start_time = time();
-                $this->is_parent = false;
+                $this->is_parent  = false;
                 $this->parent_pid = $this->pid;
                 $this->pid(getmypid());
                 pcntl_setpriority(1);
 
-                // Remove all plugins and workers
-                // Leave only the worker this fork is implementing (if applicable)
+                // Remove unused worker objects. They can be memory hogs.
                 foreach(array_merge($this->workers, $this->plugins) as $object)
-                    if ($object != $worker)
+                    if (!(is_array($callable) && $callable[0] == $this->{$object}))
                         unset($this->{$object});
 
                 $this->workers = $this->worker_pids = $this->plugins = array();
-
-                if ($run_setup) {
-                    $this->setup();
-                    if ($worker) {
-                        $this->{$worker}->is_parent = false;
-                        $this->{$worker}->setup();
-                    }
-                }
+                $this->dispatch(array(self::ON_FORK));
 
                 try
                 {
-                    call_user_func_array($callback, $params);
+                    $params = array_slice(func_get_args(), 1);
+                    if ($callable instanceof Core_IChildInterface) {
+                        if ($callable->is_parent)
+                            $callable->is_parent = false;
+
+                        $callable->setup();
+                        call_user_func_array(array($callable, 'start'), $params);
+                        $callable->teardown();
+                    } else {
+                        call_user_func_array($callable, $params);
+                    }
                 }
                 catch (Exception $e)
                 {
@@ -552,16 +561,21 @@ abstract class Core_Daemon
 
             default:
                 // Parent Process
-
-                if ($worker) {
-                    if (in_array($worker, $this->workers)) {
-                        $this->worker_pids[$pid] = $worker;
-                    }
-                }
-
                 return $pid;
                 break;
         }
+    }
+
+    public function fork_worker($worker) {
+
+        $callback = array($this->{$worker}, 'start');
+        $pid = $this->fork($callback);
+        if ($pid) {
+            $this->worker_pids[$pid] = $worker;
+        }
+
+
+
     }
 
 
