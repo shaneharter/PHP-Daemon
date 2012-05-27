@@ -74,7 +74,7 @@ function daemon_error($errno, $errstr, $errfile, $errline, $errcontext = null, E
         if ($is_fatal) {
             if (!$e)
                 $e = new Exception;
-            error_log(var_export($e->getTraceAsString(), true));
+            error_log(str_replace(PHP_EOL, PHP_EOL . str_repeat(' ', 23), print_r($e->getTraceAsString(), true)));
         }
     }
 
@@ -123,7 +123,7 @@ function daemon_shutdown_function()
     	case E_CORE_WARNING:
     	case E_COMPILE_ERROR:
 
-			daemon_error($error['type'], $error['message'], $error['file'], $error['line']);
+			//daemon_error($error['type'], $error['message'], $error['file'], $error['line']);
     }
 }
 error_reporting(E_ALL);
