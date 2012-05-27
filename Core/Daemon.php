@@ -691,9 +691,9 @@ abstract class Core_Daemon
             SIGWINCH, SIGIO, SIGSYS, SIGBABY, SIGCHLD
         );
 
-        if (defined('SIGPOLL')) $signals[] = SIGPOLL;
-        if (defined('SIGPWR')) $signals[] = SIGPWR;
-        if (defined('SIGSTKFLT')) $signals[] = SIGSTKFLT;
+        if (defined('SIGPOLL'))     $signals[] = SIGPOLL;
+        if (defined('SIGPWR'))      $signals[] = SIGPWR;
+        if (defined('SIGSTKFLT'))   $signals[] = SIGSTKFLT;
 
         foreach(array_unique($signals) as $signal) {
             pcntl_signal($signal, array($this, 'signal'));
@@ -1155,21 +1155,24 @@ abstract class Core_Daemon
             exit;
         }
 
-        $filename = '/etc/init.d/' . $daemon;
-        @file_put_contents($filename, $script);
-        @chmod($filename, 0755);
-
-        if (file_exists($filename) == false || is_executable($filename) == false)
-            $this->show_help("* Must Be Run as Sudo\n * Could Not Write to init.d Directory");
-
-        echo "Init Scripts Created Successfully!";
-
         // Print out template-specific setup instructions
         switch($template_name) {
             case 'init_ubuntu':
-                echo "\n - To run on startup on RedHat/CentOS:  sudo chkconfig --add {$filename}";
+                $filename = '/etc/init.d/' . $daemon;
+                $instructions = "\n - To run on startup on RedHat/CentOS:  sudo chkconfig --add {$filename}";
                 break;
+
+            default:
+                $instructions = '';
         }
+
+        @file_put_contents($filename, $script);
+        @chmod($filename, 0755);
+        if (file_exists($filename) == false || is_executable($filename) == false)
+            $this->show_help("* Must Be Run as Sudo\n * Could Not Write Config File");
+
+        echo "Init Scripts Created Successfully!";
+        echo $instructions;
         echo "\n\n";
         exit();
     }
