@@ -27,7 +27,7 @@
  *
  * @author Shane Harter
  */
-abstract class Core_Worker_Mediator
+abstract class Core_Worker_Mediator implements Core_ITask
 {
     /**
      * The version is used in case SHM memory formats change in the future.
@@ -642,9 +642,10 @@ abstract class Core_Worker_Mediator
         $errors = array();
         for ($i=0; $i<$forks; $i++) {
 
-            $pid = $this->daemon->fork(array($this, 'start'), array(), true, $this->alias);
-            if ($pid) {
+            if ($pid = $this->daemon->task($this)) {
+                // @todo Consider merging these two maps. Maybe a class var array in Core_Worker_Mediator would be cleaner?
                 $this->processes[$pid] = microtime(true);
+                $this->daemon->worker_pid($this->alias, $pid);
                 continue;
             }
 
