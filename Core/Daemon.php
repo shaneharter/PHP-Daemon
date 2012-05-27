@@ -517,8 +517,8 @@ abstract class Core_Daemon
         // If a Core_ITask was passed in, wrap it in a closure
         if ($task instanceof Core_ITask) {
             $callable = function($params) use($task) {
-                // By convention an is_parent variable is used when we need to keep track of process state
-                if (isset($task->is_parent) && $task->is_parent)
+                // By convention an is_parent variable is used when we need to keep track of process state.
+                if (isset($task->is_parent))
                     $task->is_parent = false;
 
                 $task->setup();
@@ -574,19 +574,6 @@ abstract class Core_Daemon
                 break;
         }
     }
-
-    public function fork_worker($worker) {
-
-        $callback = array($this->{$worker}, 'start');
-        $pid = $this->fork($callback);
-        if ($pid) {
-            $this->worker_pids[$pid] = $worker;
-        }
-
-
-
-    }
-
 
     /**
      * Log the $message to the $this->log_file and possibly print to stdout.
