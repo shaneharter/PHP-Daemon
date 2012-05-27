@@ -22,6 +22,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
     public $run_primes_among = false;
     public $run_sieve        = false;
     public $run_getfactors   = false;
+    public $run_inline_sieve = false;
     public $auto_run         = false;
 
     /**
@@ -53,11 +54,13 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
         // Instantiate an App_Primes object as a Worker
         // - Load 4 workers in the pool
-        // - Allocate 50MB of shared memory to pass args to the workers and receive results back: If you omit this, it will use 5MB by default.
+        // - Allocate 30MB of shared memory to pass args to the workers and receive results back: If you omit this, it will use 5MB by default.
         //
-        //      It's VERY important to allocate enough shared memory: You should allocate enough memory that when a job returns it uses no more than 2%
+        //      It's VERY important to allocate enough shared memory: You should allocate enough memory that when a job returns it uses no more than 5%
         //      of the allocation. Remember: When a call returns, the struct that is passed to your onReturn method contains the arguments passed to the worker
-        //      AND the return value. If both are large, you could easily end up needing 50, 100, 200MB of shared memory.
+        //      AND the return value. If both are large, you could easily end up needing 50, 100, 200MB of shared memory. You may have to
+        //      tweak your OS settings to allow this.
+        //
         //      If you allocate to little memory, a WARNING will be logged to the Event log: Keep an eye out for it during your development process.
         //
         // - By convention, workers are named in UpperCase
@@ -142,36 +145,35 @@ class ExampleWorkers_Daemon extends Core_Daemon
 
     protected function setup()
     {
-        if ($this->is_parent())
-        {
-            // We want to be able use signals to interact with the example daemon, so we can test and demonstrate
-            // the workers. Load a configurable signal map from the loaded ini plugin
+        // We want to be able use signals to interact with the example daemon, so we can test and demonstrate
+        // the workers. Load a configurable signal map from the loaded ini plugin
 
-            $that = $this;
-            $this->on(Core_Daemon::ON_SIGNAL, function($signal) use($that) {
-                if (isset($that->settings['signals'][$signal])) {
-                    $action = $that->settings['signals'][$signal];
+        $that = $this;
+        $this->on(Core_Daemon::ON_SIGNAL, function($signal) use($that) {
+            if (isset($that->settings['signals'][$signal])) {
+                $action = $that->settings['signals'][$signal];
 
-                    if ($action == 'auto_run') {
-                        $that->log("Signal Received! Setting auto_run=" . ($that->auto_run ? 'false' : 'true'));
-                        $that->{$action} = !$that->{$action};
-                    } else {
-                        $that->log("Signal Received! Setting {$action}=true");
-                        $that->{$action} = true;
-                    }
+                if ($action == 'auto_run') {
+                    $that->log("Signal Received! Setting auto_run=" . ($that->auto_run ? 'false' : 'true'));
+                    $that->{$action} = !$that->{$action};
+                } else {
+                    $that->log("Signal Received! Setting {$action}=true");
+                    $that->{$action} = true;
                 }
-            });
+            }
+        });
 
-            // You never want to call a worker method directly from a signal handler.
-            // This is because signal handlers are not re-entrant. So worker processes forked within a signal handler
-            // will not respond to any signals themselves. So here we're setting a flag that is polled in the execute() method.
+        // You never want to call a worker method directly from a signal handler.
+        // This is because signal handlers are not re-entrant. So worker processes forked within a signal handler
+        // will not respond to any signals themselves. So here we're setting a flag that is polled in the execute() method.
 
-            // Connect to the DB
-            $this->db = mysqli_connect('localhost', 'root', 'root');
-            mysqli_select_db($this->db, 'daemon');
+        // Connect to the DB
+        $this->db = mysqli_connect('localhost', 'root', 'root');
+        mysqli_select_db($this->db, 'daemon');
 
-            $this->log("ExampleWorkers Daemon is Ready: To run a Factoring job, send signal 12. To run a Prime Numbers job, send signal 13. To toggle the random job-runner send signal 14.");
-        }
+        // We may want to log results to the database directly from the workers. To do that we need to
+
+        $this->log("ExampleWorkers Daemon is Ready: To run a Factoring job, send signal 12. To run a Prime Numbers job, send signal 13. To toggle the random job-runner send signal 14.");
     }
 
 
@@ -231,6 +233,20 @@ class ExampleWorkers_Daemon extends Core_Daemon
                     $this->reconnect_db($sql);
 
             unset($sql);
+        }
+
+        // This demonstrates how you can bypass the mediator and call methods on the worker objects directly.
+        // If you passed a Closure or Callback as the worker instead of an object, you just call $this->SomeWorker->inline();
+        if ($this->run_inline_sieve) {
+            $this->run_inline_sieve = false;
+
+            $rand = mt_rand(10000, 1000000);
+            $primes = $this->PrimeNumbers->inline()->sieve($rand, $rand + $rand);
+
+            $this->log("Factors: " . print_r($this->GetFactors->inline("bef"), true));
+
+            // Remember, you're calling the method directly: Timeouts are not enforced. The onReturn callback is not called.
+            $this->log("Inline sieve() complete. Prime Numbers Returned: " . count($primes));
         }
     }
 
