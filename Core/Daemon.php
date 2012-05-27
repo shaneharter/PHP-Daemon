@@ -370,6 +370,9 @@ abstract class Core_Daemon
         $this->reap(false);
         if ($this->is_parent && !empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
             unlink($this->pid_file);
+
+        if ($this->verbose)
+            echo PHP_EOL;
     }
 
     /**
@@ -500,14 +503,30 @@ abstract class Core_Daemon
      * @link https://github.com/shaneharter/PHP-Daemon/wiki/Tasks
      *
      * @param callable|Core_ITask $callable     A valid PHP callback or closure.
-     * @param Mixed     All additional params are passed to the $callable
-     * @return int      Return the PID of the newly-forked task or -1 on failure
+     * @param Mixed                             All additional params are passed to the $callable
+     * @return int|boolean                      Return the PID of the newly-forked task or false on failure
      */
-    public function task($callable)
+    public function task($task)
     {
         if ($this->shutdown) {
             $this->log("Daemon is shutting down: Cannot run task()");
             return false;
+        }
+
+        // Standardize the $task into a $callable
+        // If a Core_ITask was passed in, wrap it in a closure
+        if ($task instanceof Core_ITask) {
+            $callable = function($params) use($task) {
+                // By convention an is_parent variable is used when we need to keep track of process state
+                if (isset($task->is_parent) && $task->is_parent)
+                    $task->is_parent = false;
+
+                $task->setup();
+                call_user_func_array(array($task, 'start'), $params);
+                $task->teardown();
+            };
+        } else {
+            $callable = $task;
         }
 
         $pid = pcntl_fork();
@@ -539,17 +558,7 @@ abstract class Core_Daemon
 
                 try
                 {
-                    $params = array_slice(func_get_args(), 1);
-                    if ($callable instanceof Core_IChildInterface) {
-                        if ($callable->is_parent)
-                            $callable->is_parent = false;
-
-                        $callable->setup();
-                        call_user_func_array(array($callable, 'start'), $params);
-                        $callable->teardown();
-                    } else {
-                        call_user_func_array($callable, $params);
-                    }
+                    call_user_func_array($callable, array_slice(func_get_args(), 1));
                 }
                 catch (Exception $e)
                 {
@@ -592,45 +601,30 @@ abstract class Core_Daemon
         static $handle = false;
         static $raise_logfile_error = true;
 
-        try
-        {
-            $header = "\nDate                  PID   Label         Message\n";
-            $date = date("Y-m-d H:i:s");
-            $pid = str_pad($this->pid, 5, " ", STR_PAD_LEFT);
-            $label = str_pad(substr($label, 0, 12), 13, " ", STR_PAD_RIGHT);
-            $prefix = "[$date] $pid $label";
+        $header = "\nDate                  PID   Label         Message\n";
+        $date   = date("Y-m-d H:i:s");
+        $pid    = str_pad($this->pid, 5, " ", STR_PAD_LEFT);
+        $label  = str_pad(substr($label, 0, 12), 13, " ", STR_PAD_RIGHT);
+        $prefix = "[$date] $pid $label";
 
-            if ($handle === false) {
-                if (strlen($this->log_file()) > 0)
-                    $handle = @fopen($this->log_file(), 'a+');
-
-                if ($handle === false) {
-                    // If the log file can't be written-to, dump the errors to stdout with the explanation...
-                    if ($raise_logfile_error) {
-                        $raise_logfile_error = false;
-                        echo $header;
-                        $this->log('Unable to write logfile at ' . $this->log_file() . '. Redirecting logging to stdout.');
-                    }
-
-                    throw new Exception("$prefix $message");
-                }
-
+        if ($handle === false) {
+            if (strlen($this->log_file()) > 0 && $handle = @fopen($this->log_file(), 'a+')) {
                 fwrite($handle, $header);
-
                 if ($this->verbose)
                     echo $header;
+            } elseif ($raise_logfile_error) {
+                $raise_logfile_error = false;
+                trigger_error(__CLASS__ . "Error: Could not write to logfile " . $this->log_file(), E_USER_NOTICE);
             }
+        }
 
-            $message = $prefix . ' ' . str_replace("\n", "\n$prefix ", trim($message)) . "\n";
+        $message = $prefix . ' ' . str_replace("\n", "\n$prefix ", trim($message)) . "\n";
+
+        if ($handle)
             fwrite($handle, $message);
 
-            if ($this->verbose)
-                echo $message;
-        }
-        catch (Exception $e)
-        {
-            echo PHP_EOL . $e->getMessage();
-        }
+        if ($this->verbose)
+            echo $message;
 
         if ($is_error)
             $this->dispatch(array(self::ON_ERROR), array($message));
@@ -1020,6 +1014,16 @@ abstract class Core_Daemon
         $this->workers[] = $alias;
         $this->{$alias} = $mediator;
         return $this->{$alias};
+    }
+
+    /**
+     * Used by the worker mediator to make the daemon aware of a process running for a given worker
+     * They're used, among other things, to notify the correct worker when a process exits
+     * @param $alias
+     * @param $pid
+     */
+    public function worker_pid($alias, $pid) {
+        $this->worker_pids[$pid] = $alias;
     }
 
     /**

@@ -8,7 +8,7 @@
  * in every worker. The setup() method defined here can be used if you want specific setup code run in this forked process.
  *
  */
-interface Core_IChildInterface
+interface Core_ITask
 {
     /**
      * Called on Construct or Init
