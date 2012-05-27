@@ -4,7 +4,7 @@
  * PHP Simple Daemon Worker
  * @author Shane Harter
  */
-class ExampleWorkers_Workers_Primes implements Core_IWorkerInterface
+class ExampleWorkers_Workers_Primes implements Core_IWorker
 {
     /**
      * Reference to the mediator is automatically provided

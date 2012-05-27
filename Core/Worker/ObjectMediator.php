@@ -12,7 +12,7 @@ final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
 {
 
     /**
-     * @var Core_IWorkerInterface
+     * @var Core_IWorker
      */
     protected $object;
 
@@ -29,8 +29,8 @@ final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
     }
 
     public function setObject($o) {
-        if (!($o instanceof Core_IWorkerInterface)) {
-            throw new Exception(__METHOD__ . " Failed. Worker objects must implement Core_IWorkerInterface");
+        if (!($o instanceof Core_IWorker)) {
+            throw new Exception(__METHOD__ . " Failed. Worker objects must implement Core_IWorker");
         }
         $this->object = $o;
         $this->object->mediator = $this;
@@ -49,8 +49,8 @@ final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
     public function check_environment() {
         $errors = array();
 
-        if (!is_object($this->object) || !$this->object instanceof Core_IWorkerInterface)
-            $errors[] = 'Invalid worker object. Workers must implement Core_IWorkerInterface';
+        if (!is_object($this->object) || !$this->object instanceof Core_IWorker)
+            $errors[] = 'Invalid worker object. Workers must implement Core_IWorker';
 
         $object_errors = $this->object->check_environment();
         if (is_array($object_errors))
@@ -77,7 +77,7 @@ final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
      * @example Your worker object returns data from a webservice, you can put methods in the class to format the data.
      *          In that case you can call it in-process for brevity and convenience.
      * @example $this->DataService->inline()->pretty_print($result);
-     * @return Core_IWorkerInterface
+     * @return Core_IWorker
      */
     public function inline() {
         return $this->object;

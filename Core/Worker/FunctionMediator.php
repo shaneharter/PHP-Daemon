@@ -11,7 +11,7 @@
 final class Core_Worker_FunctionMediator extends Core_Worker_Mediator
 {
     /**
-     * @var Core_IWorkerInterface
+     * @var Core_IWorker
      */
     protected $function;
 

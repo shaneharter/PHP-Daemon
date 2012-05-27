@@ -1,14 +1,14 @@
 <?php
 
 /**
- * Objects that implement Core_IWorkerInterface can be passed to Core_Daemon::worker() to create persistent background
+ * Objects that implement Core_IWorker can be passed to Core_Daemon::worker() to create persistent background
  * workers. Your object's public methods (aside from the ones specified by the interface) will be intercepted when
  * you call them, serialized, and run in the background process.
  *
  * You can use the Core_Daemon::on(ON_FORK) method to provide universal setup code that is run after every fork and
  * in every worker. The setup() method defined here can be used if you want specific setup code run in this forked process.
  */
-interface Core_IWorkerInterface
+interface Core_IWorker
 {
     /**
      * Interfaces cannot specific properties, but note that a reference to the Mediator object will be set as $this->mediator in your Worker

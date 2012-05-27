@@ -5,7 +5,7 @@
  * Uses system v message queues because afaik there's no existing PHP implementation of posix  queues.
  *
  * At a high level, workers are implemented using a Mediator pattern. When a worker is created (by passing a Callable or
- * an instance of Core_IWorkerInterface to the Core_Daemon::worker() method) the Daemon creates a Mediator instance and
+ * an instance of Core_IWorker to the Core_Daemon::worker() method) the Daemon creates a Mediator instance and
  * passes-in the worker.
  *
  * When worker methods are called the Daemon is actually interacting with the Mediator instance. Calls are serialized in
