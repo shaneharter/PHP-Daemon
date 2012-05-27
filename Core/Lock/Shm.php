@@ -4,7 +4,7 @@
  * Use IPC Shared Memory. The ID will be the daemon run filename, the key will be "pid", the value will be the pid.
  * @author Shane Harter
  */
-class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPluginInterface
+class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
 {
     const ADDRESS = 1;
 

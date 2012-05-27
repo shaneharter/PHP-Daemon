@@ -898,7 +898,7 @@ abstract class Core_Daemon
     }
 
     /**
-     * Load any plugin that implements the Core_IPluginInterface.
+     * Load any plugin that implements the Core_IPlugin.
      *
      * A single instance of any plugin in the /Core/Plugin directory can be created just by passing-in the significant
      * part of the class name as the alias. See the first ini example below.
@@ -925,11 +925,11 @@ abstract class Core_Daemon
      * @example $this->plugin('Lock_File'); // Instantiated at $this->Lock_File
      *
      * @param string $alias
-     * @param Core_IPluginInterface|null $instance
-     * @return Core_IPluginInterface Returns an instance of the plugin
+     * @param Core_IPlugin|null $instance
+     * @return Core_IPlugin Returns an instance of the plugin
      * @throws Exception
      */
-    protected function plugin($alias, Core_IPluginInterface $instance = null)
+    protected function plugin($alias, Core_IPlugin $instance = null)
     {
         $this->check_alias($alias);
 
@@ -944,7 +944,7 @@ abstract class Core_Daemon
 
             if (class_exists($class, true)) {
                 $interfaces = class_implements($class, true);
-                if (is_array($interfaces) && isset($interfaces['Core_IPluginInterface'])) {
+                if (is_array($interfaces) && isset($interfaces['Core_IPlugin'])) {
                     $instance = new $class($this->getInstance());
                 }
             }
