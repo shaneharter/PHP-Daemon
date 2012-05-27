@@ -901,13 +901,14 @@ abstract class Core_Worker_Mediator
      */
     protected function message_decode(Array $message) {
 
-        // Periodically garbage-collect the local and shm $calls array
+        // Periodically garbage-collect call structs: Keep the metadata but remove the (potentially large) args and return values
+        // The parent will also ensure any GC'd items are removed from shared memory though in normal operation they're deleted when they return
         if (mt_rand(1, 20) == 10)
             foreach ($this->calls as $item_id => $item)
                 if (!$item->gc && in_array($item->status, array(self::TIMEOUT, self::RETURNED))) {
-                    unset($this->calls[$item_id]->args, $this->calls[$item_id]->return);
-                    $this->calls[$item_id]->gc = true;
-                    if (shm_has_var($this->shm, $item_id))
+                    unset($item->args, $item->return);
+                    $item->gc = true;
+                    if ($this->is_parent && shm_has_var($this->shm, $item_id))
                         shm_remove_var($this->shm, $item_id);
                 }
 
@@ -923,7 +924,7 @@ abstract class Core_Worker_Mediator
                 $decoder = function($message) use($that) {
                     $call = shm_get_var($that->shm, $message['call_id']);
                     if ($call && $call->status == $message['status'])
-                        shm_remove_var($that->shm, $message['call_id']);
+                        @shm_remove_var($that->shm, $message['call_id']);
 
                     return $call;
                 };
@@ -1050,7 +1051,8 @@ abstract class Core_Worker_Mediator
         switch ($signal)
         {
             case SIGHUP:
-                $this->log("Restarting Worker Process...");
+                if (!$this->is_parent)
+                    $this->log("Restarting Worker Process...");
 
             case SIGINT:
             case SIGTERM:
