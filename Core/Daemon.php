@@ -173,7 +173,7 @@ abstract class Core_Daemon
 
 
     /**
-     * Implement this method to load plugins
+     * Implement this method to define plugins
      * @return void
      */
     protected function load_plugins()
@@ -182,7 +182,7 @@ abstract class Core_Daemon
     }
 
     /**
-     * Implement this method to load workers
+     * Implement this method to define workers
      * @return void
      */
     protected function load_workers()
@@ -588,7 +588,7 @@ abstract class Core_Daemon
      * @param boolean $is_error    When true, an ON_ERROR event will be dispatched.
      * @param string $label
      */
-    public function log($message, $is_error = false, $label = '')
+    public function log($message, $label = '')
     {
         static $handle = false;
         static $raise_logfile_error = true;
@@ -617,19 +617,31 @@ abstract class Core_Daemon
 
         if ($this->verbose)
             echo $message;
+    }
 
-        if ($is_error)
-            $this->dispatch(array(self::ON_ERROR), array($message));
+    /**
+     * Log the provided $message and dispatch an ON_ERROR event.
+     *
+     * The library has no concept of a runtime error. If your application doesn't attach any ON_ERROR listeners, there
+     * is literally no difference between using this and just passing the message to Core_Daemon::log().
+     *
+     * @param $message
+     * @param string $label
+     */
+    public function error($message, $label = '')
+    {
+        $this->log($message, $label);
+        $this->dispatch(array(self::ON_ERROR), array($message));
     }
 
     /**
      * Raise a fatal error and kill-off the process. If it's been running for a while, it'll try to restart itself.
-     * @param string $log_message
+     * @param string $message
      * @param string $label
      */
-    public function fatal_error($log_message, $label = '')
+    public function fatal_error($message, $label = '')
     {
-        $this->log($log_message, true, $label);
+        $this->error($message, $label);
 
         if ($this->is_parent) {
             $this->log(get_class($this) . ' is Shutting Down...');
@@ -671,8 +683,6 @@ abstract class Core_Daemon
 
                 $this->shutdown = true;
                 break;
-            default:
-                // handle all other signals
         }
     }
 
