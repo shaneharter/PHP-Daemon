@@ -1069,18 +1069,29 @@ abstract class Core_Worker_Mediator implements Core_ITask
     /**
      * Write do the Daemon's event log
      *
-     * Part of the Worker API - Use from your workers to log events to the Daemon error log
+     * Part of the Worker API - Use from your workers to log events to the Daemon event log
      *
      * @param $message
-     * @param bool $is_error
      * @return void
      */
-    public function log($message, $is_error = false) {
-        $this->daemon->log("$message", $is_error, $this->alias);
+    public function log($message) {
+        $this->daemon->log("$message", $this->alias);
     }
 
     /**
-     * Log a fatal error and restart the worker process
+     * Dispatch ON_ERROR event and write an error message to the Daemon's event log
+     *
+     * Part of the Worker API - Use from your workers to log an error message.
+     *
+     * @param $message
+     * @return void
+     */
+    public function error($message) {
+        $this->daemon->error("$message", $this->alias);
+    }
+
+    /**
+     * Dispatch ON_ERROR event, write an error message to the event log, and restart the worker.
      *
      * Part of the Worker API - Use from your worker to log a fatal error message and restart the current process.
      *
