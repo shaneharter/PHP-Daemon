@@ -4,7 +4,7 @@ class Example_App extends Core_Daemon
 {
     protected  $loop_interval = 2;
 
-	protected function load_plugins()
+	protected function setup_plugins()
 	{
         // Set our Lock Provider
         $this->plugin('Lock_File');

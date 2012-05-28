@@ -30,7 +30,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
      */
     public $db;
 
-    protected function load_plugins()
+    protected function setup_plugins()
     {
         $this->plugin('Lock_File');
 
@@ -47,7 +47,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
         $this->settings->required_sections = array('signals', 'default');
     }
 
-    protected function load_workers()
+    protected function setup_workers()
     {
         // PHP 5.3 Closure Hack. Fixed in 5.4.
         $that = $this;

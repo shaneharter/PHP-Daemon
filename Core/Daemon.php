@@ -24,13 +24,14 @@ abstract class Core_Daemon
      * Events can be attached to each state using the on() method
      * @var integer
      */
-    const ON_ERROR      = 0;
-    const ON_SIGNAL     = 1;
-    const ON_INIT       = 2;
-    const ON_RUN        = 3;
-    const ON_FORK       = 4;
-    const ON_PIDCHANGE  = 5;
-    const ON_SHUTDOWN   = 10;
+    const ON_ERROR          = 0;
+    const ON_SIGNAL         = 1;
+    const ON_INIT           = 2;
+    const ON_PREEXECUTE     = 3;
+    const ON_POSTEXECUTE    = 4;
+    const ON_FORK           = 5;
+    const ON_PIDCHANGE      = 6;
+    const ON_SHUTDOWN       = 10;
 
     /**
      * An array of instructions that's displayed when the -i param is passed into the daemon.
@@ -176,7 +177,7 @@ abstract class Core_Daemon
      * Implement this method to define plugins
      * @return void
      */
-    protected function load_plugins()
+    protected function setup_plugins()
     {
 
     }
@@ -185,7 +186,7 @@ abstract class Core_Daemon
      * Implement this method to define workers
      * @return void
      */
-    protected function load_workers()
+    protected function setup_workers()
     {
 
     }
@@ -237,8 +238,8 @@ abstract class Core_Daemon
         try
         {
             $o = new static;
-            $o->load_plugins();
-            $o->load_workers();
+            $o->setup_plugins();
+            $o->setup_workers();
             $o->check_environment();
             $o->init();
         }
@@ -415,8 +416,9 @@ abstract class Core_Daemon
                 $this->timer(true);
                 $this->auto_restart();
                 $this->reap();
-                $this->dispatch(array(self::ON_RUN));
+                $this->dispatch(array(self::ON_PREEXECUTE));
                 $this->execute();
+                $this->dispatch(array(self::ON_POSTEXECUTE));
                 $this->timer();
             }
         }

@@ -47,7 +47,7 @@ abstract class Core_Lock_Lock implements Core_IPlugin
         $this->args = $args;
 
         $daemon->on(Core_Daemon::ON_INIT, array($this, 'set'));
-        $daemon->on(Core_Daemon::ON_RUN,  array($this, 'set'));
+        $daemon->on(Core_Daemon::ON_PREEXECUTE,  array($this, 'set'));
 
         $that = $this;
         $daemon->on(Core_Daemon::ON_PIDCHANGE, function($args) use($that) {

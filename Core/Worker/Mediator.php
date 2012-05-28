@@ -291,7 +291,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 $this->ipc_destroy();
 
             $this->fork();
-            $this->daemon->on(Core_Daemon::ON_RUN, array($this, 'run'));
+            $this->daemon->on(Core_Daemon::ON_PREEXECUTE, array($this, 'run'));
             $this->ipc_create();
             $this->shm_init();
 
