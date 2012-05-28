@@ -483,22 +483,26 @@ abstract class Core_Daemon
     }
 
     /**
-     * Parallelize any task by passing it to this method. Will fork into a child process, execute the supplied
+     * Run any task asynchronously by passing it to this method. Will fork into a child process, execute the supplied
      * code, and exit.
      *
      * The $callable provided can be a standard PHP Callback, a Closure, or any object that implements Core_ITask
      *
      * Note: If the task uses MySQL or certain other outside resources, the connection will have to be
-     * re-established in the child process. There are two options:
+     * re-established in the child process. There are three options:
      *
-     * 1. Run the same setup code in every background task:
-     *    Any event handlers you set using $this->on(ON_FORK, ...) will be run in every forked process (both Task and Worker
-     *    processes) before the callable is called.
+     * 1. Put any mysql setup or connection code in your task:
+     *    This is not suggested because it's bad design but it's certainly possible.
      *
-     * 2. Run setup code specific to the current background task:
-     *    If you need to run specific setup code for a task or worker you have to use an object, you can't use the shortened
+     * 2. Run the same setup code in every background task:
+     *    Any event handlers you set using $this->on(ON_FORK) will be run in every forked Task and Worker process
+     *    before the callable is called.
+     *
+     * 3. Run setup code specific to the current background task:
+     *    If you need to run specific setup code for a task or worker you have to use an object. You can't use the shortened
      *    form of passing a callback or closure. For tasks that means an object that implements Core_ITask. For workers,
-     *    it's Core_IWorker. These interfaces are very simple and define setup() and teardown() methods for this purpose.
+     *    it's Core_IWorker. The setup() and teardown() methods defined in the interfaces are natural places to handle
+     *    database connections, etc.
      *
      * @link https://github.com/shaneharter/PHP-Daemon/wiki/Tasks
      *
@@ -516,18 +520,19 @@ abstract class Core_Daemon
         // Standardize the $task into a $callable
         // If a Core_ITask was passed in, wrap it in a closure
         if ($task instanceof Core_ITask) {
-            $callable = function($params) use($task) {
+            $callable = function() use($task) {
                 // By convention an is_parent variable is used when we need to keep track of process state.
                 if (isset($task->is_parent))
                     $task->is_parent = false;
 
                 $task->setup();
-                call_user_func_array(array($task, 'start'), $params);
+                call_user_func_array(array($task, 'start'), func_get_args());
                 $task->teardown();
             };
         } else {
             $callable = $task;
         }
+
 
         $pid = pcntl_fork();
         switch ($pid)
@@ -535,7 +540,7 @@ abstract class Core_Daemon
             case -1:
                 // Parent Process - Fork Failed
                 $e = new Exception();
-                $this->log('Task Failed: Could not fork.', true);
+                $this->log('Task failed: Could not fork.', true);
                 $this->log($e->getTraceAsString());
                 return false;
                 break;
@@ -569,7 +574,7 @@ abstract class Core_Daemon
                 break;
 
             default:
-                // Parent Process
+                // Parent Process - Return the pid of the newly created Task
                 return $pid;
                 break;
         }
