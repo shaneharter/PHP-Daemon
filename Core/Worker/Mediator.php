@@ -508,6 +508,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     $this->ipc_create();
                 }
 
+                $this->log("IPC DIAG: Re-Connect failed to solve the problem.");
+
                 // Attempt to re-connect the shared memory
                 // See if we can read what's in shared memory and re-write it later
                 $items_to_copy = array();
@@ -531,6 +533,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     $items_to_copy[$i] = $call;
                 }
 
+                $this->log("IPC DIAG: Preparing to clean SHM and Reconnect...");
+
                 for($i=0; $i<2; $i++) {
                     $this->ipc_destroy(false, true);
                     $this->ipc_create();
@@ -543,7 +547,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                         if (empty($items_to_copy)) {
                             $this->fatal_error("Shared Memory Failure: Unable to proceed.");
                         } else {
-                            $this->log('Purging items from shared memory: ' . implode(', ', array_keys($items_to_copy)));
+                            $this->log('IPC DIAG: Purging items from shared memory: ' . implode(', ', array_keys($items_to_copy)));
                             unset($items_to_copy);
                         }
                     }
@@ -909,6 +913,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 if (!$item->gc && in_array($item->status, array(self::TIMEOUT, self::RETURNED))) {
                     unset($item->args, $item->return);
                     $item->gc = true;
+                    $this->log("Garbage Collecting $item->id at status $item->status");
                     if ($this->is_parent && shm_has_var($this->shm, $item_id))
                         shm_remove_var($this->shm, $item_id);
                 }

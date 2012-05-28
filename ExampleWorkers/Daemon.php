@@ -220,7 +220,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
             $this->run_sieve = false;
 
             // Same Thing as we do for GetFactors
-            $rand = mt_rand(10000, 1000000);
+            $rand = mt_rand(100000, 200000);
             $job = $this->PrimeNumbers->sieve($rand, $rand + $rand);
 
             if ($job)
