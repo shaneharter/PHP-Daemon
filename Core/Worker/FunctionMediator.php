@@ -28,10 +28,16 @@ final class Core_Worker_FunctionMediator extends Core_Worker_Mediator
         $this->methods = array('execute');
     }
 
-    protected function get_callback(stdClass $call) {
-        switch ($call->method) {
+    protected function get_callback($method) {
+        switch ($method) {
             case 'execute':
                 return $this->function;
+                break;
+
+            case 'setup':
+                return function() {
+
+                };
                 break;
 
             case 'teardown':
@@ -42,7 +48,7 @@ final class Core_Worker_FunctionMediator extends Core_Worker_Mediator
                 break;
 
             default:
-                throw new Exception("$call->method() is Not Callable.");
+                throw new Exception("$method() is Not Callable.");
         }
     }
 

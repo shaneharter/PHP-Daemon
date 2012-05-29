@@ -230,11 +230,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected $ftok;
 
     /**
-     * Return a valid callback for the supplied $call
+     * Return a valid callback for the supplied $method
      * @abstract
-     * @param $call
+     * @param $method
      */
-    protected abstract function get_callback(stdClass $call);
+    protected abstract function get_callback($method);
 
 
     public function __construct($alias, Core_Daemon $daemon) {
@@ -273,19 +273,18 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
         if ($this->is_parent) {
 
-            // This is slightly grizzly. We need a deterministic ID so we can re-attach shared memory and message queues
-            // after a daemon restart. The ID has to be an int which rules out hashing. Collisions would result in a very pesky bug.
-            // So we want to use the ftok() function, but that needs a unique file path & name. Since this mediator file could be shared
-            // by multiple daemons, we're going to mash-up the daemon filename with the worker alias, and create an empty file in a hidden /tmp directory.
+            // Use the ftok() method to create a deterministic memory address.
+            // This is a bit ugly but ftok needs a filesystem path so we give it one using the daemon filename and
+            // current worker alias.
             @mkdir('/tmp/.phpdaemon');
-            $this->ftok = '/tmp/.phpdaemon/' . str_replace("/", "_", $this->daemon->filename()) . '_' . $this->alias;
+            $this->ftok = sprintf('/tmp/.phpdaemon/%s_%s', str_replace('/', '_', $this->daemon->filename()), $this->alias);
             if (!touch($this->ftok))
-                $this->fatal_error("Unable to create Worker ID. Ftok failed. Could not write to /tmp directory");
+                $this->fatal_error("Unable to create Worker ID. ftok() failed. Could not write to /tmp directory at {$this->ftok}");
 
-            $this->id = ftok($this->ftok, substr($this->alias, 0, 1));
+            $this->id = ftok($this->ftok, $this->alias[0]);
 
             if (!is_numeric($this->id))
-                $this->fatal_error("Unable to create Worker ID. Ftok failed. Could not write to /tmp directory");
+                $this->fatal_error("Unable to create Worker ID. ftok() failed. Unexpected return value: $this->id");
 
             if (!$this->daemon->recover_workers())
                 $this->ipc_destroy();
@@ -296,9 +295,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $this->shm_init();
 
         } else {
+            unset($this->calls, $this->processes, $this->running_calls, $this->on_return, $this->on_timeout);
             $this->calls = $this->processes = $this->running_calls = array();
             $this->ipc_create();
             $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'signal'));
+            call_user_func($this->get_callback('setup'));
             $this->log('Worker Process Started');
         }
 
@@ -592,7 +593,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 throw new Exception(__METHOD__ . " Failed. Could Not Read Header. If this problem persists, try running the daemon with the --resetworkers option.");
         }
 
-        // Check memory allocation and warn the user if their malloc() is not actually applicable
+        // Check memory allocation and warn the user if their malloc() is not actually applicable (eg they changed the malloc but used --recoverworkers)
         $header = shm_get_var($this->shm, self::HEADER_ADDRESS);
         if ($header['memory_allocation'] <> $this->memory_allocation)
             $this->log('Warning: Seems you\'ve using --recoverworkers after making a change to the worker malloc memory limit. To apply this change you will have to restart the daemon without the --recoverworkers option.' .
@@ -808,24 +809,25 @@ abstract class Core_Worker_Mediator implements Core_ITask
         while(!$this->is_parent && !$this->shutdown) {
             $message_type = $message = $message_error = null;
             if (msg_receive($this->queue, self::WORKER_CALL, $message_type, $this->memory_allocation, $message, true, 0, $message_error)) {
-                try {
-                    // Auto-Kill each worker after they process 25 jobs AND live at least 5 minutes
-                    $this->shutdown = (++$count > 25 && $this->daemon->runtime() > (60 * 5));
 
+                $max_jobs       = $count++ >= 25;
+                $min_runtime    = $this->daemon->runtime() >= (60 * 5);
+                $max_runtime    = $this->daemon->runtime() >= (60 * 30);
+                $this->shutdown = ($max_runtime || $min_runtime && $max_jobs);
+
+                try {
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
 
                     $call->pid = $pid;
-                    $call->status = self::RUNNING;
-                    $call->time[self::RUNNING] = microtime(true);
+                    $this->update_struct_status($call, self::RUNNING);
                     if (!$this->message_encode($call_id)) {
                         $this->log("Call {$call_id} Could Not Ack Running.");
                     }
 
-                    $call->return = call_user_func_array($this->get_callback($call), $call->args);
-                    $call->status = self::RETURNED;
-                    $call->size   = strlen(print_r($call, true));
-                    $call->time[self::RETURNED] = microtime(true);
+                    $call->return = call_user_func_array($this->get_callback($call->method), $call->args);
+                    $call->size = strlen(print_r($call, true));
+                    $this->update_struct_status($call, self::RETURNED);
                     if (!$this->message_encode($call_id)) {
                         $this->log("Call {$call_id} Could Not Ack Complete.");
                     }
@@ -938,10 +940,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             default:
                 $decoder = function($message) use($that) {
-                    $call = $that->_call($message['call_id']);
-                    $call->status               = $message['status'];
-                    $call->time[$call->status]  = $message['microtime'];
-                    $call->pid                  = $message['pid'];
+                    $call = $that->get_struct($message['call_id']);
+                    $that->update_struct_status($call, $message['status']);
+                    $call->pid = $message['pid'];
                     return $call;
                 };
         }
@@ -970,8 +971,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         try {
             $this->calls[$call->id] = $call;
             if ($this->message_encode($call->id)) {
-                $call->status = self::CALLED;
-                $call->time[self::CALLED] = microtime(true);
+                $this->update_struct_status($call, self::CALLED);
                 $this->fork();
                 return $call->id;
             }
@@ -1001,19 +1001,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
     }
 
     /**
-     * Hack to work around deficient $this lexical scoping in PHP5.3 closures. Gives closures used in various
-     * methods herein access to the $calls array. Hopefully can get rid of this when we move to require PHP5.4
-     * @param integer $call_id
-     * @return stdClass
-     */
-    public function _call($call_id) {
-        if (isset($this->calls[$call_id]))
-            return $this->calls[$call_id];
-
-        return null;
-    }
-
-    /**
      * Intercept method calls on worker objects and pass them to the worker processes
      * @param $method
      * @param $args
@@ -1025,20 +1012,56 @@ abstract class Core_Worker_Mediator implements Core_ITask
         if (!in_array($method, $this->methods))
             throw new Exception(__METHOD__ . " Failed. Method `{$method}` is not callable.");
 
-        $this->call_count++;
+        $call = $this->create_struct();
+        $call->method = $method;
+        $call->args   = $args;
+        $call->id     = ++$this->call_count;
+
+        $this->update_struct_status($call, self::UNCALLED);
+        return $this->call($call);
+    }
+
+    /**
+     * Hack to work around deficient $this lexical scoping in PHP5.3 closures. Gives closures used in various
+     * methods herein access to the $calls array. Hopefully can get rid of this when we move to require PHP5.4
+     * @param integer $call_id
+     * @return stdClass
+     */
+    public function get_struct($call_id) {
+        if (isset($this->calls[$call_id]))
+            return $this->calls[$call_id];
+
+        return null;
+    }
+
+    /**
+     * Create an empty Call Struct. The decision was made to use a call struct with methods that act on it (a very C thing to do)
+     * to avoid any of the complexity and complication of serializing the object for inter-process transmission.
+     *
+     * @return stdClass
+     */
+    public function create_struct() {
         $call = new stdClass();
-        $call->method        = $method;
-        $call->args          = $args;
-        $call->status        = self::UNCALLED;
-        $call->time          = array(microtime(true));
+        $call->method        = null;
+        $call->args          = null;
+        $call->status        = null;
+        $call->time          = array();
         $call->pid           = null;
-        $call->id            = $this->call_count;
+        $call->id            = null;
         $call->retries       = 0;
         $call->errors        = 0;
         $call->size          = null;
         $call->gc            = false;
+    }
 
-        return $this->call($call);
+    /**
+     * Update the status in the supplied Call Struct
+     * @param stdClass $call
+     * @param $status
+     */
+    public function update_struct_status(stdClass $call, $status) {
+        $call->status = $status;
+        $call->time[$status] = microtime(true);
     }
 
     /**
