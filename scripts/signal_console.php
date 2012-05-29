@@ -13,10 +13,8 @@
 define('BASE_PATH', dirname(dirname(__FILE__)));
 
 $pidfiles = array(
-    'ExampleWorkers'    =>  BASE_PATH . '/ExampleWorkers/pid',
-    'Example'           =>  BASE_PATH . '/Example/pid',
+    'PrimeNumbers'    =>  BASE_PATH . '/Examples/PrimeNumbers/pid',
 );
-
 
 $index = array_keys($pidfiles);
 $string = '';
