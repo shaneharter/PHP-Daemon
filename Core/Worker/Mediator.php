@@ -1052,6 +1052,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         $call->errors        = 0;
         $call->size          = null;
         $call->gc            = false;
+        return $call;
     }
 
     /**
@@ -1167,8 +1168,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         if (empty($call->method))
             throw new Exception(__METHOD__ . " Failed. A valid call struct is required.");
 
-        $call->status = self::UNCALLED;
-        $call->time = array(microtime(true));
+        $this->update_struct_status($call, self::UNCALLED);
         $call->retries++;
 
         $this->log("Retrying Call {$call->id} To `{$call->method}`");
