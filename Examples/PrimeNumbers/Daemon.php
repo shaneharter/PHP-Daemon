@@ -10,7 +10,7 @@
  * described in the db.sql file.
  *
  */
-class ExampleWorkers_Daemon extends Core_Daemon
+class Daemon extends Core_Daemon
 {
     protected $loop_interval = 1;
 
@@ -43,7 +43,7 @@ class ExampleWorkers_Daemon extends Core_Daemon
         // We're using the INI file here only because it's a conveinient way to demonstrate using the INI plugin.
 
         $this->plugin('settings', new Core_Plugin_Ini());
-        $this->settings->filename = BASE_PATH . '/ExampleWorkers/settings.ini';
+        $this->settings->filename = BASE_PATH . '/config/settings.ini';
         $this->settings->required_sections = array('signals', 'default');
     }
 
@@ -66,14 +66,12 @@ class ExampleWorkers_Daemon extends Core_Daemon
         // - By convention, workers are named in UpperCase
         // - Look at App_Prime to see the available methods. They are: sieve, is_prime, primes_among
 
-        $this->worker('PrimeNumbers', new ExampleWorkers_Workers_Primes());
+        $this->worker('PrimeNumbers', new Workers_Primes());
         $this->PrimeNumbers->timeout(60);
         $this->PrimeNumbers->workers(4);
         $this->PrimeNumbers->malloc(30 * 1024 * 1024);
 
         $this->PrimeNumbers->onReturn(function($call, $log) use($that) {
-
-            // Log the results of the call to the event log
             $log("Job {$call->id} to {$call->method}() Complete");
             switch($call->method) {
                 case "sieve":
@@ -186,14 +184,14 @@ class ExampleWorkers_Daemon extends Core_Daemon
             case 4:
             case 5:
             case 6:
-                $this->run_getfactors = $this->auto_run;
+                if ($this->auto_run) $this->run_getfactors = true;
                 break;
 
             case 7:
-                $this->run_getfactors = $this->auto_run;
+                if ($this->auto_run) $this->run_getfactors = true;
 
             case 8:
-                $this->run_sieve = $this->auto_run;
+                if ($this->auto_run) $this->run_sieve = true;
                 break;
         }
 

@@ -23,6 +23,7 @@ ini_set('display_errors', 0);
 define("BASE_PATH", dirname(__FILE__));
 set_include_path(implode(PATH_SEPARATOR, array(
     realpath(BASE_PATH),
+    realpath(BASE_PATH . '/../../'),
     realpath(BASE_PATH . '/../../Core'),
     get_include_path(),
 )));
