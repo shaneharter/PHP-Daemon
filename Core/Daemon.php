@@ -372,7 +372,7 @@ abstract class Core_Daemon
         if ($this->is_parent && !empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
             unlink($this->pid_file);
 
-        if ($this->verbose)
+        if ($this->is_parent && $this->verbose)
             echo PHP_EOL;
     }
 
