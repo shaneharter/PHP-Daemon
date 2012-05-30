@@ -125,6 +125,17 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected $running_calls = array();
 
     /**
+     * Array of accumulated error counts. Error thresholds are localized and when reached will
+     * raise a fatal error. Generally thresholds on workers are much lower than on the daemon process
+     * @var array
+     */
+    public $error_counts = array(
+        'identifier' => 0,
+        'corruption' => 0,
+        'catchall'   => 0,
+    );
+
+    /**
      * Has the shutdown signal been received?
      * @var bool
      */
@@ -425,19 +436,13 @@ abstract class Core_Worker_Mediator implements Core_ITask
         // Different thresholds for parent & children
         $counter = function($type) use($that, $is_parent) {
             static $error_thresholds = array(
-                'identifier' => array(10, 100), // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle (child, parent)
-                'corruption' => array(10,  50), // Corruption related errors: The underlying data structures are corrupt (or possibly just OOM)
-                'catchall'   => array(10,  50),
+                'identifier' => array(10,  50), // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle (child, parent)
+                'corruption' => array(10,  25), // Corruption related errors: The underlying data structures are corrupt (or possibly just OOM)
+                'catchall'   => array(10,  25),
             );
 
-            static $error_counts = array(
-                'identifier' => 0,
-                'corruption' => 0,
-                'catchall'   => 0,
-            );
-
-            $error_counts[$type]++;
-            if ($error_counts[$type] > $error_thresholds[$type][(int)$is_parent])
+            $that->error_counts[$type]++;
+            if ($that->error_counts[$type] > $error_thresholds[$type][(int)$is_parent])
                 $that->fatal_error("IPC '$type' Error Threshold Reached");
         };
 

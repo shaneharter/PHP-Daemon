@@ -287,7 +287,7 @@ class Daemon extends Core_Daemon
 
     protected function log_file()
     {
-        $dir = '/var/log/daemons/exampleworkers';
+        $dir = '/var/log/daemons/primenumbers';
         if (@file_exists($dir) == false)
             @mkdir($dir, 0777, true);
 
