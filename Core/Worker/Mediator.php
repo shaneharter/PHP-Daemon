@@ -1093,21 +1093,21 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     public function garbage_collector() {
         $called = array();
-        foreach ($this->calls as $item_id => &$item) {
-            if ($item->gc)
+        foreach ($this->calls as $call_id => &$call) {
+            if ($call->gc)
                 continue;
 
-            if ($item->status == self::CALLED) {
-                $called[] = $item_id;
+            if ($call->status == self::CALLED) {
+                $called[] = $call_id;
                 continue;
             }
 
             // Garbage Collect completed and timed-out call structs
-            if (in_array($item->status, array(self::TIMEOUT, self::RETURNED, self::CANCELLED))) {
-                unset($item->args, $item->return);
-                $item->gc = true;
-                if ($this->is_parent && shm_has_var($this->shm, $item_id))
-                    shm_remove_var($this->shm, $item_id);
+            if (in_array($call->status, array(self::TIMEOUT, self::RETURNED, self::CANCELLED))) {
+                unset($call->args, $call->return);
+                $call->gc = true;
+                if ($this->is_parent && shm_has_var($this->shm, $call_id))
+                    shm_remove_var($this->shm, $call_id);
 
                 continue;
             }
@@ -1132,25 +1132,26 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $cutoff = min($cutoff, $process->job);
         }
 
-        foreach($called as $item_id) {
-            if ($item_id > $cutoff)
+        foreach($called as $call_id) {
+            if ($call_id > $cutoff)
                 continue;
 
-            $item = $this->calls[$item_id];
+            $call = $this->calls[$call_id];
 
             // If there's a retry count above our threshold log and skip to avoid endless requeueing
-            if ($item->retries > 3) {
-                $this->error("Dormant Call. Call {$item->id} will not be requeued. Requeue threshold reached.");
+            if ($call->retries > 3) {
+                $this->update_struct_status($call, self::CANCELLED);
+                $this->error("Dormant Call. Requeue threshold reached. Call {$call->id} will not be requeued.");
                 continue;
             }
 
-            // Requeue the message. If we are wrong and the originally queued message is read off the queue by a worker,
-            // the timestamp on that message will not match the shm value. It will mark it cancelled.
-            $this->log("Dormant Call. Requeuing Call {$item->id} To `{$item->method}`");
+            // Requeue the message. If somehow the original message is processed by a worker (eg it's processed out of order)
+            // the worker will compare timestamps and mark the original call message as CANCELLED.
+            $this->log("Dormant Call. Requeuing Call {$call->id} To `{$call->method}`");
 
-            $item->retries++;
-            $item->errors = 0;
-            $this->call($item);
+            $call->retries++;
+            $call->errors = 0;
+            $this->call($call);
         }
     }
 
