@@ -334,7 +334,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
             return;
 
         if ($this->timeout > 0)
-            $timeout = $this->timeout;
+            $timeout = min($this->timeout, 60);
         else
             $timeout = 30;
 
