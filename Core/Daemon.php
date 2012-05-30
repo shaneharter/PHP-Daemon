@@ -542,8 +542,8 @@ abstract class Core_Daemon
             case -1:
                 // Parent Process - Fork Failed
                 $e = new Exception();
-                $this->log('Task failed: Could not fork.', true);
-                $this->log($e->getTraceAsString());
+                $this->error('Task failed: Could not fork.');
+                $this->error($e->getTraceAsString());
                 return false;
                 break;
 
@@ -569,7 +569,7 @@ abstract class Core_Daemon
                 }
                 catch (Exception $e)
                 {
-                    $this->log('Exception Caught in Fork: ' . $e->getMessage());
+                    $this->error('Exception Caught in Fork: ' . $e->getMessage());
                 }
 
                 exit;
@@ -847,7 +847,7 @@ abstract class Core_Daemon
             // Sleep for 1/100 a second.
             usleep(10000);
             if ($this->loop_interval > 0)
-                $this->log('Run Loop Taking Too Long. Duration: ' . $stats['duration'] . ' Interval: ' . $this->loop_interval, true);
+                $this->error('Run Loop Taking Too Long. Duration: ' . $stats['duration'] . ' Interval: ' . $this->loop_interval);
         }
 
         $this->stats[] = $stats;
