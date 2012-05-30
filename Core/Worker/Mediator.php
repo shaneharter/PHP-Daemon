@@ -48,6 +48,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
     const CALLED = 1;
     const RUNNING = 2;
     const RETURNED = 3;
+    const CANCELLED = 4;
     const TIMEOUT = 10;
 
     /**
@@ -91,7 +92,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
     /**
      * Running worker processes
-     * @var array
+     * @var stdClass[]
      */
     protected $processes = array();
 
@@ -648,8 +649,13 @@ abstract class Core_Worker_Mediator implements Core_ITask
         for ($i=0; $i<$forks; $i++) {
 
             if ($pid = $this->daemon->task($this)) {
+
+                $process = new stdClass();
+                $process->microtime = microtime(true);
+                $process->job = null;
+
                 // @todo Consider merging these two maps. Maybe a class var array in Core_Worker_Mediator would be cleaner?
-                $this->processes[$pid] = microtime(true);
+                $this->processes[$pid] = $process;
                 $this->daemon->worker_pid($this->alias, $pid);
                 continue;
             }
@@ -681,7 +687,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         static $last_failure = null;
 
         // Keep track of processes that fail within the first 30 seconds of being forked.
-        if (isset($this->processes[$pid]) && time() - $this->processes[$pid] < 30) {
+        if (isset($this->processes[$pid]) && time() - $this->processes[$pid]->microtime < 30) {
             $failures++;
             $last_failure = time();
         }
@@ -724,7 +730,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 $message_type = $message = $message_error = null;
                 if (msg_receive($this->queue, self::WORKER_RUNNING, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
                     $call_id = $this->message_decode($message);
+                    $call = $this->calls[$call_id];
                     $this->running_calls[$call_id] = true;
+                    $this->processes[$call->pid]->job = $call_id;
                     $this->log('Job ' . $call_id . ' Is Running');
                     continue;
                 }
@@ -740,6 +748,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     $call = $this->calls[$call_id];
 
                     unset($this->running_calls[$call_id]);
+                    $this->processes[$call->pid]->job = $call_id;
 
                     $on_return = $this->on_return;
                     if (is_callable($on_return))
@@ -750,8 +759,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     if (!$this->memory_allocation_warning && $call->size > ($this->memory_allocation / 50)) {
                         $this->memory_allocation_warning = true;
                         $suggested_size = $call->size * 60;
-                        $this->log("WARNING: The memory allocated to this worker is too low and may lead to failures and fatal out-of-shared-memory errors.\n".
-                                   "         Based on this job, the memory allocation should be no less than {$suggested_size} bytes. Current allocation: {$this->memory_allocation} bytes.");
+                        $this->log("WARNING: The memory allocated to this worker is too low and may lead to out-of-shared-memory errors.\n".
+                                   "         Based on this job, the memory allocation should be at least {$suggested_size} bytes. Current allocation: {$this->memory_allocation} bytes.");
                     }
 
                     $this->log('Job ' . $call_id . ' Is Complete');
@@ -792,6 +801,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 }
             }
 
+            // Run the Garbage Collector
+            if (mt_rand(1, 20) == 1)
+                $this->garbage_collector();
+
         } catch (Exception $e) {
             $this->log(__METHOD__ . ' Failed: ' . $e->getMessage(), true);
         }
@@ -804,22 +817,31 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     public function start() {
         $count = 0;
-        $pid = getmypid();
-
         while(!$this->is_parent && !$this->shutdown) {
+
+            // Give the CPU a break - Sleep for 1/20 a second.
+            usleep(50000);
+
+            $max_jobs       = $count++ >= 25;
+            $min_runtime    = $this->daemon->runtime() >= (60 * 5);
+            $max_runtime    = $this->daemon->runtime() >= (60 * 30);
+            $this->shutdown = ($max_runtime || $min_runtime && $max_jobs);
+
+            if (mt_rand(1, 5) == 1)
+                $this->garbage_collector();
+
             $message_type = $message = $message_error = null;
             if (msg_receive($this->queue, self::WORKER_CALL, $message_type, $this->memory_allocation, $message, true, 0, $message_error)) {
-
-                $max_jobs       = $count++ >= 25;
-                $min_runtime    = $this->daemon->runtime() >= (60 * 5);
-                $max_runtime    = $this->daemon->runtime() >= (60 * 30);
-                $this->shutdown = ($max_runtime || $min_runtime && $max_jobs);
-
                 try {
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
 
-                    $call->pid = $pid;
+                    if ($call->status == self::CANCELLED) {
+                        $this->log("Call {$call_id} Cancelled By Mediator -- Skipping...");
+                        continue;
+                    }
+
+                    $call->pid = getmypid();
                     $this->update_struct_status($call, self::RUNNING);
                     if (!$this->message_encode($call_id)) {
                         $this->log("Call {$call_id} Could Not Ack Running.");
@@ -833,13 +855,12 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     }
                 }
                 catch (Exception $e) {
-                    $this->log($e->getMessage(), true);
+                    $this->error($e->getMessage());
                 }
 
-                // Give the CPU a break - Sleep for 1/50 a second.
-                usleep(50000);
                 continue;
             }
+
             $this->ipc_error($message_error);
         }
     }
@@ -852,7 +873,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     protected function message_encode($call_id) {
 
-        $call = $this->calls[$call_id];
+        $call = $this->get_struct($call_id);
 
         $queue_lookup = array(
             self::UNCALLED  => self::WORKER_CALL,
@@ -907,24 +928,15 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @throws Exception
      */
     protected function message_decode(Array $message) {
-
-        // Periodically garbage-collect call structs: Keep the metadata but remove the (potentially large) args and return values
-        // The parent will also ensure any GC'd items are removed from shared memory though in normal operation they're deleted when they return
-        if (mt_rand(1, 20) == 10)
-            foreach ($this->calls as $item_id => $item)
-                if (!$item->gc && in_array($item->status, array(self::TIMEOUT, self::RETURNED))) {
-                    unset($item->args, $item->return);
-                    $item->gc = true;
-                    $this->log("Garbage Collecting $item->id at status $item->status");
-                    if ($this->is_parent && shm_has_var($this->shm, $item_id))
-                        shm_remove_var($this->shm, $item_id);
-                }
-
         $that = $this;
         switch($message['status']) {
             case self::UNCALLED:
                 $decoder = function($message) use($that) {
-                    return shm_get_var($that->shm, $message['call_id']);
+                    $call = shm_get_var($that->shm, $message['call_id']);
+                    if ($message['microtime'] < $call->time[Core_Worker_Mediator::UNCALLED])    // Requeued - Cancel this call
+                        $that->update_struct_status($call, Core_Worker_Mediator::CANCELLED);
+
+                    return $call;
                 };
                 break;
 
@@ -941,6 +953,14 @@ abstract class Core_Worker_Mediator implements Core_ITask
             default:
                 $decoder = function($message) use($that) {
                     $call = $that->get_struct($message['call_id']);
+
+                    // If we don't have a local copy of $call the most likely scenario is a --recoverworkers situation.
+                    // Create a placeholder. We'll get a full copy of the struct when it's returned from the worker
+                    if (!$call) {
+                        $call = $that->create_struct();
+                        $call->id = $message['call_id'];
+                    }
+
                     $that->update_struct_status($call, $message['status']);
                     $call->pid = $message['pid'];
                     return $call;
@@ -969,6 +989,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected function call(stdClass $call) {
 
         try {
+            $this->update_struct_status($call, self::UNCALLED);
             $this->calls[$call->id] = $call;
             if ($this->message_encode($call->id)) {
                 $this->update_struct_status($call, self::CALLED);
@@ -1016,8 +1037,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
         $call->method = $method;
         $call->args   = $args;
         $call->id     = ++$this->call_count;
-
-        $this->update_struct_status($call, self::UNCALLED);
         return $this->call($call);
     }
 
@@ -1056,13 +1075,83 @@ abstract class Core_Worker_Mediator implements Core_ITask
     }
 
     /**
-     * Update the status in the supplied Call Struct
+     * Update the status of the supplied Call Struct in-place.
      * @param stdClass $call
      * @param $status
+     * @return void
      */
     public function update_struct_status(stdClass $call, $status) {
-        $call->status = $status;
+        $call->status = $status;        // Periodically garbage-collect call structs: Keep the metadata but remove the (potentially large) args and return values
+        // The parent will also ensure any GC'd items are removed from shared memory though in normal operation they're deleted when they return
         $call->time[$status] = microtime(true);
+    }
+
+    /**
+     * Periodically garbage-collect call structs: Keep the metadata but remove the (potentially large) args and return values
+     * The parent will also ensure any GC'd items are removed from shared memory though in normal operation they're deleted when they return
+     * @return void
+     */
+    public function garbage_collector() {
+        $called = array();
+        foreach ($this->calls as $item_id => &$item) {
+            if ($item->gc)
+                continue;
+
+            if ($item->status == self::CALLED) {
+                $called[] = $item_id;
+                continue;
+            }
+
+            // Garbage Collect completed and timed-out call structs
+            if (in_array($item->status, array(self::TIMEOUT, self::RETURNED, self::CANCELLED))) {
+                unset($item->args, $item->return);
+                $item->gc = true;
+                if ($this->is_parent && shm_has_var($this->shm, $item_id))
+                    shm_remove_var($this->shm, $item_id);
+
+                continue;
+            }
+        }
+
+        if (!$this->is_parent || count($called) == 0)
+            return;
+
+        // We need to determine if we have any structs stuck in CALLED status. If all processes have acked an item_id
+        // higher than a CALLED struct, we know that either:
+        // 1) There was a silent message-queue failure and the item was never presented to workers
+        // 2) A worker received the message but fatal-errored before acking
+        // 3) A worker received the message but a message queue failure prevented the acks being sent.
+        // @todo On the off chance #3 was true, the job may have been finished. Give a try to checking SHM for that and processing the result.
+
+        $cutoff = $this->call_count;
+        foreach($this->processes as $process) {
+            if ($process->job === null) {
+                $cutoff = 0;
+                break;
+            }
+            $cutoff = min($cutoff, $process->job);
+        }
+
+        foreach($called as $item_id) {
+            if ($item_id > $cutoff)
+                continue;
+
+            $item = $this->calls[$item_id];
+
+            // If there's a retry count above our threshold log and skip to avoid endless requeueing
+            if ($item->retries > 3) {
+                $this->error("Dormant Call. Call {$item->id} will not be requeued. Requeue threshold reached.");
+                continue;
+            }
+
+            // Requeue the message. If we are wrong and the originally queued message is read off the queue by a worker,
+            // the timestamp on that message will not match the shm value. It will mark it cancelled.
+            $this->log("Dormant Call. Requeuing Call {$item->id} To `{$item->method}`");
+
+            $item->retries++;
+            $item->errors = 0;
+            $this->call($item);
+        }
     }
 
     /**
@@ -1168,10 +1257,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
         if (empty($call->method))
             throw new Exception(__METHOD__ . " Failed. A valid call struct is required.");
 
-        $this->update_struct_status($call, self::UNCALLED);
-        $call->retries++;
-
         $this->log("Retrying Call {$call->id} To `{$call->method}`");
+
+        $call->retries++;
+        $call->errors = 0;
         return $this->call($call);
     }
 
