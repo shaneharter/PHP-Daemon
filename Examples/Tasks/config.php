@@ -1,38 +1,32 @@
 <?php
 
 /**
- * This daemon, plugins or workers do not explicitly rely on anything here. You can integrate the Daemon library
- * into any existing bootstrap code that you may have.
  *
- * Note: When you create your daemon you will certainly need to use the filesystem from time to time. It's a good practice
- * to use a BASE_PATH constant of some kind. If you use "./" or similar relative paths, you will probably have trouble if/when
- * your daemon process is started in different ways: From the command-line ("./" will work) to Crontab (it will not), to
- * supervisord and daemontools (your mileage may vary).
+ * Note: Nothing in this config file is specifically required to run a PHP Simple Daemon application. You can integrate it
+ * into an existing bootstrap if you want.
+ *
+ * Note: When using external tools (like crontab or process managers like supervisord) the working directory may be different
+ * than what you expect: Using relative paths and "./" based paths may not work as expected. You should always use absolute
+ * paths when accessing filesystem resources. Setting a constant like we do with BASE_PATH below can be helpful.
  *
  */
 
+date_default_timezone_set('America/Los_Angeles');
+
+// The custom error handlers that ship with PHP Simple Daemon respect all PHP INI error settings.
 ini_set('error_log', '/var/log/phpcli');
 ini_set('display_errors', 0);
 
-date_default_timezone_set('America/Los_Angeles');
-
-// Define path to project root directory
+// Define a simple Auto Loader:
+// Add the current application and the PHP Simple Daemon ./Core library to the existing include path
+// Then set an __autoload function that uses Zend Framework naming conventions.
 define("BASE_PATH", dirname(__FILE__));
-
-// Define application environment
-defined('AE') || define('AE', (getenv('AE') ? getenv('AE') : 'production'));
-
-// Define a simple Auto Loader
 set_include_path(implode(PATH_SEPARATOR, array(
-    realpath(BASE_PATH . '/Core'),
-    realpath(BASE_PATH . '/Example'),
-    realpath(BASE_PATH . '/ExampleWorkers'),
+    realpath(BASE_PATH),
+    realpath(BASE_PATH . '/../../'),
+    realpath(BASE_PATH . '/../../Core'),
     get_include_path(),
 )));
-
-function pathify($class_name) {
-    return str_replace("_", "/", $class_name) . ".php";
-}
 
 function __autoload($class_name)
 {
@@ -40,3 +34,6 @@ function __autoload($class_name)
     require_once $classFile;
 }
 
+function pathify($class_name) {
+    return str_replace("_", "/", $class_name) . ".php";
+}

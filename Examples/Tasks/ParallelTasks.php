@@ -1,12 +1,14 @@
 <?php
 
-class Examples_Tasks_App extends Core_Daemon
+class ParallelTasks extends Core_Daemon
 {
     protected  $loop_interval = 1;
 
+    /**
+     * The only plugin we're using is a simple file-based lock to prevent 2 instances from running
+     */
 	protected function setup_plugins()
 	{
-        // Set our Lock Provider
         $this->plugin('Lock_File');
 	}
 	

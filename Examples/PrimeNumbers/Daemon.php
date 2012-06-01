@@ -207,7 +207,7 @@ class Daemon extends Core_Daemon
             else
                 $this->log("Job Failed.");
 
-            if ($sql)
+            if (!empty($sql))
                 if (false == mysqli_query($this->db, $sql))
                     $this->reconnect_db($sql);
 
