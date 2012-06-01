@@ -444,6 +444,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $that->error_counts[$type]++;
             if ($that->error_counts[$type] > $error_thresholds[$type][(int)$is_parent])
                 $that->fatal_error("IPC '$type' Error Threshold Reached");
+            else
+                $that->log("Incrementing Error Count for {$type} to " . $that->error_counts[$type]);
+
+            die("log??????????????");
         };
 
         // Most of the error handling strategy is simply: Sleep for a moment and try again.
@@ -708,6 +712,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $failures = 0;
             $last_failure = null;
         }
+
         unset($this->processes[$pid]);
     }
 
@@ -737,7 +742,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
                     $this->running_calls[$call_id] = true;
-                    $this->processes[$call->pid]->job = $call_id;
+
+                    // It's possible the process exited after sending this ack, ensure it's still valid.
+                    if (isset($this->processes[$call->pid]))
+                        $this->processes[$call->pid]->job = $call_id;
+
                     $this->log('Job ' . $call_id . ' Is Running');
                     continue;
                 }
@@ -753,7 +762,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     $call = $this->calls[$call_id];
 
                     unset($this->running_calls[$call_id]);
-                    $this->processes[$call->pid]->job = $call_id;
+
+                    // It's possible the process exited after sending this ack, ensure it's still valid.
+                    if (isset($this->processes[$call->pid]))
+                        $this->processes[$call->pid]->job = $call_id;
 
                     $on_return = $this->on_return;
                     if (is_callable($on_return))
@@ -832,6 +844,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $max_runtime    = $this->daemon->runtime() >= (60 * 30);
             $this->shutdown = ($max_runtime || $min_runtime && $max_jobs);
 
+            if ($this->shutdown)
+                $this->log("Recycling Worker...");
+
             if (mt_rand(1, 5) == 1)
                 $this->garbage_collector();
 
@@ -840,6 +855,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 try {
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
+
+                    if (($call_id == 18 || $call_id == 28 || $call_id == 38) && mt_rand(1,3) != 2)
+                        continue;
 
                     if ($call->status == self::CANCELLED) {
                         $this->log("Call {$call_id} Cancelled By Mediator -- Skipping...");
@@ -1094,6 +1112,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
     /**
      * Periodically garbage-collect call structs: Keep the metadata but remove the (potentially large) args and return values
      * The parent will also ensure any GC'd items are removed from shared memory though in normal operation they're deleted when they return
+     * Essentially a mark-and-sweep strategy. The garbage collector will also do some analysis on calls that seem frozen
+     * and attempts to retry them when appropriate.
      * @return void
      */
     public function garbage_collector() {
@@ -1121,27 +1141,27 @@ abstract class Core_Worker_Mediator implements Core_ITask
         if (!$this->is_parent || count($called) == 0)
             return;
 
-        // We need to determine if we have any structs stuck in CALLED status. If all processes have acked an item_id
-        // higher than a CALLED struct, we know that either:
+        // We need to determine if we have any structs stuck in CALLED status. This could happen in a few scenarios:
         // 1) There was a silent message-queue failure and the item was never presented to workers
         // 2) A worker received the message but fatal-errored before acking
         // 3) A worker received the message but a message queue failure prevented the acks being sent.
         // @todo On the off chance #3 was true, the job may have been finished. Give a try to checking SHM for that and processing the result.
 
-        $cutoff = $this->call_count;
+        // Look at all the jobs recently acked and determine which of them was called first. Get the time of that call as the $cutoff.
+        // Any structs in CALLED status since before that $cutoff will be requeued.
+
+        $cutoff = $this->calls[$this->call_count]->times[self::CALLED];
         foreach($this->processes as $process) {
-            if ($process->job === null) {
-                $cutoff = 0;
-                break;
-            }
-            $cutoff = min($cutoff, $process->job);
+            if ($process->job === null && time() - $process->timestamp < 30)
+                return; // Give processes time to ack their first job
+
+            $cutoff = min($cutoff, $this->calls[$process->job]->times[self::CALLED]);
         }
 
         foreach($called as $call_id) {
-            if ($call_id > $cutoff)
-                continue;
-
             $call = $this->calls[$call_id];
+            if ($call->times[self::CALLED] > $cutoff)
+                continue;
 
             // If there's a retry count above our threshold log and skip to avoid endless requeueing
             if ($call->retries > 3) {
@@ -1150,8 +1170,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 continue;
             }
 
-            // Requeue the message. If somehow the original message is processed by a worker (eg it's processed out of order)
-            // the worker will compare timestamps and mark the original call message as CANCELLED.
+            // Requeue the message. If somehow the original message is still out there the worker will compare timestamps
+            // and mark the original call as CANCELLED.
             $this->log("Dormant Call. Requeuing Call {$call->id} To `{$call->method}`");
 
             $call->retries++;
