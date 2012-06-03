@@ -274,7 +274,23 @@ abstract class Core_Daemon
 
         $this->start_time = time();
         $this->pid(getmypid());
+        
+        $this->_opts = new Core_Console_Getopt(
+            array(
+                'h|H|help' => 'Show this help',
+                'i' => 'Print any daemon install instructions to the screen',
+                'I-s' => 'Create init/config script. You must pass in a name of a template from the /Templates directory',
+                'd' => 'Daemon, detach and run in the background',
+                'p=s' => 'File to write process ID out to',
+                'recoverworkers' => 'Attempt to recover pending and incomplete calls from a previous instance
+                of the daemon. Should be run under supervision after a daemon crash. Experimental.',
+                'debugworkers' => 'Run workers under a debug console. Provides tools to debug the inter-process
+                communication between workers. onsole will only be displayed if Workers are used in your daemon'
+            )
+        );
+        
         $this->getopt();
+        $this->work_on_getopt();
     }
 
     /**
@@ -1056,53 +1072,44 @@ abstract class Core_Daemon
      */
     protected function getopt()
     {
-        $this->_opts = new Core_Console_Getopt(
-            array(
-                'h|H|help' => 'Show this help',
-                'i' => 'Print any daemon install instructions to the screen',
-                'I-s' => 'Create init/config script. You must pass in a name of a template from the /Templates directory',
-                'd' => 'Daemon, detach and run in the background',
-                'p=s' => 'File to write process ID out to',
-                'recoverworkers' => 'Attempt to recover pending and incomplete calls from a previous instance 
-                    of the daemon. Should be run under supervision after a daemon crash. Experimental.',
-                'debugworkers' => 'Run workers under a debug console. Provides tools to debug the inter-process 
-                    communication between workers. onsole will only be displayed if Workers are used in your daemon'
-            )
-        );
         
+    }
+    
+    protected function work_on_getopt()
+    {
         $opts = $this->_opts;
-
+        
         $opts = $opts->parse();
         if (isset($opts['H']) || isset($opts['h']))
             $this->show_help();
-
+        
         if (isset($opts['i']))
             $this->show_install_instructions();
-
+        
         if (isset($opts['I']))
             $this->create_init_script($opts['I'], isset($opts['install']));
-
+        
         if (isset($opts['d'])) {
             $pid = pcntl_fork();
             if ($pid > 0)
                 exit();
-
+        
             $this->daemon = true;
             $this->pid(getmypid()); // We have a new pid now
         }
-
+        
         $this->recover_workers = isset($opts['recoverworkers']);
         $this->debug_workers = isset($opts['debugworkers']);
         $this->verbose = $this->daemon == false && $this->debug_workers == false;
-
+        
         if (isset($opts['p'])) {
             $handle = @fopen($opts['p'], 'w');
             if (!$handle)
                 $this->show_help('Unable to write PID to ' . $opts['p']);
-
+        
             fwrite($handle, $this->pid);
             fclose($handle);
-
+        
             $this->pid_file = $opts['p'];
         }
     }
