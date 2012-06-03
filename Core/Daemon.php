@@ -171,7 +171,11 @@ abstract class Core_Daemon
     private static $filename = false;
 
 
-
+    /**
+     * 
+     * @var Core_Console_Getopt
+     */
+    protected $_opts;
 
     /**
      * Implement this method to define plugins
@@ -1045,12 +1049,30 @@ abstract class Core_Daemon
 
     /**
      * Handle command line arguments. To easily extend, just add parent::getopt at the TOP of your overloading method.
+     * 
+     * @todo move to better getopt
+     * 
      * @return void
      */
     protected function getopt()
     {
-        $opts = getopt('hHiI:o:dp:', array('install', 'recoverworkers', 'debugworkers'));
+        $this->_opts = new Core_Console_Getopt(
+            array(
+                'h|H|help' => 'Show this help',
+                'i' => 'Print any daemon install instructions to the screen',
+                'I-s' => 'Create init/config script. You must pass in a name of a template from the /Templates directory',
+                'd' => 'Daemon, detach and run in the background',
+                'p=s' => 'File to write process ID out to',
+                'recoverworkers' => 'Attempt to recover pending and incomplete calls from a previous instance 
+                    of the daemon. Should be run under supervision after a daemon crash. Experimental.',
+                'debugworkers' => 'Run workers under a debug console. Provides tools to debug the inter-process 
+                    communication between workers. onsole will only be displayed if Workers are used in your daemon'
+            )
+        );
+        
+        $opts = $this->_opts;
 
+        $opts = $opts->parse();
         if (isset($opts['H']) || isset($opts['h']))
             $this->show_help();
 
@@ -1092,40 +1114,7 @@ abstract class Core_Daemon
      */
     protected function show_help($msg = '')
     {
-        $out = array('');
-
-        if ($msg) {
-            $out[] =  '';
-            $out[] = 'ERROR:';
-            $out[] = ' ' . wordwrap($msg, 72, "\n ");
-        }
-
-        echo get_class($this);
-        $out[] =  'USAGE:';
-        $out[] =  ' # ' . basename(self::$filename) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--recoverworkers] [--debugworkers]';
-        $out[] =  '';
-        $out[] =  'OPTIONS:';
-        $out[] =  ' -H Shows this help';
-        $out[] =  ' -i Print any daemon install instructions to the screen';
-        $out[] =  ' -I Create init/config script';
-        $out[] =  '    You must pass in a name of a template from the /Templates directory';
-        $out[] =  '    OPTIONS:';
-        $out[] =  '     --install';
-        $out[] =  '       Install the script to /etc/init.d. Otherwise just output the script to stdout.';
-        $out[] =  '';
-        $out[] =  ' -d Daemon, detach and run in the background';
-        $out[] =  ' -p PID_FILE File to write process ID out to';
-        $out[] =  '';
-        $out[] =  ' --recoverworkers';
-        $out[] =  '   Attempt to recover pending and incomplete calls from a previous instance of the daemon. Should be run under supervision after a daemon crash. Experimental.';
-        $out[] =  '';
-        $out[] =  ' --debugworkers';
-        $out[] =  '   Run workers under a debug console. Provides tools to debug the inter-process communication between workers.';
-        $out[] =  '   Console will only be displayed if Workers are used in your daemon';
-        $out[] =  '';
-        $out[] =  '';
-
-        echo implode("\n", $out);
+        echo $this->_opts->getUsageMessage() . PHP_EOL;
         exit();
     }
 
