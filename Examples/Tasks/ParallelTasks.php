@@ -56,7 +56,7 @@ class ParallelTasks extends Core_Daemon
 	 */
 	protected function log_file()
 	{	
-		$dir = '/var/log/daemons/example';
+		$dir = '/var/log/daemons/paralleltasks';
 		if (@file_exists($dir) == false)
 			@mkdir($dir, 0777, true);
 		
