@@ -64,7 +64,7 @@ class Daemon extends Core_Daemon
         //      If you allocate to little memory, a WARNING will be logged to the Event log: Keep an eye out for it during your development process.
         //
         // - By convention, workers are named in UpperCase
-        // - Look at App_Prime to see the available methods. They are: sieve, is_prime, primes_among
+        // - Look at Workers_Primes to see the available methods. They are: sieve, is_prime, primes_among
 
         $this->worker('PrimeNumbers', new Workers_Primes());
         $this->PrimeNumbers->timeout(60);
@@ -241,9 +241,8 @@ class Daemon extends Core_Daemon
             $rand = mt_rand(10000, 1000000);
             $primes = $this->PrimeNumbers->inline()->sieve($rand, $rand + $rand);
 
-            $this->log("Factors: " . print_r($this->GetFactors->inline("bef"), true));
-
-            // Remember, you're calling the method directly: Timeouts are not enforced. The onReturn callback is not called.
+            // Remember, you're calling the method directly:
+            // Timeouts are not enforced. The onReturn callback is not called.
             $this->log("Inline sieve() complete. Prime Numbers Returned: " . count($primes));
         }
     }
@@ -265,7 +264,7 @@ class Daemon extends Core_Daemon
     /**
      * Update the database record for the job specified by the $call struct
      * Intended to be used in an onTimeout callback, which is called by the Worker and passed an object w/
-     * all the call datails
+     * all the call details
      *
      * @param stdClass $call
      * @return void
@@ -277,12 +276,25 @@ class Daemon extends Core_Daemon
             $this->reconnect_db($sql);
     }
 
+    /**
+     * A common problem when using resources (like a MySQL Connection) in long-running, stateful apps like a Daemon is disconnected
+     * resources. If you check isResource, it will appear fine. But when you run queries you get errors like "MySQL Has Gone Away."
+     *
+     * Use a simple strategy in this Example. If the query returns false, pass it to this method to reconnect the DB and retry
+     * the original query. If that fails, log it. I'm a big fan personally of logging SQL queries after an error: Not only does it
+     * let you attempt the query to reproduce the failure, but if it's an insert or update you're going to preserve whatever state
+     * or data the query holds.
+     *
+     * @param $sql
+     */
     public function reconnect_db($sql) {
         usleep(25000);
         $this->db = mysqli_connect('localhost', 'root', 'root');
         mysqli_select_db($this->db, 'daemon');
-        if (!mysqli_query($this->db, $sql))
+        if (!mysqli_query($this->db, $sql)) {
             $this->log(mysqli_error($this->db));
+            $this->log($sql);
+        }
     }
 
     protected function log_file()
