@@ -214,7 +214,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
     /**
      * How big, at any time, can the IPC shared memory allocation be.
-     * Default is 5MB. May need to be increased if you are passing very large datasets as Arguments and Return values.
+     * Default is 5MB. Will need to be increased if you are passing large datasets as Arguments or Return values.
      * @example Allocate shared memory using $this->malloc();
      * @var float
      */
@@ -715,9 +715,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
     }
 
     /**
-     * Called in the parent process, once per each iteration in the daemons run() loop. Checks messages queues for information from worker
-     * processes, and enforces timeouts when applicable.
-     * Note: Called only in the parent (daemon) process
+     * Called in each iteration of your daemon's event loop. Listens for worker Acks and enforces timeouts when applicable.
+     * Note: Called only in the parent (daemon) process, attached to the Core_Daemon::ON_PREEXECUTE event.
+     *
      * @return void
      */
     public function run() {
@@ -807,8 +807,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 }
             }
 
-            // If we've killed all our processes -- either timeouts or maybe they fatal-errored -- and we have pending calls
-            // in the queue, create process(es) to run them.
+            // If we've killed all our processes -- either timeouts or maybe they fatal-errored -- and we have pending
+            // calls in the queue, fork()
             if (count($this->processes) == 0) {
                 $stat = $this->ipc_status();
                 if ($stat['messages'] > 0) {
@@ -816,7 +816,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 }
             }
 
-            // Run the Garbage Collector
+            // Run the Garbage Collector periodically
             if (mt_rand(1, 20) == 1)
                 $this->garbage_collector();
 
@@ -827,7 +827,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
     /**
      * Starts the event loop in the Forked process that will listen for messages
-     * Note: Runs only in the child (forked) process
+     * Note: Runs only in the worker (forked) process
      * @return void
      */
     public function start() {
@@ -853,9 +853,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 try {
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
-
-                    if (($call_id == 18 || $call_id == 28 || $call_id == 38) && mt_rand(1,3) != 2)
-                        continue;
 
                     if ($call->status == self::CANCELLED) {
                         $this->log("Call {$call_id} Cancelled By Mediator -- Skipping...");
@@ -1102,8 +1099,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return void
      */
     public function update_struct_status(stdClass $call, $status) {
-        $call->status = $status;        // Periodically garbage-collect call structs: Keep the metadata but remove the (potentially large) args and return values
-        // The parent will also ensure any GC'd items are removed from shared memory though in normal operation they're deleted when they return
+        $call->status = $status;
         $call->time[$status] = microtime(true);
     }
 
@@ -1139,14 +1135,14 @@ abstract class Core_Worker_Mediator implements Core_ITask
         if (!$this->is_parent || count($called) == 0)
             return;
 
-        // We need to determine if we have any structs stuck in CALLED status. This could happen in a few scenarios:
-        // 1) There was a silent message-queue failure and the item was never presented to workers
-        // 2) A worker received the message but fatal-errored before acking
+        // We need to determine if we have any "dropped calls" in CALLED status. This could happen in a few scenarios:
+        // 1) There was a silent message-queue failure and the item was never presented to workers.
+        // 2) A worker received the message but fatal-errored before acking.
         // 3) A worker received the message but a message queue failure prevented the acks being sent.
         // @todo On the off chance #3 was true, the job may have been finished. Give a try to checking SHM for that and processing the result.
 
         // Look at all the jobs recently acked and determine which of them was called first. Get the time of that call as the $cutoff.
-        // Any structs in CALLED status since before that $cutoff will be requeued.
+        // Any structs in CALLED status that were called prior to that $cutoff have been dropped and will be requeued.
 
         $cutoff = $this->calls[$this->call_count]->times[self::CALLED];
         foreach($this->processes as $process) {
@@ -1164,13 +1160,13 @@ abstract class Core_Worker_Mediator implements Core_ITask
             // If there's a retry count above our threshold log and skip to avoid endless requeueing
             if ($call->retries > 3) {
                 $this->update_struct_status($call, self::CANCELLED);
-                $this->error("Dormant Call. Requeue threshold reached. Call {$call->id} will not be requeued.");
+                $this->error("Dropped Call. Requeue threshold reached. Call {$call->id} will not be requeued.");
                 continue;
             }
 
             // Requeue the message. If somehow the original message is still out there the worker will compare timestamps
             // and mark the original call as CANCELLED.
-            $this->log("Dormant Call. Requeuing Call {$call->id} To `{$call->method}`");
+            $this->log("Dropped Call. Requeuing Call {$call->id} To `{$call->method}`");
 
             $call->retries++;
             $call->errors = 0;
