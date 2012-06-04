@@ -446,8 +446,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 $that->fatal_error("IPC '$type' Error Threshold Reached");
             else
                 $that->log("Incrementing Error Count for {$type} to " . $that->error_counts[$type]);
-
-            die("log??????????????");
         };
 
         // Most of the error handling strategy is simply: Sleep for a moment and try again.
