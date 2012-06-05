@@ -2,7 +2,7 @@
 
 class Poller extends Core_Daemon
 {
-    protected $loop_interval = 2;
+    protected $loop_interval = 3;
 
     /**
      * This will hold the results returned by our API
@@ -63,15 +63,17 @@ class Poller extends Core_Daemon
 	protected function execute()
 	{
         if (!$this->api->is_idle()) {
+            $this->log("Event Loop Iteration: API Call running in the background worker process.");
             return;
         }
 
         // If the Worker is idle, it means it just returned our stats.
         // Log them and start another request
-        $this->api->poll();
 
         $this->log("Current Sales:   " . $this->results['customers']);
         $this->log("Current Sales Amount: $ " . number_format($this->results['sales'], 2));
+
+        $this->api->poll();
 	}
 
     public function set_results(Array $results) {
@@ -85,12 +87,12 @@ class Poller extends Core_Daemon
 	 */
 	protected function log_file()
 	{	
-		$dir = '/var/log/daemons/example';
+		$dir = '/var/log/daemons/longpoll';
 		if (@file_exists($dir) == false)
 			@mkdir($dir, 0777, true);
 		
 		if (@is_writable($dir) == false)
-			$dir = BASE_PATH . '/example_logs';
+			$dir = BASE_PATH . '/logs';
 		
 		return $dir . '/log_' . date('Ymd');
 	}
