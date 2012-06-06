@@ -29,7 +29,9 @@ Most daemon applications will either use a blocking API library (libevent, socke
 * ###True parallel processing in PHP 
 In a few lines of code you can create asynchronous background processes that let you offload the hard work and keep your daemon process light and responsive. After you pass an object or callback to the workers API, you can call the methods and functions normally. The API intercepts your call and passes the arguments through to the object running in a background process. The method returns instantly and your daemon continues normally.  When work is complete any `onReturn` callbacks you set are called. If things go wrong you've got the ability to enforce a timeout and easily retry the call. 
 
-  PHP Simple Daemon workers are a simple and powerful multi-processing tool in a language with very few of them. (But don't go trying to build a PHP version of Node.js)
+  As an altenative to the persistent, long-running background workers, the Tasks API gives you a simple way to call any method in an ad-hoc background process that will exit when your method is complete. 
+
+  PHP Simple Daemon workers and tasks are simple and powerful multi-processing tools in a language with very few of them. (But don't go trying to build a PHP version of Node.js)
 
   https://github.com/shaneharter/PHP-Daemon/wiki/Named-Workers-Spec
   
@@ -40,7 +42,7 @@ Debugging multi-process applications is notoriously painful and several integrat
 
   Since you cannot run an application like this under xdebug or zend debugger, a debug console is provided that lets you set psuedo breakpoints in your code. Your daemon turns into an interactive shell that gives you the ability to proceed or abort as well as a dozen+ commands to figure out exactly what is happening at any given time. Dump function arguments, eval() custom code, print stack traces, the list goes on. 
   
-  In addition to the integrated debug console, the `/scripts` directory includes a useful signal_console app: Attach to your daemon and easily send and re-send signals. Checkout the `ExampleWorkers` daemon for an example of using a signal handler to mimic occassional real-world events. 
+  In addition to the integrated debug console, the `/scripts` directory includes a useful signal_console app: Attach to your daemon and easily send and re-send signals. Checkout the `PrimeNumbers` application for an example of using a signal handler to mimic occassional real-world events. 
 
   You'll also find the shm_console app that lets you attach to a shared memory address, scan for keys, view them, and even run a `watch` command that prints out a transactional log of creations, updates and deletes.
   
@@ -54,7 +56,7 @@ A simple jQuery-like API lets you add callbacks to daemon lifecycle events (thin
   https://github.com/shaneharter/PHP-Daemon/wiki/Using-callbacks-and-custom-events
 
 * ###Simple Plugins: Because code reuse is better.
-If you care more about building a reusable component with the ability to execute code during the daemon startup process before your application code is called than you do about decoupling, you can create a Plugin simply by implementing the `Core_IPlugin`. Plugins are the easiest way to share code between multiple daemon applications and it can literally be implemented in 3 lines of code. We've got several general-purpose plugins on the drawing board to ship with the Core_Daemon library but currently we're shipping just one. The Ini plugin gives you an easy tool to read and validate any config files you ship with your application.
+If you care more about building a reusable component with the ability to execute code during the daemon startup process before your application code is called than you do about decoupling, you can create a Plugin simply by implementing `Core_IPlugin`. Plugins are the easiest way to share code between multiple daemon applications and it can literally be implemented in 3 lines of code. We've got several general-purpose plugins on the drawing board to ship with the Core_Daemon library but currently we're shipping just one. The Ini plugin gives you an easy tool to read and validate any config files you ship with your application.
 
   https://github.com/shaneharter/PHP-Daemon/wiki/Creating-and-Using-Plugins
 
@@ -92,10 +94,10 @@ Out of the box, your application will respond to 4 signals. You can add-to or ov
 You can run a '-H' help command when you run the Daemon. It will dump a help menu that looks like this, but can be easily overridden for your daemon:
 
 ```
-ExampleWorkers_Daemon
+Examples\PrimeNumbers\Daemon
 USAGE:
  # run.php -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-v] [-p PID_FILE] [--recoverworkers] [--debugworkers]
-
+ 
 OPTIONS:
  -H Shows this help
  -i Print any daemon install instructions to the screen
