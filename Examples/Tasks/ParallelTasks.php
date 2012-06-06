@@ -1,6 +1,7 @@
 <?php
+namespace Examples\Tasks;
 
-class ParallelTasks extends Core_Daemon
+class ParallelTasks extends \Core_Daemon
 {
     protected  $loop_interval = 1;
 

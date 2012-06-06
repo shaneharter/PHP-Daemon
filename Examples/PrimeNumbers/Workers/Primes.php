@@ -1,14 +1,17 @@
 <?php
+
+namespace Examples\PrimeNumbers;
+
 /**
  * Fun with Prime Numbers
  * PHP Simple Daemon Worker
  * @author Shane Harter
  */
-class Workers_Primes implements Core_IWorker
+class Workers_Primes implements \Core_IWorker
 {
     /**
      * Reference to the mediator is automatically provided
-     * @var Core_Worker_Mediator
+     * @var \Core_Worker_Mediator
      */
     public $mediator;
 

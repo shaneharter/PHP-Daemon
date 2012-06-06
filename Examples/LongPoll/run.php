@@ -3,8 +3,10 @@
 require_once 'config.php';
 require_once 'error_handlers.php';
 
-// The daemon needs to know from which file it was executed.
-Poller::setFilename(__FILE__);
+use Examples\LongPoll;
 
-// The run() method will start the daemon loop. 
-Poller::getInstance()->run();
+// The daemon needs to know from which file it was executed.
+LongPoll\Poller::setFilename(__FILE__);
+
+// The run() method will start the daemon event loop.
+LongPoll\Poller::getInstance()->run();

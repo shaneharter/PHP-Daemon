@@ -30,8 +30,9 @@ set_include_path(implode(PATH_SEPARATOR, array(
 
 function __autoload($class_name)
 {
-    $classFile = str_replace("_", "/", $class_name) . ".php";
-    require_once $classFile;
+    $class_name = str_replace('\\', '/', $class_name);
+    $class_name = str_replace('_', '/', $class_name);
+    require_once "$class_name.php";
 }
 
 function pathify($class_name) {

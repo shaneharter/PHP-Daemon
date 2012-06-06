@@ -1,6 +1,14 @@
 <?php
+namespace Examples\LongPoll;
 
-class Poller extends Core_Daemon
+/**
+ * A PHP Simple Daemon example application.
+ * Use a background worker to continuously poll for updated information from an API and bring that information into the
+ * daemon process where it would be manipulated/used/updated/etc.
+ *
+ * @author Shane Harter
+ */
+class Poller extends \Core_Daemon
 {
     protected $loop_interval = 3;
 

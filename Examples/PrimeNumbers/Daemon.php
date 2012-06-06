@@ -1,5 +1,7 @@
 <?php
 
+namespace Examples\PrimeNumbers;
+
 /**
  * This Daemon has been created to demonstrate the Workers API in 2.0.
  *
@@ -10,7 +12,7 @@
  * described in the db.sql file.
  *
  */
-class Daemon extends Core_Daemon
+class Daemon extends \Core_Daemon
 {
     protected $loop_interval = 1;
 
@@ -42,7 +44,7 @@ class Daemon extends Core_Daemon
         // We also have other various settings defined in the ini, so we validate that the ini has both [signals] and [default] section
         // We're using the INI file here only because it's a conveinient way to demonstrate using the INI plugin.
 
-        $this->plugin('settings', new Core_Plugin_Ini());
+        $this->plugin('settings', new \Core_Plugin_Ini());
         $this->settings->filename = BASE_PATH . '/config/settings.ini';
         $this->settings->required_sections = array('signals', 'default');
     }
@@ -147,7 +149,7 @@ class Daemon extends Core_Daemon
         // the workers. Load a configurable signal map from the loaded ini plugin
 
         $that = $this;
-        $this->on(Core_Daemon::ON_SIGNAL, function($signal) use($that) {
+        $this->on(\Core_Daemon::ON_SIGNAL, function($signal) use($that) {
             if (isset($that->settings['signals'][$signal])) {
                 $action = $that->settings['signals'][$signal];
 
