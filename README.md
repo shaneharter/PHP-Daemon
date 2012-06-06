@@ -10,7 +10,7 @@ Create solid, long-running PHP daemon processes by extending the Core_Daemon cla
 * POSIX and PCNTL Extensions for PHP
  
 #### Changes in 2.0:
-* Create long-running async background workers with very little code (See the ExampleWorkers daemon or the docs in the Wiki)
+* Create long-running async background workers with very little code (See the Examples/PrimeNumbers daemon or the docs in the Wiki)
 * Hook into a simple callback system using familiar `on()` & `off()` syntax: Create custom signal handlers, run code before daemon restarts, etc.
 * Create event loops that are not timer-based (build socket-servers, or use blocking system calls with ease)
 * Dozens of small enhancements and bug fixes.
