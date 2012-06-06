@@ -1,4 +1,5 @@
 <?php
+
 namespace Examples\Tasks;
 
 class ParallelTasks extends \Core_Daemon
@@ -16,7 +17,7 @@ class ParallelTasks extends \Core_Daemon
 	/**
 	 * This is where you implement any once-per-execution setup code. 
 	 * @return void
-	 * @throws Exception
+	 * @throws \Exception
 	 */
 	protected function setup()
 	{
@@ -31,16 +32,21 @@ class ParallelTasks extends \Core_Daemon
 	 */
 	protected function execute()
 	{
-        static $i = 0;
-        $i++;
-
-        if ($i == 15) {
+        // Randomly Create Background Tasks
+        if (mt_rand(1, 20) == 1) {
             $this->log("Creating Sleepy Task");
             $this->task(array($this, 'task_sleep'));
         }
 
-        if ($i == 20) {
+        if (mt_rand(1, 40) == 1) {
+            $sleepfor = mt_rand(60, 180);
+            $this->task(new BigTask($sleepfor, "I just woke up from my {$sleepfor} second sleep"));
+        }
+
+        // Randomly Shut Down -- Demonstrate daemon shutdown behavior while background tasks are running
+        if (mt_rand(1, 1000) == 1) {
             $this->log("Shutting Down..");
+            $this->shutdown(true);
         }
 	}
 
@@ -49,7 +55,7 @@ class ParallelTasks extends \Core_Daemon
 		$this->log("Sleeping For 20 Seconds");
         sleep(20);
 	}
-	
+
 	/**
 	 * Dynamically build the file name for the log file. This simple algorithm 
 	 * will rotate the logs once per day and try to keep them in a central /var/log location. 
