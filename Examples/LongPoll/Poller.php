@@ -70,10 +70,16 @@ class Poller extends Core_Daemon
         // If the Worker is idle, it means it just returned our stats.
         // Log them and start another request
 
-        $this->log("Current Sales:   " . $this->results['customers']);
-        $this->log("Current Sales Amount: $ " . number_format($this->results['sales'], 2));
+        // If there isn't results yet, don't display incorrect (empty) values:
+        if (!empty($this->results['customers'])) {
+            $this->log("Current Sales:   " . $this->results['customers']);
+            $this->log("Current Sales Amount: $ " . number_format($this->results['sales'], 2));
+        }
 
-        $this->api->poll();
+        // You can't store state in the worker processes because they can be killed, restarted, timed-out, etc.
+        // So even though we only have 1 worker process, we pass any state data in each call.
+
+        $this->api->poll($this->results);
 	}
 
     public function set_results(Array $results) {

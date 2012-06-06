@@ -61,14 +61,34 @@ class API implements Core_IWorker
     }
 
     /**
+     * This is called during object construction 2to validate any dependencies
+     * @return Array    Return array of error messages (Think stuff like "GD Library Extension Required" or
+     *                  "Cannot open /tmp for Writing") or an empty array
+     */
+    public function check_environment()
+    {
+        $errors = array();
+        if (!!function_exists('curl_init'))
+            $errors[] = 'PHP Curl Extension Required: Recompile PHP using the --with-curl option.';
+
+        // Currently this class just simulates an API call by generating random results and sleeping a random time.
+        // Curl isn't actually being used but it's included here in the interest of making this feel more real and
+        // therefore be a better example application.
+
+        return $errors;
+    }
+
+    /**
      * Poll the API for updated information -- Simulate an API call of varying duration.
      * @return Array    Return associative array of results
      */
-    public function poll()
+    public function poll(Array $existing_results)
     {
-
         static $calls = 0;
         $calls++;
+
+        $this->results = $existing_results;
+        $this->mediator->log('Calling API...');
 
         // Simulate an API call of varying length
         $rand = mt_rand(1,10);
@@ -99,10 +119,9 @@ class API implements Core_IWorker
 
         // Increase the stats in our results array accordingly
         $multiplier = mt_rand(100, 125) / 100;
-        $this->results['customers'] *= $multiplier;
-        $this->results['sales'] *= $multiplier;
+        $this->results['customers'] = intval($this->results['customers'] * $multiplier);
+        $this->results['sales'] = intval($this->results['sales'] * $multiplier);
 
         return $this->results;
     }
-
 }
