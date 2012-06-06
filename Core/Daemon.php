@@ -311,7 +311,7 @@ abstract class Core_Daemon
 
         if (count($errors)) {
             $errors = implode("\n  ", $errors);
-            throw new Exception("Core_Daemon::check_environment() Found The Following Errors:\n  $errors");
+            throw new Exception("Checking Dependencies... Failed:\n  $errors");
         }
     }
 
