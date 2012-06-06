@@ -257,7 +257,7 @@ class Daemon extends \Core_Daemon
      * @param stdClass $call
      * @return void
      */
-    public function job_return(stdClass $call) {
+    public function job_return(\stdClass $call) {
         $sql = sprintf('UPDATE jobs set is_complete=1, completed_at=NOW() where pid=%s and worker="%s" and job=%s', $this->pid(), $call->method, $call->id);
         if (false == mysqli_query($this->db, $sql))
             $this->reconnect_db($sql);
@@ -271,7 +271,7 @@ class Daemon extends \Core_Daemon
      * @param stdClass $call
      * @return void
      */
-    public function job_timeout(stdClass $call) {
+    public function job_timeout(\stdClass $call) {
         $sql = sprintf('UPDATE jobs set is_timeout=1, retries=%s, completed_at=NOW() where pid=%s and worker="%s" and job=%s',
                         $call->retries, $this->pid(), $call->method, $call->id);
         if (false == mysqli_query($this->db, $sql))
