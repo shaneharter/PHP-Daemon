@@ -528,7 +528,7 @@ abstract class Core_Daemon
                     $task->is_parent = false;
 
                 $task->setup();
-                call_user_func_array(array($task, 'start'), func_get_args());
+                call_user_func(array($task, 'start'));
                 $task->teardown();
             };
         } else {
