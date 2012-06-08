@@ -15,6 +15,7 @@
 .cache
 .project
 .settings
+.buildpath
 .tmproj
 nbproject
 Thumbs.db
