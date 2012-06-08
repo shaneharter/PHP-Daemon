@@ -320,11 +320,12 @@ abstract class Core_Daemon
      */
     private function init()
     {
-        $this->loop_interval($this->loop_interval);
         $this->register_signal_handlers();
 
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->setup();
+
+        $this->loop_interval($this->loop_interval);
 
         // Setup each worker pool. If the loop interval is > 1 second, we will use a lazy forking strategy
         // where workers will not be created until they're called.
@@ -599,6 +600,7 @@ abstract class Core_Daemon
                         $raise_logfile_error = false;
                         echo $header;
                         $this->log('Unable to write logfile at ' . $this->log_file() . '. Redirecting logging to stdout.');
+                        $this->verbose(true);
                     }
 
                     throw new Exception("$prefix $message");
