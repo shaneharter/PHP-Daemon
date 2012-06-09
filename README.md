@@ -96,7 +96,7 @@ You can run a '-H' help command when you run the Daemon. It will dump a help men
 ```
 Examples\PrimeNumbers\Daemon
 USAGE:
- # run.php -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-v] [-p PID_FILE] [--recoverworkers] [--debugworkers]
+ # run.php -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--recoverworkers] [--debugworkers]
  
 OPTIONS:
  -H Shows this help
@@ -108,7 +108,6 @@ OPTIONS:
        Install the script to /etc/init.d. Otherwise just output the script to stdout.
 
  -d Daemon, detach and run in the background
- -v Verbose, echo any logged messages. Ignored in Daemon mode. Ignored in --debugworkers mode.
  -p PID_FILE File to write process ID out to
 
  --recoverworkers
