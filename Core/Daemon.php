@@ -321,7 +321,6 @@ abstract class Core_Daemon
      */
     private function init()
     {
-        $this->loop_interval($this->loop_interval);
         $this->register_signal_handlers();
 
         foreach ($this->plugins as $plugin)
@@ -329,6 +328,8 @@ abstract class Core_Daemon
 
         foreach ($this->workers as $worker)
             $this->{$worker}->setup();
+
+        $this->loop_interval($this->loop_interval);
 
         // Our current use of the ON_INIT event is in the Lock provider plugins -- so we can prevent a duplicate daemon
         // process from starting-up. In that case, we want to do that check as early as possible. To accomplish that,
@@ -583,17 +584,25 @@ abstract class Core_Daemon
     }
 
     /**
-     * Log the $message to the $this->log_file and possibly print to stdout.
-     * Multi-Line messages will be handled nicely. This code is pretty ugly but it works and it lets us avoid
-     * forcing another dependency for logging.
+     * Log the $message to the filename returned by Core_Daemon::log_file() and/or optionally print to stdout.
+     * Multi-Line messages will be handled nicely.
+     *
+     * Note: Your log_file() method will be called every 5 minutes (at even increments, eg 00:05, 00:10, 00:15, etc) to
+     * allow you to rotate the filename based on time (one log file per month, day, hour, whatever) if you wish.
+     *
+     * Note: You may find value in overloading this method in your app in favor of a more fully-featured logging tool
+     * like log4php or Zend_Log. There are fantastic logging libraries available, and this simplistic home-grown option
+     * was chosen specifically to avoid forcing another dependency on you.
+     *
      * @param string $message
-     * @param boolean $is_error    When true, an ON_ERROR event will be dispatched.
-     * @param string $label
+     * @param string $label Truncated at 12 chars
      */
     public function log($message, $label = '')
     {
         static $handle = false;
-        static $raise_logfile_error = true;
+        static $log_file = '';
+        static $log_file_check_at = 0;
+        static $log_file_error = false;
 
         $header = "\nDate                  PID   Label         Message\n";
         $date   = date("Y-m-d H:i:s");
@@ -601,14 +610,21 @@ abstract class Core_Daemon
         $label  = str_pad(substr($label, 0, 12), 13, " ", STR_PAD_RIGHT);
         $prefix = "[$date] $pid $label";
 
+        if (time() >= $log_file_check_at && $this->log_file() != $log_file) {
+            $log_file = $this->log_file();
+            $log_file_check_at = mktime(date('H'), (date('i') - (date('i') % 5)) + 5, null);
+            @fclose($handle);
+            $handle = $log_file_error = false;
+        }
+
         if ($handle === false) {
-            if (strlen($this->log_file()) > 0 && $handle = @fopen($this->log_file(), 'a+')) {
+            if (strlen($log_file) > 0 && $handle = @fopen($log_file, 'a+')) {
                 fwrite($handle, $header);
                 if ($this->verbose)
                     echo $header;
-            } elseif ($raise_logfile_error) {
-                $raise_logfile_error = false;
-                trigger_error(__CLASS__ . "Error: Could not write to logfile " . $this->log_file(), E_USER_NOTICE);
+            } elseif (!$log_file_error) {
+                $log_file_error = true;
+                trigger_error(__CLASS__ . "Error: Could not write to logfile " . $log_file, E_USER_WARNING);
             }
         }
 
