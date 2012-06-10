@@ -10,10 +10,10 @@ Create solid, long-running PHP daemon processes by extending the Core_Daemon cla
 * POSIX and PCNTL Extensions for PHP
  
 #### Changes in 2.0:
-* Create long-running async background workers with very little code (See the Examples/PrimeNumbers daemon or the docs in the Wiki)
-* Hook into a simple callback system using familiar `on()` & `off()` syntax: Create custom signal handlers, run code before daemon restarts, etc.
+* Create asynchronous background workers with the new Worker API. See the `PrimeNumbers` example application or the Wiki.
+* Hook into a simple callback system using familiar `on(event, callable)` & `off()` syntax. Built-in events give you the ability to hook into application state changes, or make your own to create a simple message bus for your application.
 * Create event loops that are not timer-based (build socket-servers, or use blocking system calls with ease)
-* Dozens of small enhancements and bug fixes.
+* Dozens of additional enhancements and bug fixes.
 
 ##Notable Features: 
 
