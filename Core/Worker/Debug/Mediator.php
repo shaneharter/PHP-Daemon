@@ -370,6 +370,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                         $out[] = 'Available Commands:';
                         $out[] = 'y                 Step to the next break point';
                         $out[] = 'n                 Interrupt';
+                        $out[] = '';
                         $out[] = 'call [f] [a,b..]  Call a worker\'s function in the local process, passing remaining values as args. Return true: a "continue" will be implied. Non-true: keep you at the prompt';
                         $out[] = 'cleanipc          Clean all systemv resources including shared memory and message queues. Does not remove semaphores. REQUIRES CONFIRMATION.  ';
                         $out[] = 'end               End the debugging session, continue the daemon as normal.';
@@ -403,6 +404,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                         $out[] = '1     Called';
                         $out[] = '2     Running';
                         $out[] = '3     Returned';
+                        $out[] = '4     Cancelled';
                         $out[] = '10    Timeout';
                         $out[] = '';
                         $message = implode(PHP_EOL, $out);

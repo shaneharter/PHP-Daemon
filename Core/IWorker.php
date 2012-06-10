@@ -8,6 +8,7 @@
  * You can use the Core_Daemon::on(ON_FORK) method to provide universal setup code that is run after every fork and
  * in every worker. The setup() method defined here can be used if you want specific setup code run in this forked process.
  */
+
 interface Core_IWorker
 {
     /**
