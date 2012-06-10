@@ -13,7 +13,9 @@
 define('BASE_PATH', dirname(dirname(__FILE__)));
 
 $pidfiles = array(
-    'PrimeNumbers'    =>  BASE_PATH . '/Examples/PrimeNumbers/pid',
+    'PrimeNumbers'  =>  BASE_PATH . '/Examples/PrimeNumbers/pid',
+    'Tasks'         =>  BASE_PATH . '/Examples/Tasks/pid',
+    'LongPoll'      =>  BASE_PATH . '/Examples/LongPoll/pid',
 );
 
 $index = array_keys($pidfiles);

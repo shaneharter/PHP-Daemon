@@ -12,6 +12,7 @@
 $addresses = array(
     'PrimeNumbers'    =>  1342185173,
     'GetFactors'      =>  1191190231,
+    'LongPoll_API'    =>  1090519102,
 );
 
 declare(ticks = 5);
