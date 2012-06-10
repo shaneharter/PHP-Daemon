@@ -33,9 +33,9 @@ In a few lines of code you can create asynchronous background processes that let
 
   PHP Simple Daemon workers and tasks are simple and powerful multi-processing tools in a language with very few of them. (But don't go trying to build a PHP version of Node.js)
 
-  https://github.com/shaneharter/PHP-Daemon/wiki/Named-Workers-Spec
+  https://github.com/shaneharter/PHP-Daemon/wiki/Worker-API
   
-  https://github.com/shaneharter/PHP-Daemon/wiki/Forking-Example
+  https://github.com/shaneharter/PHP-Daemon/wiki/Task-API
 
 * ###Integrated Debugging Tools
 Debugging multi-process applications is notoriously painful and several integrated debugging tools are shipped with the library. 

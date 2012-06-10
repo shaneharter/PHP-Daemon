@@ -1352,11 +1352,13 @@ abstract class Core_Worker_Mediator implements Core_ITask
     }
 
     /**
-     * Set the number of concurrent workers. No limit is hard-coded, but processes are expensive and you should use
-     * the minimum number of workers necessary. In `lazy` forking strategy, the processes are forked one-by-one, as
-     * needed. This is avoided when your loop_interval is very short (we don't want to be forking processes if you
-     * need to loop every half second, for example) but it's the most ideal setting. Read more about the forking strategy
-     * for more information.
+     * Set the number of concurrent workers in the pool. No limit is enforced, but processes are expensive and you should use
+     * the minimum number of workers necessary. Too few workers will result in high latency situations and bigger risk
+     * that if your application needs to be restarted you'll lose buffered calls.
+     *
+     * In `lazy` forking strategy, the processes are forked one-by-one, as needed. This is avoided when your loop_interval
+     * is very short (we don't want to be forking processes if you need to loop every half second, for example) but it's
+     * the most ideal setting. Read more about the forking strategy for more information.
      *
      * Part of the Daemon API - Use from your daemon to set the number of concurrent asynchronous worker processes.
      *
