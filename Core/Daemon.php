@@ -1015,6 +1015,15 @@ abstract class Core_Daemon
                 else
                     $mediator = new Core_Worker_ObjectMediator($alias, $this);
 
+                // Ensure that there are no reserved method names in the worker object -- Determine if there will
+                // be a collision between worker methods and public methods on the Mediator class
+                // Exclude any methods required by the Core_IWorker interface from the check.
+                $intersection = array_intersect(get_class_methods($worker), get_class_methods($mediator));
+                $intersection = array_diff($intersection, get_class_methods('Core_IWorker'));
+                if (!empty($intersection))
+                    throw new Exception(sprintf('%s Failed. Your worker class "%s" contains restricted method names: %s.',
+                        __METHOD__, get_class($worker), implode(', ', $intersection)));
+
                 $mediator->setObject($worker);
                 break;
 
