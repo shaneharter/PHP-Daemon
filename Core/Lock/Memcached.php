@@ -26,7 +26,7 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_IPlugin
 	public function setup()
 	{
 		// Connect to memcache
-		$this->memcache = new Core_Memcache();
+		$this->memcache = new Core_Lib_Memcache();
 		$this->memcache->ns($this->daemon_name);
 		
 		// We want to use the auto-retry feature built into our memcache wrapper. This will ensure that the occasional blocking operation on

@@ -5,7 +5,7 @@
  * @author Shane Harter
  * @final
  */
-final class Core_Memcache extends Memcached
+final class Core_Lib_Memcache extends Memcached
 {
 	/**
 	 * How long can we usleep within the function before doing a retry. Longer durations will give
