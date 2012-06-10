@@ -33,16 +33,16 @@ class Poller extends \Core_Daemon
 
     protected function setup_workers()
     {
-        $this->worker('api', new API);
-        $this->api->workers(1);
+        $this->worker('Api', new API);
+        $this->Api->workers(1);
 
-        $this->api->timeout(120);
-        $this->api->onTimeout(function($call, $log) {
+        $this->Api->timeout(120);
+        $this->Api->onTimeout(function($call, $log) {
             $log("API Timeout Reached");
         });
 
         $that = $this;
-        $this->api->onReturn(function($call, $log) use($that) {
+        $this->Api->onReturn(function($call, $log) use($that) {
             if ($call->method == 'poll') {
                 $that->set_results($call->return);
                 $log("API Results Updated...");
@@ -70,7 +70,7 @@ class Poller extends \Core_Daemon
 	 */
 	protected function execute()
 	{
-        if (!$this->api->is_idle()) {
+        if (!$this->Api->is_idle()) {
             $this->log("Event Loop Iteration: API Call running in the background worker process.");
             return;
         }
@@ -87,7 +87,7 @@ class Poller extends \Core_Daemon
         // You can't store state in the worker processes because they can be killed, restarted, timed-out, etc.
         // So even though we only have 1 worker process, we pass any state data in each call.
 
-        $this->api->poll($this->results);
+        $this->Api->poll($this->results);
 	}
 
     public function set_results(Array $results) {
