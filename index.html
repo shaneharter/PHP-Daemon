@@ -81,8 +81,8 @@ produce great results. But if you have the choice, Java, Python, Ruby, etc, are 
 
 <p>PHP Simple Daemon workers are a simple and powerful multi-processing tool in a language with very few of them. (But don't go trying to build a PHP version of Node.js)</p>
 
-<p><a href="https://github.com/shaneharter/PHP-Daemon/wiki/Named-Workers-Spec">https://github.com/shaneharter/PHP-Daemon/wiki/Named-Workers-Spec</a>
-<a href="https://github.com/shaneharter/PHP-Daemon/wiki/Forking-Example">https://github.com/shaneharter/PHP-Daemon/wiki/Forking-Example</a></p>
+<p><a href="https://github.com/shaneharter/PHP-Daemon/wiki/Worker-API">https://github.com/shaneharter/PHP-Daemon/wiki/Worker-API</a>
+<a href="https://github.com/shaneharter/PHP-Daemon/wiki/Task-API">https://github.com/shaneharter/PHP-Daemon/wiki/Task-API</a></p>
 </li>
 <li>
 <h3>Integrated Debugging Tools</h3>
@@ -148,9 +148,9 @@ If your daemon is currently blocked or sleeping, wake it up and continue. (Will 
 
 <p>You can run a '-H' help command when you run the Daemon. It will dump a help menu that looks like this, but can be easily overridden for your daemon:</p>
 </li>
-</ul><pre><code>ExampleWorkers_Daemon
-USAGE:
- # run.php -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-v] [-p PID_FILE] [--recoverworkers] [--debugworkers]
+</ul><pre><code>Examples\PrimeNumbers\Daemon
+          USAGE:
+ # run.php -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--recoverworkers] [--debugworkers]
 
 OPTIONS:
  -H Shows this help
@@ -162,7 +162,6 @@ OPTIONS:
        Install the script to /etc/init.d. Otherwise just output the script to stdout.
 
  -d Daemon, detach and run in the background
- -v Verbose, echo any logged messages. Ignored in Daemon mode. Ignored in --debugworkers mode.
  -p PID_FILE File to write process ID out to
 
  --recoverworkers
