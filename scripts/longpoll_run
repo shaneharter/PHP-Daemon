@@ -1,0 +1,2 @@
+cd ..
+php Examples/LongPoll/run.php -p ./Examples/LongPoll/pid $1
