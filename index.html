@@ -95,19 +95,21 @@ produce great results. But if you have the choice, Java, Python, Ruby, etc, are 
 
 <p>You'll also find the shm_console app that lets you attach to a shared memory address, scan for keys, view them, and even run a <code>watch</code> command that prints out a transactional log of creations, updates and deletes.</p>
 
-<p><a href="https://github.com/shaneharter/PHP-Daemon/wiki/Debugging-workers">https://github.com/shaneharter/PHP-Daemon/wiki/Debugging-workers</a></p>
+<p><a href="https://github.com/shaneharter/PHP-Daemon/wiki/Debugging-workers">https://github.com/shaneharter/PHP-Daemon/wiki/Debugging-workers</a><br/>
+    <a href="https://github.com/shaneharter/PHP-Daemon/wiki/Debug-Tools">https://github.com/shaneharter/PHP-Daemon/wiki/Debug-Tools</a></p>
 </li>
 <li>
 <h3>Simple Callbacks: Because decoupled is better.</h3>
 
 <p>A simple jQuery-like API lets you add callbacks to daemon lifecycle events (think: startup, teardown, fork, etc) and create your own. Attach an event listener using <code>on()</code>, remove it using <code>off()</code>, and create your own using <code>dispatch()</code>. Like all PHP Simple Daemon APIs it accepts a Closure or any valid PHP Callback. </p>
+<p><a href="https://github.com/shaneharter/PHP-Daemon/wiki/Using-callbacks-and-custom-events">https://github.com/shaneharter/PHP-Daemon/wiki/Using-callbacks-and-custom-events</a></p>
 </li>
 <li>
 <h3>Simple Plugins: Because code reuse is better.</h3>
 
 <p>If you care more about building a reusable component with the ability to execute code during the daemon startup process before your application code is called than you do about decoupling, you can create a Plugin simply by implementing the <code>Core_IPluginInterface</code>. Plugins are the easiest way to share code between multiple daemon applications and it can literally be implemented in 3 lines of code. We've got several general-purpose plugins on the drawing board to ship with the Core_Daemon library but currently we're shipping just one. The Ini plugin gives you an easy tool to read and validate any config files you ship with your application. </p>
 
-<p><a href="https://github.com/shaneharter/PHP-Daemon/wiki/Daemon-Startup-Order-Explained">https://github.com/shaneharter/PHP-Daemon/wiki/Daemon-Startup-Order-Explained</a></p>
+<p><a href="https://github.com/shaneharter/PHP-Daemon/wiki/Creating-and-Using-Plugins">https://github.com/shaneharter/PHP-Daemon/wiki/Creating-and-Using-Plugins</a></p>
 </li>
 <li>
 <h3>Lock files (and lock keys, and lock mutexes, and...)</h3>
@@ -125,6 +127,9 @@ produce great results. But if you have the choice, Java, Python, Ruby, etc, are 
 <p>The library ships with an insanely basic event log. While the features of off-the-shelf logging libraries are sometimes missed, we have a serious aversion to external dependencies and memory bloat. In any case, the built-in log provider writes messages and headers to a log file you supply. You can see an example of a simple rotator in both example daemons. </p>
 
 <p>If you have an internal logging tool, or just a favorite logging library, you can replace the internal tool as simply as overloading the <code>log()</code> method. Just be sure the only require parameter is the message being logged and everything internally that uses the event log -- Core_Daemon, signal handlers, the Workers API, etc -- will play nice. </p>
+
+<p><a href="https://github.com/shaneharter/PHP-Daemon/wiki/Logging">https://github.com/shaneharter/PHP-Daemon/wiki/Logging</a></p>
+
 </li>
 <li>
 <h3>Built-in Signal Handling</h3>
@@ -142,6 +147,8 @@ Dump a block of runtime statistics to the event log or stdout (or both, dependin
 
 <p><strong>SIGCONT <code>kill -18</code>:</strong>
 If your daemon is currently blocked or sleeping, wake it up and continue. (Will always wake it up from a sleep(), may not always return from a blocking API call.)</p>
+
+<p><a href="https://github.com/shaneharter/PHP-Daemon/wiki/Creating-Custom-Signal-Handlers">https://github.com/shaneharter/PHP-Daemon/wiki/Creating-Custom-Signal-Handlers</a></p>
 </li>
 <li>
 <h3>Command Line Switches</h3>
