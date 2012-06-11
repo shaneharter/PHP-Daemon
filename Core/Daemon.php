@@ -863,7 +863,7 @@ abstract class Core_Daemon
             // Sleep for 1/100 a second.
             usleep(10000);
             if ($this->loop_interval > 0)
-                $this->error('Run Loop Taking Too Long. Duration: ' . $stats['duration'] . ' Interval: ' . $this->loop_interval);
+                $this->error('Run Loop Taking Too Long. Duration: ' . number_format($stats['duration'], 3) . ' Interval: ' . $this->loop_interval);
         }
 
         $this->stats[] = $stats;
