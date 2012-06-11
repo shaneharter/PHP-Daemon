@@ -837,9 +837,13 @@ abstract class Core_Worker_Mediator implements Core_ITask
             // Give the CPU a break - Sleep for 1/20 a second.
             usleep(50000);
 
-            $max_jobs       = $count++ >= 25;
+            // Define automatic restart intervals. We want to add some entropy to avoid having all worker processes
+            // in a pool restart at the same time. Use a very crude technique to create a random number along a normal distribution.
+            $entropy = round((mt_rand(-1000, 1000) + mt_rand(-1000, 1000) + mt_rand(-1000, 1000)) / 100, 0);
+
+            $max_jobs       = $count++ >= (25 + $entropy);
             $min_runtime    = $this->daemon->runtime() >= (60 * 5);
-            $max_runtime    = $this->daemon->runtime() >= (60 * 30);
+            $max_runtime    = $this->daemon->runtime() >= (60 * 30 + $entropy * 10);
             $this->shutdown = ($max_runtime || $min_runtime && $max_jobs);
 
             if ($this->shutdown)
