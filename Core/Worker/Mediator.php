@@ -955,7 +955,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
             case self::UNCALLED:
                 $decoder = function($message) use($that) {
                     $call = shm_get_var($that->shm, $message['call_id']);
-                    if ($message['microtime'] < $call->time[Core_Worker_Mediator::UNCALLED])    // Requeued - Cancel this call
+                    if ($message['microtime'] < $call->time[Core_Worker_Mediator::UNCALLED])    // Has been requeued - Cancel this call
                         $that->update_struct_status($call, Core_Worker_Mediator::CANCELLED);
 
                     return $call;
