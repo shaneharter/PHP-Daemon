@@ -53,6 +53,21 @@ abstract class Core_Daemon
     protected $loop_interval = null;
 
     /**
+     * In io or event driven applications (NOT timer-based applications that use the $loop_interval) this value
+     * will be used to determine how often the ON_IDLE event should be fired. There are library-created listeners for
+     * ON_IDLE and it's important they're run periodically for housekeeping tasks. You may also set some in your application.
+     *
+     * If you want to take responsibility for dispatching the ON_IDLE event yourself in your application, just set
+     * this to 0. Otherwise, you can tweak the probability. Similar to the way session.gc works in PHP web apps.
+     *
+     * Note: This value is completely ignored when using $loop_interval. In those cases, ON_IDLE is fired when there is
+     *       remaining time at the end of your loop.
+     *
+     * @var float
+     */
+    protected $on_idle_probability = 0.1;
+
+    /**
      * The frequency (in seconds) at which the daemon will restart itself
      * @example $this->auto_restart_interval = 3600;    // Daemon will be restarted once an hour
      * @example $this->auto_restart_interval = 86400;   // Daemon will be restarted once an day
@@ -340,6 +355,9 @@ abstract class Core_Daemon
         // process from starting-up. In that case, we want to do that check as early as possible. To accomplish that,
         // the plugin setup has to happen first -- to ensure the Lock provider plugins have a chance to load.
         $this->dispatch(array(self::ON_INIT));
+
+        // Queue any housekeeping tasks we want performed periodically
+        $this->on(self::ON_IDLE, array($this, 'stats_trim'));
 
         $this->setup();
         if (!$this->daemon)
@@ -846,11 +864,31 @@ abstract class Core_Daemon
             return $start_time = microtime(true);
 
         // End the Stop Watch
+
+        // Determine if we should run the ON_IDLE tasks.
+        // In timer based applications, determine if we have remaining time.
+        // Otherwise apply the $on_idle_probability factor
+
+        $end_time = $probability = null;
+        if ($this->loop_interval)
+            $end_time = ($start_time + $this->loop_interval() - 0.01);
+
+        if (!$this->loop_interval && $this->on_idle_probability)
+            $probability = (1 / $this->on_idle_probability);
+
+        $is_idle = function() use($end_time, $probability) {
+            if ($end_time)
+                return microtime(true) < $end_time;
+
+            if ($probability)
+                return mt_rand(1, $probability) == 1;
+
+            return false;
+        };
+
         // If we have idle time, do any housekeeping tasks
-        if (microtime(true) - $start_time > 0) {
-            if (mt_rand(1, 100) == 50 ) {
-                $this->stats = array_slice($this->stats, -100, 100);
-            }
+        if ($is_idle()) {
+            $this->dispatch(array(Core_Daemon::ON_IDLE), array($is_idle));
         }
 
         $stats = array();
@@ -1308,6 +1346,17 @@ abstract class Core_Daemon
         }
 
         return $tuple;
+    }
+
+    /**
+     * A method to periodically trim older items from the stats array
+     * @return void
+     */
+    public function stats_trim() {
+        $this->log("Stats Trim, Ballah");
+        if (mt_rand(1, 100) == 1) {
+            $this->stats = array_slice($this->stats, -100, 100);
+        }
     }
 
     /**
