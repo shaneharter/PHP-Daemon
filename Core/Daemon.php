@@ -67,7 +67,7 @@ abstract class Core_Daemon
     protected $debug_workers = false;
 
     /**
-     * If the process is forked, this will indicate whether we're still in the parent or not.
+     * Will be 'false' when running in a Task or Worker background process
      * @var boolean
      */
     private $is_parent = true;
@@ -116,7 +116,11 @@ abstract class Core_Daemon
 
     /**
      * In verbose mode, every log entry is also dumped to stdout, as long as were not in daemon mode.
+     * Note: This was originally attached to a commandline option (-v) but it's not implicit based on whether the
+     *       application is being run inside your shell (verbose=true) or as a daemon (verbose=false)
+     *
      * @see Core_Daemon::verbose()
+     * @deprecated
      * @var boolean
      */
     private $verbose = false;
@@ -284,22 +288,22 @@ abstract class Core_Daemon
     protected function check_environment(Array $errors = array())
     {
         if (empty(self::$filename))
-            $errors[] = 'Filename is Missing: setFilename Must Be Called Before an Instance can be Initialized';
+            $errors[] = 'Filename is Missing: setFilename must be called before an instance can be initialized';
 
         if (is_numeric($this->loop_interval) == false)
             $errors[] = "Invalid Loop Interval: $this->loop_interval";
 
         if (empty($this->auto_restart_interval) || is_numeric($this->auto_restart_interval) == false)
-            $errors[] = "Invalid Auto Restart Interval: $this->auto_restart_interval";
+            $errors[] = "Invalid auto-restart interval: $this->auto_restart_interval";
 
         if (is_numeric($this->auto_restart_interval) && $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
-            $errors[] = 'Auto Restart Inteval is Too Low. Minimum Value: ' . self::MIN_RESTART_SECONDS;
+            $errors[] = 'Auto-restart inteval is too low. Minimum value: ' . self::MIN_RESTART_SECONDS;
 
         if (function_exists('pcntl_fork') == false)
-            $errors[] = "The PCNTL Extension is Not Installed";
+            $errors[] = "The PCNTL Extension is not installed";
 
         if (version_compare(PHP_VERSION, '5.3.0') < 0)
-            $errors[] = "PHP 5.3 or Higher is Required";
+            $errors[] = "PHP 5.3 or higher is required";
 
         foreach ($this->plugins as $plugin)
             foreach ($this->{$plugin}->check_environment() as $error)
@@ -392,7 +396,7 @@ abstract class Core_Daemon
         $accessors = array('loop_interval', 'is_parent', 'verbose', 'pid', 'shutdown');
         if (in_array($method, $accessors)) {
             if ($args)
-                trigger_error("The '$method' accessor can not be used as a setter in this context. Supplied arguments ignored.", E_WARNING);
+                trigger_error("The '$method' accessor can not be used as a setter in this context. Supplied arguments ignored.", E_USER_WARNING);
 
             return call_user_func_array(array($this, $method), array());
         }
@@ -456,8 +460,8 @@ abstract class Core_Daemon
 
     /**
      * Remove a callback previously registered with on(). Returns the callback.
-     * @param array $event
-     * @return callback|closure|null returns the registered event if $ref is valid
+     * @param array $event  Should be the array returned when you called on()
+     * @return callback|closure|null returns the registered event handler assuming $event is valid
      */
     public function off(Array $event)
     {
@@ -1004,7 +1008,7 @@ abstract class Core_Daemon
         if (!$this->is_parent)
             // While in theory there is nothing preventing you from creating workers in child processes, supporting it
             // would require changing a lot of error handling and process management code and I don't really see the value in it.
-            throw new Exception(__METHOD__ . ' Failed. You cannot create workers in a forked (child) processes.');
+            throw new Exception(__METHOD__ . ' Failed. You cannot create workers in a background processes.');
 
         $this->check_alias($alias);
 
@@ -1306,8 +1310,7 @@ abstract class Core_Daemon
     }
 
     /**
-     * Combination getter/setter for the $is_parent property. Can be called manually inside a forked process.
-     * Used automatically when creating named workers.
+     * Combination getter/setter for the $is_parent property. Can be called manually inside a background process.
      * @param boolean $set_value
      * @return boolean
      */
