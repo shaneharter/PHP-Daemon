@@ -136,7 +136,6 @@ abstract class Core_Daemon
      *       application is being run inside your shell (verbose=true) or as a daemon (verbose=false)
      *
      * @see Core_Daemon::verbose()
-     * @deprecated
      * @var boolean
      */
     private $verbose = false;
@@ -1353,7 +1352,6 @@ abstract class Core_Daemon
      * @return void
      */
     public function stats_trim() {
-        $this->log("Stats Trim, Ballah");
         if (mt_rand(1, 100) == 1) {
             $this->stats = array_slice($this->stats, -100, 100);
         }

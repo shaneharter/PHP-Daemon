@@ -469,9 +469,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
             case 0:             // Success
             case 4:             // System Interrupt
             case MSG_ENOMSG:    // No message of desired type
-            case MSG_EAGAIN:    // Temporary Problem, Try Again
-
                 // Ignored Errors
+                return true;
+                break;
+
+            case MSG_EAGAIN:    // Temporary Problem, Try Again
                 usleep($backoff(20000));
                 return true;
                 break;
