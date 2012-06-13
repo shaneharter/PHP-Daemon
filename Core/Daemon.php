@@ -1307,10 +1307,10 @@ abstract class Core_Daemon
     }
 
     /**
-     * Return a tuple containing the mean duration and idle time of the daemons event loop, ignoring the longest and shortest 5%
+     * Return a list containing the mean duration and idle time of the daemons event loop, ignoring the longest and shortest 5%
      * Note: Stats data is trimmed periodically and is not likely to have more than 200 rows.
      * @param int $last  Limit the working set to the last n iteration
-     * @return Array A tuple as array(duration,idle) averages.
+     * @return Array A list as array(duration, idle) averages.
      */
     public function stats_mean($last = 100)
     {
@@ -1333,18 +1333,18 @@ abstract class Core_Daemon
         $data = array_slice($data, $n, $count);
 
         // Now compute the corrected mean
-        $tuple = array(0,0);
+        $list = array(0, 0);
         if ($count) {
             for($i=0; $i<$count; $i++) {
-                $tuple[0] += $data[$i]['duration'];
-                $tuple[1] += $data[$i]['idle'];
+                $list[0] += $data[$i]['duration'];
+                $list[1] += $data[$i]['idle'];
             }
 
-            $tuple[0] /= $count;
-            $tuple[1] /= $count;
+            $list[0] /= $count;
+            $list[1] /= $count;
         }
 
-        return $tuple;
+        return $list;
     }
 
     /**
