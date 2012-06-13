@@ -65,7 +65,7 @@ abstract class Core_Daemon
      *
      * @var float
      */
-    protected $on_idle_probability = 0.1;
+    protected $idle_probability = 0.1;
 
     /**
      * The frequency (in seconds) at which the daemon will restart itself
@@ -873,8 +873,8 @@ abstract class Core_Daemon
         if ($this->loop_interval)
             $end_time = ($start_time + $this->loop_interval() - 0.01);
 
-        if (!$this->loop_interval && $this->on_idle_probability)
-            $probability = (1 / $this->on_idle_probability);
+        if (!$this->loop_interval && $this->idle_probability)
+            $probability = (1 / $this->idle_probability);
 
         $is_idle = function() use($end_time, $probability) {
             if ($end_time)
