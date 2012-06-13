@@ -31,7 +31,7 @@ abstract class Core_Daemon
     const ON_POSTEXECUTE    = 4;    // and right after
     const ON_FORK           = 5;    // in a background process right after it has been forked from the daemon
     const ON_PIDCHANGE      = 6;    // whenever the pid changes -- in a background process for example
-    const ON_IDLE           = 7;    // in timer-based applications, called when there is idle time at the end of the event loop
+    const ON_IDLE           = 7;    // called when there is idle time at the end of a loop_interval, or at the idle_probability when loop_interval isn't used
     const ON_SHUTDOWN       = 10;   // called at the top of the destructor
 
     /**
