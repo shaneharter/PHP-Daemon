@@ -173,7 +173,7 @@ class Daemon extends \Core_Daemon
 
         // We may want to log results to the database directly from the workers. To do that we need to
 
-        $this->log("ExampleWorkers Daemon is Ready: To run a Factoring job, send signal 12. To run a Prime Numbers job, send signal 13. To toggle the random job-runner send signal 14.");
+        $this->log("PrimeNumbers Application is Ready: To run a Factoring job, send signal 12. To run a Prime Numbers job, send signal 13. To toggle the random job-runner send signal 14.");
     }
 
 
