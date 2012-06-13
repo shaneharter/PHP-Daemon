@@ -24,14 +24,15 @@ abstract class Core_Daemon
      * Events can be attached to each state using the on() method
      * @var integer
      */
-    const ON_ERROR          = 0;
-    const ON_SIGNAL         = 1;
-    const ON_INIT           = 2;
-    const ON_PREEXECUTE     = 3;
-    const ON_POSTEXECUTE    = 4;
-    const ON_FORK           = 5;
-    const ON_PIDCHANGE      = 6;
-    const ON_SHUTDOWN       = 10;
+    const ON_ERROR          = 0;    // error() or fatal_error() is called
+    const ON_SIGNAL         = 1;    // the daemon has received a signal
+    const ON_INIT           = 2;    // the library has completed initialization, your setup() method is about to be called
+    const ON_PREEXECUTE     = 3;    // inside the event loop, right before your execute() method
+    const ON_POSTEXECUTE    = 4;    // and right after
+    const ON_FORK           = 5;    // in a background process right after it has been forked from the daemon
+    const ON_PIDCHANGE      = 6;    // whenever the pid changes -- in a background process for example
+    const ON_IDLE           = 7;    // in timer-based applications, called when there is idle time at the end of the event loop
+    const ON_SHUTDOWN       = 10;   // called at the top of the destructor
 
     /**
      * An array of instructions that's displayed when the -i param is passed into the daemon.
