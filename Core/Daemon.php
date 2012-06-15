@@ -372,7 +372,7 @@ abstract class Core_Daemon
         $this->dispatch(array(self::ON_INIT));
 
         // Queue any housekeeping tasks we want performed periodically
-        $this->on(self::ON_IDLE, array($this, 'stats_trim'));
+        $this->on(self::ON_IDLE, array($this, 'stats_trim'), (empty($this->loop_interval)) ? null : ($this->loop_interval * 50)); // Throttle to about once every 50 iterations
 
         $this->setup();
         if (!$this->daemon)
@@ -473,10 +473,13 @@ abstract class Core_Daemon
      * your own events however you want.
      * @param $event mixed scalar  When creating custom events, keep ints < 100 reserved for the daemon
      * @param $callback closure|callback
+     * @param $throttle Optional time in seconds to throttle calls to the given $callback. For example, if
+     *        $throttle = 10, the provided $callback will not be called more than once every 10 seconds, even if the
+     *        given $event is dispatched more frequently than that.
      * @return array    The return value can be passed to off() to unbind the event
      * @throws Exception
      */
-    public function on($event, $callback)
+    public function on($event, $callback, $throttle = null)
     {
         if (!is_scalar($event))
             throw new Exception(__METHOD__ . ' Failed. Event type must be Scalar. Given: ' . gettype($event));
@@ -487,7 +490,7 @@ abstract class Core_Daemon
         if (!isset($this->callbacks[$event]))
             $this->callbacks[$event] = array();
 
-        $this->callbacks[$event][] = $callback;
+        $this->callbacks[$event][] = array('callback' => $callback, 'throttle' => $throttle, 'call_at' => 0);
         end($this->callbacks[$event]);
         return array($event, key($this->callbacks[$event]));
     }
@@ -516,11 +519,27 @@ abstract class Core_Daemon
      */
     protected function dispatch(Array $event, Array $args = array())
     {
-        if (isset($event[0]) && isset($event[1]) && isset($this->callbacks[$event[0]][$event[1]]))
-            call_user_func_array($this->callbacks[$event[0]][$event[1]], $args);
-        elseif (isset($event[0]) && !isset($event[1]) && isset($this->callbacks[$event[0]]))
-            foreach($this->callbacks[$event[0]] as $callback)
-                call_user_func_array($callback, $args);
+        if (!isset($event[0]) || !isset($this->callbacks[$event[0]]))
+            return;
+
+        // A specific callback is being dispatched...
+        if (isset($event[1]) && isset($this->callbacks[$event[0]][$event[1]])) {
+            $callback =& $this->callbacks[$event[0]][$event[1]];
+            if (empty($callback['throttle']) || time() > $callback['call_at']) {
+                $callback['call_at'] = time() + (int)$callback['throttle'];
+                call_user_func_array($callback['callback'], $args);
+            }
+            return;
+        }
+
+        // All callbacks attached to a given event are being dispatched...
+        if (!isset($event[1]))
+            foreach($this->callbacks[$event[0]] as $callback_id => $callback) {
+                if (empty($callback['throttle']) || time() > $callback['call_at']) {
+                    $this->callbacks[$event[0]][$callback_id]['call_at'] = time() + (int)$callback['throttle'];
+                    call_user_func_array($callback['callback'], $args);
+                }
+            }
     }
 
     /**
@@ -657,9 +676,11 @@ abstract class Core_Daemon
 
         if ($handle === false) {
             if (strlen($log_file) > 0 && $handle = @fopen($log_file, 'a+')) {
-                fwrite($handle, $header);
-                if ($this->verbose)
-                    echo $header;
+                if ($this->is_parent) {
+                    fwrite($handle, $header);
+                    if ($this->verbose)
+                        echo $header;
+                }
             } elseif (!$log_file_error) {
                 $log_file_error = true;
                 trigger_error(__CLASS__ . "Error: Could not write to logfile " . $log_file, E_USER_WARNING);
@@ -846,7 +867,7 @@ abstract class Core_Daemon
         $out[] = "---------------------------------------------------------------------------------------------------";
         $out[] = "Application Runtime Statistics";
         $out[] = "---------------------------------------------------------------------------------------------------";
-        $out[] = "Command:              " . $this->filename();
+        $out[] = "Command:              " . $this->getFilename();
         $out[] = "Loop Interval:        " . $this->loop_interval;
         $out[] = "Idle Probability      " . $this->idle_probability;
         $out[] = "Restart Interval:     " . $this->auto_restart_interval;
@@ -856,13 +877,14 @@ abstract class Core_Daemon
         $out[] = "Daemon Mode:          " . $pretty_bool($this->daemon);
         $out[] = "Shutdown Signal:      " . $pretty_bool($this->shutdown);
         $out[] = "Process Type:         " . ($this->is_parent ? 'Application Process' : 'Background Process');
-        $out[] = "Loaded Plugins:       " . implode(', ', $this->plugins);
-        $out[] = "Loaded Workers:       " . $workers;
+        $out[] = "Plugins:              " . implode(', ', $this->plugins);
+        $out[] = "Workers:              " . $workers;
         $out[] = sprintf("Memory:               %s (%s)", memory_get_usage(true), $pretty_memory(memory_get_usage(true)));
         $out[] = sprintf("Peak Memory:          %s (%s)", memory_get_peak_usage(true), $pretty_memory(memory_get_peak_usage(true)));
         $out[] = "Current User:         " . get_current_user();
         $out[] = "Priority:             " . pcntl_getpriority();
-        $out[] = "Loop duration, idle:  " . implode(', ', $this->stats_mean()) . ' (Mean Seconds)';
+        $out[] = "Loop: duration, idle: " . implode(', ', $this->stats_mean()) . ' (Mean Seconds)';
+        $out[] = "Stats sample size:    " . count($this->stats);
         $this->log(implode("\n", $out));
     }
 
@@ -1367,9 +1389,7 @@ abstract class Core_Daemon
      * @return void
      */
     public function stats_trim() {
-        if (mt_rand(1, 100) == 1) {
-            $this->stats = array_slice($this->stats, -100, 100);
-        }
+        $this->stats = array_slice($this->stats, -100, 100);
     }
 
     /**
