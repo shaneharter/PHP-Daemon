@@ -14,8 +14,8 @@ declare(ticks = 5);
 abstract class Core_Daemon
 {
     /**
-     * The daemon will attempt to restart itself it encounters a recoverable fatal error after it's been running
-     * for at least this many seconds. Prevents killing the server with process spawning if the error occurs at startup.
+     * The application will attempt to restart itself it encounters a recoverable fatal error after it's been running
+     * for at least this many seconds. Prevents killing the server with process forking if the error occurs at startup.
      * @var integer
      */
     const MIN_RESTART_SECONDS = 10;
@@ -35,7 +35,7 @@ abstract class Core_Daemon
     const ON_SHUTDOWN       = 10;   // called at the top of the destructor
 
     /**
-     * An array of instructions that's displayed when the -i param is passed into the daemon.
+     * An array of instructions that's displayed when the -i param is passed to the application.
      * Helps sysadmins and users of your daemons get installation correct. Guide them to set
      * correct permissions, supervisor/monit setup, crontab entries, init.d scripts, etc
      * @var Array
@@ -43,44 +43,51 @@ abstract class Core_Daemon
     protected $install_instructions = array();
 
     /**
-     * The frequency at which the run() loop will run (and execute() method will be called). After execute() is called, any remaining time in that
-     * interval will be spent in a sleep state. If there is no remaining time, that will be logged as an error condition.
+     * The frequency of the event loop. In seconds.
+     *
+     * In timer-based applications your execute() method will be called every $loop_interval seconds. Any remaining time
+     * at the end of an event loop iteration will dispatch an ON_IDLE event and your application will sleep(). If the
+     * event loop takes longer than the $loop_interval an error will be written to your application log.
+     *
      * @example $this->loop_interval = 300;     // execute() will be called once every 5 minutes
      * @example $this->loop_interval = 0.5;     // execute() will be called 2 times every second
      * @example $this->loop_interval = 0;       // execute() will be called immediately -- There will be no sleep.
-     * @var float    The interval in Seconds
+     *
+     * @var float The interval in Seconds
      */
     protected $loop_interval = null;
 
     /**
-     * In io or event driven applications (NOT timer-based applications that use the $loop_interval) this value
-     * will be used to determine how often the ON_IDLE event should be fired. There are library-created listeners for
-     * ON_IDLE and it's important they're run periodically for housekeeping tasks. You may also set some in your application.
+     * Control how often the ON_IDLE event fires in applications that do not use a $loop_interval timer.
      *
-     * If you want to take responsibility for dispatching the ON_IDLE event yourself in your application, just set
-     * this to 0. Otherwise, you can tweak the probability. Similar to the way session.gc works in PHP web apps.
+     * The ON_IDLE event gives your application (and the PHP Simple Daemon library) a way to defer work to be run
+     * when your application has idle time and would normally just sleep(). In timer-based applications that is very
+     * deterministic. In applications that don't use the $loop_interval timer, this probability factor applied in each
+     * iteration of the event loop to periodically dispatch ON_IDLE.
      *
      * Note: This value is completely ignored when using $loop_interval. In those cases, ON_IDLE is fired when there is
      *       remaining time at the end of your loop.
      *
-     * @var float
+     * Note: If you want to take responsibility for dispatching the ON_IDLE event in your application, just set
+     *       this to 0 and dispatch the event periodically, eg:
+     *       $this->dispatch(array(self::ON_IDLE));
+     *
+     *
+     *
+     * @var float The probability, from 0.0 to 1.0.
      */
     protected $idle_probability = 0.1;
 
     /**
-     * The frequency (in seconds) at which the daemon will restart itself
+     * The frequency of your application restarting itself. In seconds.
+     *
      * @example $this->auto_restart_interval = 3600;    // Daemon will be restarted once an hour
-     * @example $this->auto_restart_interval = 86400;   // Daemon will be restarted once an day
-     * @var integer        The interval in Seconds
+     * @example $this->auto_restart_interval = 43200;   // Daemon will be restarted twice per day
+     * @example $this->auto_restart_interval = 86400;   // Daemon will be restarted once per day
+     *
+     * @var integer The interval in Seconds
      */
-    protected $auto_restart_interval = 86400;
-
-    /**
-     * Set this in your daemon to run a debug console to interact with your worker processes.
-     * @example Pass CLI argument: --debugworkers
-     * @var bool
-     */
-    protected $debug_workers = false;
+    protected $auto_restart_interval = 43200;
 
     /**
      * Will be 'false' when running in a Task or Worker background process
@@ -89,7 +96,7 @@ abstract class Core_Daemon
     private $is_parent = true;
 
     /**
-     * Timestamp when was the daemon started
+     * Timestamp when was the application started
      * @var integer
      */
     private $start_time;
@@ -101,7 +108,7 @@ abstract class Core_Daemon
     private $pid;
 
     /**
-     * Process ID of the parent daemon process
+     * Process ID of the parent (aka application) process
      * When in parent, it'll be the same as $pid
      * @var integer
      */
@@ -124,7 +131,7 @@ abstract class Core_Daemon
     private $daemon = false;
 
     /**
-     * Has a shutdown signal been received? If so, it will shutdown gracefully after your execute() method returns.
+     * Is your application shutting down at the end of the current event loop iteration?
      * @see Core_Daemon::shutdown()
      * @var boolean
      */
@@ -169,6 +176,13 @@ abstract class Core_Daemon
      * @var Array
      */
     private $stats = array();
+
+    /**
+     * Set this in your daemon to run a debug console to interact with your worker processes.
+     * @example Pass CLI argument: --debugworkers
+     * @var bool
+     */
+    private $debug_workers = false;
 
     /**
      * By default, any buffered calls and acks between a daemon and its worker processes do not persist after a restart.
@@ -232,11 +246,13 @@ abstract class Core_Daemon
 
     /**
      * Return a log file name that will be used by the log() method.
-     * You could hard-code a string like './log', create a simple log rotator using the date() method, etc, etc
      *
-     * Note: For performance, the log file handle is kept open until the daemon shuts down. So this method will only
-     * be called once, during daemon setup. If you want to rotate logs every hour, for example, you can either
-     * overload the log() method or use the auto_restart_interval to restart the daemon every hour.
+     * You could hard-code a string like '/var/log/myapplog', read an option from an ini file, create a simple log
+     * rotator using the date() method, etc
+     *
+     * Note: This method will be called during startup and periodically afterwards, on even 5-minute intervals: If you
+     *       start your application at 13:01:00, the next check will be at 13:05:00, then 13:10:00, etc. This periodic
+     *       polling enables you to build simple log rotation behavior into your app.
      *
      * @return string
      */
@@ -272,7 +288,7 @@ abstract class Core_Daemon
 
     /**
      * Set the current Filename wherein this object is being instantiated and run.
-     * @param string $filename the acutal filename, pass in __file__
+     * @param string $filename the actual filename, pass in __file__
      * @return void
      */
     public static function setFilename($filename)
@@ -791,7 +807,7 @@ abstract class Core_Daemon
     {
         $workers = '';
         foreach($this->workers as $worker)
-            $workers .= sprintf('%s %s [%s], ', $worker, $this->{$worker}->id(), $this->{$worker}->is_idle() ? 'AVAILABLE' : 'RUNNING');
+            $workers .= sprintf('%s %s [%s], ', $worker, $this->{$worker}->id(), $this->{$worker}->is_idle() ? 'AVAILABLE' : 'BUFFERING');
 
         $pretty_memory = function($bytes) {
             $kb = 1024; $mb = $kb * 1024; $gb = $mb * 1024;
@@ -830,15 +846,16 @@ abstract class Core_Daemon
         $out[] = "---------------------------------------------------------------------------------------------------";
         $out[] = "Application Runtime Statistics";
         $out[] = "---------------------------------------------------------------------------------------------------";
+        $out[] = "Command:              " . $this->filename();
         $out[] = "Loop Interval:        " . $this->loop_interval;
+        $out[] = "Idle Probability      " . $this->idle_probability;
         $out[] = "Restart Interval:     " . $this->auto_restart_interval;
         $out[] = sprintf("Start Time:           %s (%s)", $this->start_time, date('Y-m-d H:i:s', $this->start_time));
         $out[] = sprintf("Duration:             %s (%s)", $this->runtime(), $pretty_duration($this->runtime()));
         $out[] = "Log File:             " . $this->log_file();
         $out[] = "Daemon Mode:          " . $pretty_bool($this->daemon);
         $out[] = "Shutdown Signal:      " . $pretty_bool($this->shutdown);
-        $out[] = "Verbose Mode:         " . $pretty_bool($this->verbose);
-        $out[] = "Role:                 " . ($this->is_parent ? 'Parent' : 'Child');
+        $out[] = "Process Type:         " . ($this->is_parent ? 'Application Process' : 'Background Process');
         $out[] = "Loaded Plugins:       " . implode(', ', $this->plugins);
         $out[] = "Loaded Workers:       " . $workers;
         $out[] = sprintf("Memory:               %s (%s)", memory_get_usage(true), $pretty_memory(memory_get_usage(true)));
@@ -856,7 +873,7 @@ abstract class Core_Daemon
      */
     private function timer($start = false)
     {
-        static $start_time = false;
+        static $start_time = null;
 
         // Start the Stop Watch and Return
         if ($start)
@@ -866,14 +883,12 @@ abstract class Core_Daemon
 
         // Determine if we should run the ON_IDLE tasks.
         // In timer based applications, determine if we have remaining time.
-        // Otherwise apply the $on_idle_probability factor
+        // Otherwise apply the $idle_probability factor
 
         $end_time = $probability = null;
-        if ($this->loop_interval)
-            $end_time = ($start_time + $this->loop_interval() - 0.01);
 
-        if (!$this->loop_interval && $this->idle_probability)
-            $probability = (1 / $this->idle_probability);
+        if ($this->loop_interval)    $end_time = ($start_time + $this->loop_interval() - 0.01);
+        if ($this->idle_probability) $probability = (1 / $this->idle_probability);
 
         $is_idle = function() use($end_time, $probability) {
             if ($end_time)
