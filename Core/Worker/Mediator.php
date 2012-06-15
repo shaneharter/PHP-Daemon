@@ -283,11 +283,16 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
     public function setup() {
 
+        // This class implements both the Task and the Plugin interfaces. Like plugins, this setup() method will be
+        // called in the parent process during application init. Like tasks, this setup() method will be called right
+        // after the process is forked.
+
         if ($this->is_parent) {
 
             // Use the ftok() method to create a deterministic memory address.
             // This is a bit ugly but ftok needs a filesystem path so we give it one using the daemon filename and
             // current worker alias.
+
             @mkdir('/tmp/.phpdaemon');
             $this->ftok = sprintf('/tmp/.phpdaemon/%s_%s', str_replace('/', '_', $this->daemon->filename()), $this->alias);
             if (!touch($this->ftok))
@@ -302,7 +307,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 $this->ipc_destroy();
 
             $this->fork();
-            $this->daemon->on(Core_Daemon::ON_PREEXECUTE, array($this, 'run'));
+            $this->daemon->on(Core_Daemon::ON_PREEXECUTE,   array($this, 'run'));
+            $this->daemon->on(Core_Daemon::ON_IDLE,         array($this, 'garbage_collector'), ceil(30 / ($this->workers * 0.5)));  // Throttle the garbage collector
             $this->ipc_create();
             $this->shm_init();
 
@@ -818,10 +824,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 }
             }
 
-            // Run the Garbage Collector periodically
-            if (mt_rand(1, 20) == 1)
-                $this->garbage_collector();
-
         } catch (Exception $e) {
             $this->log(__METHOD__ . ' Failed: ' . $e->getMessage(), true);
         }
@@ -1000,7 +1002,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         if (!is_object($call))
             throw new Exception(__METHOD__ . " Failed. Could Not Decode Message: " . print_r($message, true));
 
-        $this->calls[$call->id] = $call;
+        $this->calls[$call->id] = $this->merge_struct($call);
         return $call->id;
     }
 
@@ -1110,6 +1112,23 @@ abstract class Core_Worker_Mediator implements Core_ITask
     }
 
     /**
+     * Merge the supplied $call with the canonical version in memory
+     * @param stdClass $call    A call struct pass to us from another process
+     * @return stdClass Return the supplied $call struct, now with details merged-in from the in-memory version.
+     */
+    public function merge_struct(stdClass $call) {
+
+        // This could end up being more sophisticated and complex.
+        // But for now, the real problem it's solving is that we set the CALLED status in the parent AFTER the struct
+        // is written to shared memory. So when it returns, we're losing the CALLED timestamp. Copy that over.
+        if (isset($this->calls[$call->id])) {
+            $call->time[self::CALLED] = $this->calls[$call->id]->time[self::CALLED];
+        }
+
+        return $call;
+    }
+
+    /**
      * Periodically garbage-collect call structs: Keep the metadata but remove the (potentially large) args and return values
      * The parent will also ensure any GC'd items are removed from shared memory though in normal operation they're deleted when they return
      * Essentially a mark-and-sweep strategy. The garbage collector will also do some analysis on calls that seem frozen
@@ -1150,17 +1169,18 @@ abstract class Core_Worker_Mediator implements Core_ITask
         // Look at all the jobs recently acked and determine which of them was called first. Get the time of that call as the $cutoff.
         // Any structs in CALLED status that were called prior to that $cutoff have been dropped and will be requeued.
 
-        $cutoff = $this->calls[$this->call_count]->times[self::CALLED];
+        $cutoff = $this->calls[$this->call_count]->time[self::CALLED];
         foreach($this->processes as $process) {
-            if ($process->job === null && time() - $process->timestamp < 30)
+            if ($process->job === null && time() - $process->microtime < 30)
                 return; // Give processes time to ack their first job
 
-            $cutoff = min($cutoff, $this->calls[$process->job]->times[self::CALLED]);
+            if ($process->job !== null)
+                $cutoff = min($cutoff, $this->calls[$process->job]->time[self::CALLED]);
         }
 
         foreach($called as $call_id) {
             $call = $this->calls[$call_id];
-            if ($call->times[self::CALLED] > $cutoff)
+            if ($call->time[self::CALLED] > $cutoff)
                 continue;
 
             // If there's a retry count above our threshold log and skip to avoid endless requeueing
