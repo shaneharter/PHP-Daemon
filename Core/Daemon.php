@@ -618,7 +618,7 @@ abstract class Core_Daemon
                     if (!(is_array($callable) && $callable[0] == $this->{$object}))
                         unset($this->{$object});
 
-                $this->workers = $this->worker_pids = $this->plugins = array();
+                $this->workers = $this->worker_pids = $this->plugins = $this->stats = array();
                 $this->dispatch(array(self::ON_FORK));
 
                 try
@@ -654,7 +654,7 @@ abstract class Core_Daemon
      * @param string $message
      * @param string $label Truncated at 12 chars
      */
-    public function log($message, $label = '')
+    public function log($message, $label = '', $indent = 0)
     {
         static $handle = false;
         static $log_file = '';
@@ -665,7 +665,7 @@ abstract class Core_Daemon
         $date   = date("Y-m-d H:i:s");
         $pid    = str_pad($this->pid, 5, " ", STR_PAD_LEFT);
         $label  = str_pad(substr($label, 0, 12), 13, " ", STR_PAD_RIGHT);
-        $prefix = "[$date] $pid $label";
+        $prefix = "[$date] $pid $label" . str_repeat("\t", $indent);
 
         if (time() >= $log_file_check_at && $this->log_file() != $log_file) {
             $log_file = $this->log_file();
@@ -867,7 +867,7 @@ abstract class Core_Daemon
         $out[] = "---------------------------------------------------------------------------------------------------";
         $out[] = "Application Runtime Statistics";
         $out[] = "---------------------------------------------------------------------------------------------------";
-        $out[] = "Command:              " . $this->getFilename();
+        $out[] = "Command:              " . ($this->is_parent ? $this->getFilename() : 'Forked Process from pid ' . $this->parent_pid);
         $out[] = "Loop Interval:        " . $this->loop_interval;
         $out[] = "Idle Probability      " . $this->idle_probability;
         $out[] = "Restart Interval:     " . $this->auto_restart_interval;
