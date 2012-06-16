@@ -129,9 +129,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @var array
      */
     public $error_counts = array(
-        'identifier' => 0,
-        'corruption' => 0,
-        'catchall'   => 0,
+        'communication' => 0,
+        'corruption'    => 0,
+        'catchall'      => 0,
     );
 
     /**
