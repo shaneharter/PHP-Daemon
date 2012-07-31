@@ -23,7 +23,7 @@ You start with a working application right out of the box. Once you extend `Core
 * ###Block or Clock: Your choice in 1 LOC
 Most daemon applications will either use a blocking API library (libevent, socket_listen, etc), or run on an internal clock with code that needs to be run every 5 seconds, or every second, or 5 times a second. 
 
-  You can implement a clock with 1 line of code or leave it out for an event loop that runs at the pace of your application.
+  You can implement a clock with 1 line of code or leave it out for an event loop built on async or blocking IO.
   
 
 * ###True parallel processing in PHP 
