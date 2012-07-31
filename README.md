@@ -27,7 +27,7 @@ Most daemon applications will either use a blocking API library (libevent, socke
   
 
 * ###True parallel processing in PHP 
-In a few lines of code you can create asynchronous background processes that let you offload the hard work and keep your daemon process light and responsive. After you pass an object or callback to the workers API, you can call the methods and functions normally. The API intercepts your call and passes the arguments through to the object running in a background process. The method returns instantly and your daemon continues normally.  When work is complete any `onReturn` callbacks you set are called. If things go wrong you've got the ability to enforce a timeout and easily retry the call. 
+In a few lines of code you can create asynchronous background processes that let you keep your daemon process light and responsive. After you pass an object to the Worker API, you can call its methods normally. The API silently intercepts your method call and passes it to the object running in the background process. The call returns as soon as the Worker API intercepts it, and your daemon continues normally.  When the background process completes the method call any `onReturn` callbacks you set are fired. And if things go wrong you've got the ability to enforce a timeout and easily retry the call. 
 
   As an altenative to the persistent, long-running background workers, the Tasks API gives you a simple way to call any method in an ad-hoc background process that will exit when your method is complete. 
 
