@@ -15,6 +15,10 @@ Create solid, long-running PHP daemon processes by extending the Core_Daemon cla
 * Create event loops that are not timer-based (build socket-servers, or use blocking system calls with ease)
 * Dozens of additional enhancements and bug fixes.
 
+#### Support & Consulting
+* Commercial support & consulting is available, including on-site support in the San Francisco Bay Area.
+* Contact me through GitHub for more details, including no-cost consultation. 
+
 ##Notable Features: 
 
 * ###We provide the event loop: Build your application free of boilerplate.
