@@ -90,6 +90,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected $daemon;
 
     /**
+     * @var Core_IWorkerVia
+     */
+    protected $via;
+
+    /**
      * Running worker processes
      * @var stdClass[]
      */
@@ -230,7 +235,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * The ID of this worker pool -- used to address shared IPC resources
      * @var int
      */
-    protected $id;
+    protected $guid;
 
     /**
      * Return a valid callback for the supplied $method
@@ -240,10 +245,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected abstract function get_callback($method);
 
 
-    public function __construct($alias, Core_Daemon $daemon) {
-        $this->alias = $alias;
+    public function __construct($alias, Core_Daemon $daemon, Core_IWorkerVia $via) {
+        $this->alias  = $alias;
         $this->daemon = $daemon;
-        $this->memory_allocation = 5 * 1024 * 1024;
+        $this->via    = $via;
 
         $interval = $this->daemon->loop_interval();
         switch(true) {
@@ -290,14 +295,14 @@ abstract class Core_Worker_Mediator implements Core_ITask
             if (!touch($ftok))
                 $this->fatal_error("Unable to create Worker ID. ftok() failed. Could not write to /tmp directory at {$ftok}");
 
-            $this->id = ftok($ftok, $this->alias[0]);
+            $this->guid = ftok($ftok, $this->alias[0]);
             @unlink($this->ftok);
 
-            if (!is_numeric($this->id))
-                $this->fatal_error("Unable to create Worker ID. ftok() failed. Unexpected return value: $this->id");
+            if (!is_numeric($this->guid))
+                $this->fatal_error("Unable to create Worker ID. ftok() failed. Unexpected return value: $this->guid");
 
             if (!$this->daemon->recover_workers())
-                $this->ipc_destroy();
+                $this->via->purge();
 
             $this->fork();
             $this->daemon->on(Core_Daemon::ON_PREEXECUTE,   array($this, 'run'));
@@ -306,8 +311,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 if ($signal == SIGUSR1)
                     $that->dump();
             });
-            $this->ipc_create();
-            $this->shm_init();
+
+            $this->via->setup();
 
         } else {
             unset($this->calls, $this->processes, $this->running_calls, $this->on_return, $this->on_timeout, $this->call_count);
@@ -319,10 +324,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
         }
 
         if (!is_resource($this->queue))
-            throw new Exception(__METHOD__ . " Failed. Could not attach message queue id {$this->id}");
+            throw new Exception(__METHOD__ . " Failed. Could not attach message queue id {$this->guid}");
 
         if (!is_resource($this->shm))
-            throw new Exception(__METHOD__ . " Failed. Could not address shared memory block {$this->id}");
+            throw new Exception(__METHOD__ . " Failed. Could not address shared memory block {$this->guid}");
     }
 
     /**
@@ -372,8 +377,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return void
      */
     protected function ipc_create() {
-        $this->shm      = shm_attach($this->id, $this->memory_allocation, 0666);
-        $this->queue    = msg_get_queue($this->id, 0666);
+        $this->shm      = shm_attach($this->guid, $this->memory_allocation, 0666);
+        $this->queue    = msg_get_queue($this->guid, 0666);
     }
 
     /**
@@ -499,7 +504,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             case null:
                 // Almost certainly an issue with shared memory
-                $this->log("Shared Memory I/O Error at Address {$this->id}.");
+                $this->log("Shared Memory I/O Error at Address {$this->guid}.");
                 $counter('corruption');
 
                 // If this is a worker, all we can do is try to re-attach the shared memory.
@@ -1033,8 +1038,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * Get the worker ID
      * @return int
      */
-    public function id() {
-        return $this->id;
+    public function guid() {
+        return $this->guid;
     }
 
     /**

@@ -2,6 +2,13 @@
 
 class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
+  public $worker_guid;
+
+  public function __construct()
+  {
+    $this->memory_allocation = 5 * 1024 * 1024;
+  }
+
   /**
    * Called on Construct or Init
    * @return void
