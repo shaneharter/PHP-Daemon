@@ -211,12 +211,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected  $on_timeout;
 
     /**
-     * Is the current instance the Parent (daemon-side) mediator, or the Child (worker-side) mediator?
-     * @var bool
-     */
-    public $is_parent = true;
-
-    /**
      * How big, at any time, can the IPC shared memory allocation be.
      * Default is 5MB. Will need to be increased if you are passing large datasets as Arguments or Return values.
      * @example Allocate shared memory using $this->malloc();
@@ -284,7 +278,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         // after the process is forked.
 
         $that = $this;
-        if ($this->is_parent) {
+        if (Core_Daemon::is('parent')) {
 
             // Use the ftok() method to create a deterministic memory address.
             // This is a bit ugly but ftok needs a filesystem path so we give it one using the daemon filename and
@@ -338,7 +332,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
     public function teardown() {
         static $state = array();
 
-        if (!$this->is_parent)
+        if (!Core_Daemon::is('parent'))
             return;
 
         if ($this->timeout > 0)
@@ -437,7 +431,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected function ipc_error($error_code, $try=1) {
 
         $that = $this;
-        $is_parent = $this->is_parent;
+        $is_parent = Core_Daemon::is('parent');
 
         // Count errors and compare them against thresholds.
         // Different thresholds for parent & children
@@ -493,7 +487,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 // Identifier Removed
                 // A message queue was re-created at this address but the resource identifier we have needs to be re-created
                 $counter('communication');
-                if ($this->is_parent)
+                if (Core_Daemon::is('parent'))
                     usleep($backoff(20000));
                 else
                     sleep($backoff(2));
@@ -509,7 +503,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
                 // If this is a worker, all we can do is try to re-attach the shared memory.
                 // Any corruption or OOM errors will be handled by the parent exclusively.
-                if (!$this->is_parent) {
+                if (!Core_Daemon::is('parent')) {
                     sleep($backoff(3));
                     $this->ipc_create();
                     return true;
@@ -582,7 +576,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 if ($error_code)
                     $this->log("Message Queue Error {$error_code}: " . posix_strerror($error_code));
 
-                if ($this->is_parent)
+                if (Core_Daemon::is('parent'))
                     usleep($backoff(20000));
                 else
                     sleep($backoff(3));
@@ -838,7 +832,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     public function start() {
 
-        while(!$this->is_parent && !$this->shutdown) {
+        while(!Core_Daemon::is('parent') && !$this->shutdown) {
 
             // Give the CPU a break - Sleep for 1/20 a second.
             usleep(50000);
@@ -1152,14 +1146,14 @@ abstract class Core_Worker_Mediator implements Core_ITask
             if (in_array($call->status, array(self::TIMEOUT, self::RETURNED, self::CANCELLED))) {
                 unset($call->args, $call->return);
                 $call->gc = true;
-                if ($this->is_parent && shm_has_var($this->shm, $call_id))
+                if (Core_Daemon::is('parent') && shm_has_var($this->shm, $call_id))
                     shm_remove_var($this->shm, $call_id);
 
                 continue;
             }
         }
 
-        if (!$this->is_parent || count($called) == 0)
+        if (!Core_Daemon::is('parent') || count($called) == 0)
             return;
 
         // We need to determine if we have any "dropped calls" in CALLED status. This could happen in a few scenarios:
@@ -1222,7 +1216,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 $this->dump();
                 break;
             case SIGHUP:
-                if (!$this->is_parent)
+                if (!Core_Daemon::is('parent'))
                     $this->log("Restarting Worker Process...");
 
             case SIGINT:

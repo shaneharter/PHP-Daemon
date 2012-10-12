@@ -1,0 +1,19 @@
+Application-Wide changes:
+- Instance variable $is_parent is removed from several classes in favor of reading the 'parent' env variable
+
+Changes to the Core_Worker API
+- Constructor signature modified: Core_IWorkerVia argument required in the 3rd position.
+- Instance variable $ftok removed.
+- Instance variable $id renamed to $guid.
+- Instance method id() renamed to guid().
+
+Changes to the Core_Daemon API
+- Static method setFilename() renamed to set_filename() for consistency.
+- Static method env_set() created to set application-wide environment variables.
+- Static method env_get() created to read application-wide environment variables.
+- Static method filename() removed, you can read the filename using Core_Daemon::get('filename')
+- Static variable parent_pid removed, parent_pid added as an env variable
+- Static method parent_id removed, you can access the parent_pid variable using Core_Daemon get()
+
+To Do:
+- Consider what other vars we can move into the $env dictionary instead of thier own instance vas in Core_Daemon

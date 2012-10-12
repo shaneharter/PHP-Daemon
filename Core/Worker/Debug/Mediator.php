@@ -206,7 +206,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
             $state = function($key, $value = null) use ($that, $daemon) {
                 static $state = false;
                 $defaults = array(
-                    'parent'  => $daemon->parent_pid(),
+                    'parent'  => Core_Daemon::get('parent_pid'),
                     'enabled' => true,
                     'indent'  => true,
                     'last'    => '',
@@ -220,7 +220,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                     $state = $defaults;
 
                 // If the process was kill -9'd we might have settings from last debug session hanging around.. wipe em
-                if ($state['parent'] != $daemon->parent_pid()) {
+                if ($state['parent'] != Core_Daemon::get('parent_pid')) {
                     $state = $defaults;
                     shm_put_var($that->consoleshm, 1, $state);
                 }
@@ -258,7 +258,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                 $prompt = str_replace("\t", '', $prompt);
 
             $pid    = $this->daemon->pid();
-            $dw     = ($this->daemon->is_parent()) ? 'D' : 'W';
+            $dw     = (Core_Daemon::is('parent')) ? 'D' : 'W';
             $prompt = "[$this->alias $pid $dw] $prompt > ";
             $break  = false;
 
@@ -316,7 +316,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                 }
 
                 if (!$matches && preg_match('/^signal (\d+)/i', $input, $matches) == 1) {
-                    posix_kill($this->daemon->parent_pid(), $matches[1]);
+                    posix_kill(Core_Daemon::get('parent_pid'), $matches[1]);
                     $message = "Signal Sent";
                 }
 
@@ -450,7 +450,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                         break;
 
                     case 'status':
-                        if ($this->is_parent) {
+                        if (Core_Daemon::is('parent')) {
                             $out = array();
                             $out[] = '';
                             $out[] = 'Daemon Process';

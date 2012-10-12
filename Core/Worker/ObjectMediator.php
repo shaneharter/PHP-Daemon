@@ -40,7 +40,7 @@ final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
 
     public function setup() {
 
-        if (!$this->is_parent) {
+        if (!Core_Daemon::is('parent')) {
             $this->object->setup();
         }
         parent::setup();

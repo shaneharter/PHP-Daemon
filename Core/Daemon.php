@@ -90,12 +90,6 @@ abstract class Core_Daemon
     protected $auto_restart_interval = 43200;
 
     /**
-     * Will be 'false' when running in a Task or Worker background process
-     * @var boolean
-     */
-    private $is_parent = true;
-
-    /**
      * Timestamp when was the application started
      * @var integer
      */
@@ -106,13 +100,6 @@ abstract class Core_Daemon
      * @var integer
      */
     private $pid;
-
-    /**
-     * Process ID of the parent (aka application) process
-     * When in parent, it'll be the same as $pid
-     * @var integer
-     */
-    private $parent_pid;
 
     /**
      * An optional filename the PID was written to at startup
@@ -196,12 +183,12 @@ abstract class Core_Daemon
 
 
     /**
-     * This has to be set using the Core_Daemon::setFilename() method before you call getInstance() the first time.
-     * It's used as part of the auto-restart mechanism.
-     * @todo Is there a way to get the currently executed filename from within an include?
-     * @var string
+     * Dictionary of application-wide environment vars. Can be set privately from Core_Daemon and read publicly.
+     * @see Core_Daemon::set()
+     * @see Core_Daemon::get()
+     * @var array
      */
-    private static $filename = false;
+    private static $env = array();
 
 
 
@@ -291,12 +278,44 @@ abstract class Core_Daemon
      * @param string $filename the actual filename, pass in __file__
      * @return void
      */
-    public static function setFilename($filename)
+    public static function set_filename($filename)
     {
-        self::$filename = realpath($filename);
+        self::set('filename', realpath($filename));
     }
 
+    /**
+     * Set an application-wide environment variable
+     * @param $key
+     * @param $value
+     */
+    private static function set($key, $value)
+    {
+        self::$env[$key] = $value;
+    }
 
+    /**
+     * Read an application-wide environment variable
+     * @param $key
+     * @return Mixed -- Returns Null if the $key does not exist
+     */
+    public static function get($key)
+    {
+        if (isset(self::$env[$key]))
+            return self::$env[$key];
+
+        return null;
+    }
+
+    /**
+     * A simple alias for get() to create more semantically-correct and self-documenting code.
+     * @example Core_Daemon::get('parent') === Core_Daemon::is('parent')
+     * @param $key
+     * @return Mixed
+     */
+    public static function is($key)
+    {
+        return self::get($key);
+    }
 
     protected function __construct()
     {
@@ -318,8 +337,8 @@ abstract class Core_Daemon
      */
     protected function check_environment(Array $errors = array())
     {
-        if (empty(self::$filename))
-            $errors[] = 'Filename is Missing: setFilename must be called before an instance can be initialized';
+        if (self::get('filename') === null)
+            $errors[] = 'Filename is Missing: set_filename must be called before an instance can be initialized';
 
         if (is_numeric($this->loop_interval) == false)
             $errors[] = "Invalid Loop Interval: $this->loop_interval";
@@ -393,7 +412,7 @@ abstract class Core_Daemon
             foreach($this->plugins as $plugin)
                 $this->{$plugin}->teardown();
 
-            while($this->is_parent && count($this->worker_pids) > 0) {
+            while(self::is('parent') && count($this->worker_pids) > 0) {
                 foreach(array_unique($this->worker_pids) as $worker)
                     $this->{$worker}->teardown();
 
@@ -408,10 +427,10 @@ abstract class Core_Daemon
         }
 
         $this->reap(false);
-        if ($this->is_parent && !empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
+        if (self::is('parent') && !empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
             unlink($this->pid_file);
 
-        if ($this->is_parent && $this->verbose)
+        if (self::is('parent') && $this->verbose)
             echo PHP_EOL;
     }
 
@@ -427,7 +446,7 @@ abstract class Core_Daemon
      */
     public function __call($method, $args)
     {
-        $accessors = array('loop_interval', 'is_parent', 'verbose', 'pid', 'shutdown');
+        $accessors = array('loop_interval', 'verbose', 'pid', 'shutdown');
         if (in_array($method, $accessors)) {
             if ($args)
                 trigger_error("The '$method' accessor can not be used as a setter in this context. Supplied arguments ignored.", E_USER_WARNING);
@@ -450,7 +469,7 @@ abstract class Core_Daemon
     {
         try
         {
-            while ($this->shutdown == false && $this->is_parent)
+            while ($this->shutdown == false && self::is('parent'))
             {
                 $this->timer(true);
                 $this->auto_restart();
@@ -581,10 +600,6 @@ abstract class Core_Daemon
         // If a Core_ITask was passed in, wrap it in a closure
         if ($task instanceof Core_ITask) {
             $callable = function() use($task) {
-                // By convention an is_parent variable is used when we need to keep track of process state.
-                if (isset($task->is_parent))
-                    $task->is_parent = false;
-
                 $task->setup();
                 call_user_func(array($task, 'start'));
                 $task->teardown();
@@ -608,8 +623,8 @@ abstract class Core_Daemon
             case 0:
                 // Child Process
                 $this->start_time = time();
-                $this->is_parent  = false;
-                $this->parent_pid = $this->pid;
+                self::env_set('parent',  false);
+                self::env_set('parent_pid', $this->pid);
                 $this->pid(getmypid());
                 pcntl_setpriority(1);
 
@@ -676,7 +691,7 @@ abstract class Core_Daemon
 
         if ($handle === false) {
             if (strlen($log_file) > 0 && $handle = @fopen($log_file, 'a+')) {
-                if ($this->is_parent) {
+                if (self::is('parent')) {
                     fwrite($handle, $header);
                     if ($this->verbose)
                         echo $header;
@@ -720,7 +735,7 @@ abstract class Core_Daemon
     {
         $this->error($message, $label);
 
-        if ($this->is_parent) {
+        if (self::is('parent')) {
             $this->log(get_class($this) . ' is Shutting Down...');
 
             $delay = 2;
@@ -755,7 +770,7 @@ abstract class Core_Daemon
                 break;
             case SIGINT:
             case SIGTERM:
-                if ($this->is_parent)
+                if (self::is('parent'))
                     $this->log("Shutdown Signal Received\n");
 
                 $this->shutdown = true;
@@ -799,7 +814,7 @@ abstract class Core_Daemon
      */
     private function getFilename($options = false)
     {
-        $command = 'php ' . self::$filename;
+        $command = 'php ' . self::get('filename');
 
         if ($options === false) {
             $command .= ' -d --recoverworkers';
@@ -867,7 +882,7 @@ abstract class Core_Daemon
         $out[] = "---------------------------------------------------------------------------------------------------";
         $out[] = "Application Runtime Statistics";
         $out[] = "---------------------------------------------------------------------------------------------------";
-        $out[] = "Command:              " . ($this->is_parent ? $this->getFilename() : 'Forked Process from pid ' . $this->parent_pid);
+        $out[] = "Command:              " . (self::is('parent') ? self::get('filename') : 'Forked Process from pid ' . self::get('parent_pid'));
         $out[] = "Loop Interval:        " . $this->loop_interval;
         $out[] = "Idle Probability      " . $this->idle_probability;
         $out[] = "Restart Interval:     " . $this->auto_restart_interval;
@@ -876,7 +891,7 @@ abstract class Core_Daemon
         $out[] = "Log File:             " . $this->log_file();
         $out[] = "Daemon Mode:          " . $pretty_bool($this->daemon);
         $out[] = "Shutdown Signal:      " . $pretty_bool($this->shutdown);
-        $out[] = "Process Type:         " . ($this->is_parent ? 'Application Process' : 'Background Process');
+        $out[] = "Process Type:         " . (self::is('parent') ? 'Application Process' : 'Background Process');
         $out[] = "Plugins:              " . implode(', ', $this->plugins);
         $out[] = "Workers:              " . $workers;
         $out[] = sprintf("Memory:               %s (%s)", memory_get_usage(true), $pretty_memory(memory_get_usage(true)));
@@ -973,7 +988,7 @@ abstract class Core_Daemon
     private function reap($block = false)
     {
         do {
-            $pid = pcntl_wait($status, ($block && $this->is_parent) ? NULL : WNOHANG);
+            $pid = pcntl_wait($status, ($block && self::is('parent')) ? NULL : WNOHANG);
             if (isset($this->worker_pids[$pid])) {
                 $alias = $this->worker_pids[$pid];
                 $this->{$alias}->reap($pid, $status);
@@ -989,7 +1004,7 @@ abstract class Core_Daemon
      */
     public function restart()
     {
-        if ($this->is_parent == false)
+        if (!self::is('parent'))
             return;
 
         $this->shutdown = true;
@@ -1080,7 +1095,7 @@ abstract class Core_Daemon
      */
     protected function worker($alias, $worker)
     {
-        if (!$this->is_parent)
+        if (!self::is('parent'))
             // While in theory there is nothing preventing you from creating workers in child processes, supporting it
             // would require changing a lot of error handling and process management code and I don't really see the value in it.
             throw new Exception(__METHOD__ . ' Failed. You cannot create workers in a background processes.');
@@ -1206,7 +1221,7 @@ abstract class Core_Daemon
 
         echo get_class($this);
         $out[] =  'USAGE:';
-        $out[] =  ' # ' . basename(self::$filename) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--recoverworkers] [--debugworkers]';
+        $out[] =  ' # ' . basename(self::get('filename')) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--recoverworkers] [--debugworkers]';
         $out[] =  '';
         $out[] =  'OPTIONS:';
         $out[] =  ' -H Shows this help';
@@ -1258,7 +1273,7 @@ abstract class Core_Daemon
      */
     protected function create_init_script($template_name, $install = false)
     {
-        $template = dirname($this->filename()) . '/Core/Templates/' . $template_name;
+        $template = dirname(self::get('filename')) . '/Core/Templates/' . $template_name;
 
         if (!file_exists($template))
             $this->show_help("Invalid Template Name '{$template_name}'");
@@ -1305,24 +1320,6 @@ abstract class Core_Daemon
     public function runtime()
     {
         return time() - $this->start_time;
-    }
-
-    /**
-     * Return the pid of the parent daemon process
-     * @return integer
-     */
-    public function parent_pid()
-    {
-        return $this->parent_pid;
-    }
-
-    /**
-     * Return the daemon's filename
-     * @return string
-     */
-    public static function filename()
-    {
-        return self::$filename;
     }
 
     /**
@@ -1390,19 +1387,6 @@ abstract class Core_Daemon
      */
     public function stats_trim() {
         $this->stats = array_slice($this->stats, -100, 100);
-    }
-
-    /**
-     * Combination getter/setter for the $is_parent property. Can be called manually inside a background process.
-     * @param boolean $set_value
-     * @return boolean
-     */
-    protected function is_parent($set_value = null)
-    {
-        if (is_bool($set_value))
-            $this->is_parent = $set_value;
-
-        return $this->is_parent;
     }
 
     /**
@@ -1489,8 +1473,8 @@ abstract class Core_Daemon
             else
                 throw new Exception(__METHOD__ . ' Failed. Could not set pid. Integer Expected. Given: ' . $set_value);
 
-            if ($this->is_parent)
-                $this->parent_pid = $set_value;
+            if (self::is('parent'))
+                self::set('parent_pid', $set_value);
 
             $this->dispatch(array(self::ON_PIDCHANGE), array($set_value));
         }
