@@ -8,7 +8,6 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
    */
   public function setup()
   {
-    // TODO: Implement setup() method.
   }
 
   /**
@@ -17,7 +16,6 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
    */
   public function teardown()
   {
-    // TODO: Implement teardown() method.
   }
 
   /**
@@ -26,7 +24,6 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
    */
   public function check_environment()
   {
-    // TODO: Implement check_environment() method.
   }
 
   /**
@@ -37,7 +34,6 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
    */
   public function puts($message_type, $message)
   {
-    // TODO: Implement puts() method.
   }
 
   /**
@@ -47,7 +43,6 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
    */
   public function gets($message_type)
   {
-    // TODO: Implement gets() method.
   }
 
   /**
@@ -56,7 +51,6 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
    */
   public function get_last_error()
   {
-    // TODO: Implement get_last_error() method.
   }
 
   /**
@@ -65,7 +59,6 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
    */
   public function state()
   {
-    // TODO: Implement state() method.
   }
 
   /**
@@ -74,6 +67,13 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
    */
   public function garbage_collect()
   {
-    // TODO: Implement garbage_collect() method.
+  }
+
+  /**
+   * Drop any pending messages in the queue
+   * @return boolean
+   */
+  public function purge()
+  {
   }
 }

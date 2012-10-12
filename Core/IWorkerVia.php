@@ -36,4 +36,11 @@ interface Core_IWorkerVia
    */
   public function garbage_collect();
 
+  /**
+   * Drop any pending messages in the queue
+   * @return boolean
+   */
+  public function purge();
+
+
 }
