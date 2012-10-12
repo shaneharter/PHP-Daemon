@@ -129,17 +129,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected $running_calls = array();
 
     /**
-     * Array of accumulated error counts. Error thresholds are localized and when reached will
-     * raise a fatal error. Generally thresholds on workers are much lower than on the daemon process
-     * @var array
-     */
-    public $error_counts = array(
-        'communication' => 0,
-        'corruption'    => 0,
-        'catchall'      => 0,
-    );
-
-    /**
      * Has the shutdown signal been received?
      * @var bool
      */
@@ -150,21 +139,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @var string
      */
     protected $alias = '';
-
-    /**
-     * A handle to the IPC message queue
-     * @var Resource
-     */
-    protected $queue;
-
-    /**
-     * A handle to the IPC Shared Memory resource
-     * This should be a `protected` property but in a few instances in this class closures are used in a way that
-     * really makes a lot of sense and they need access. I think these issues will be fixed with the improvements
-     * to $this lexical scoping in PHP5.4
-     * @var Resource
-     */
-    public $shm;
 
     /**
      * The number of allowed concurrent workers
@@ -211,21 +185,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected  $on_timeout;
 
     /**
-     * How big, at any time, can the IPC shared memory allocation be.
-     * Default is 5MB. Will need to be increased if you are passing large datasets as Arguments or Return values.
-     * @example Allocate shared memory using $this->malloc();
-     * @var float
-     */
-    protected $memory_allocation;
-
-    /**
-     * Under-allocated shared memory is perhaps the largest possible cause of Worker failures, so if the Mediator believes
-     * the memory is under-allocated it will set this variable and write the warning to the event log
-     * @var Boolean
-     */
-    protected $memory_allocation_warning = false;
-
-    /**
      * The ID of this worker pool -- used to address shared IPC resources
      * @var int
      */
@@ -240,9 +199,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
 
     public function __construct($alias, Core_Daemon $daemon, Core_IWorkerVia $via) {
-        $this->alias  = $alias;
-        $this->daemon = $daemon;
-        $this->via    = $via;
+        $this->alias            = $alias;
+        $this->daemon           = $daemon;
+        $this->via              = $via;
+        $this->via->mediator    = $this;
 
         $interval = $this->daemon->loop_interval();
         switch(true) {
@@ -300,7 +260,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             $this->fork();
             $this->daemon->on(Core_Daemon::ON_PREEXECUTE,   array($this, 'run'));
-            $this->daemon->on(Core_Daemon::ON_IDLE,         array($this, 'garbage_collector'), ceil(30 / ($this->workers * 0.5)));  // Throttle the garbage collector
+            $this->daemon->on(Core_Daemon::ON_IDLE,         array($this->via, 'garbage_collector'), ceil(30 / ($this->workers * 0.5)));  // Throttle the garbage collector
             $this->daemon->on(Core_Daemon::ON_SIGNAL,       function($signal) use ($that) {
                 if ($signal == SIGUSR1)
                     $that->dump();
@@ -311,7 +271,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
         } else {
             unset($this->calls, $this->processes, $this->running_calls, $this->on_return, $this->on_timeout, $this->call_count);
             $this->calls = $this->processes = $this->running_calls = array();
-            $this->ipc_create();
+            $this->via->setup();
+
             $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'signal'));
             call_user_func($this->get_callback('setup'));
             $this->log('Worker Process Started');
@@ -357,278 +318,16 @@ abstract class Core_Worker_Mediator implements Core_ITask
         // If there are no pending messages, release all shared resources.
         // If there are, then we want to preserve them so we can allow for daemon restarts without losing the call buffer
         if (count($this->processes) == 0) {
-            $stat = $this->ipc_status();
+            $stat = $this->via->state();
             if ($stat['messages'] > 0) {
                 return;
             }
 
-            $this->ipc_destroy();
+            $this->via->purge();
         }
     }
 
-    /**
-     * Connect to (and create if necessary) Shared Memory and Message Queue resources
-     * @return void
-     */
-    protected function ipc_create() {
-        $this->shm      = shm_attach($this->guid, $this->memory_allocation, 0666);
-        $this->queue    = msg_get_queue($this->guid, 0666);
-    }
 
-    /**
-     * Remove and Reset any data in shared resources left over from previous instances of the Daemon.
-     * In normal operation, this happens every time you restart the daemon.
-     * To preserve the data and pick up where you left off, you can start a daemon with the --recoverworkers flag.
-     * Note: Doing so can sometimes cause problems if the cause of the daemon restart was a broken/flawed call.
-     * @param bool $mq   Destroy the message queue?
-     * @param bool $shm  Destroy the shared memory?
-     * @return void
-     */
-    protected function ipc_destroy($mq = true, $shm = true) {
-        if (($mq && !is_resource($this->queue)) || ($shm && !is_resource($this->shm)))
-            $this->ipc_create();
-
-        if ($mq) {
-            @msg_remove_queue($this->queue);
-            $this->queue = null;
-        }
-
-        if ($shm) {
-            @shm_remove($this->shm);
-            @shm_detach($this->shm);
-            $this->shm = null;
-        }
-    }
-
-    /**
-     * Get the status of IPC message queue and shared memory resources
-     * @return array    Tuple of 'messages','memory_allocation'
-     */
-    protected function ipc_status() {
-
-        $tuple = array(
-            'messages' => null,
-            'memory_allocation' => null,
-        );
-
-        $stat = @msg_stat_queue($this->queue);
-        if (is_array($stat))
-            $tuple['messages'] = $stat['msg_qnum'];
-
-        $header = @shm_get_var($this->shm, 1);
-        if (is_array($header))
-            $tuple['memory_allocation'] = $header['memory_allocation'];
-
-        return $tuple;
-    }
-
-    /**
-     * Handle IPC Errors
-     * @param $error_code
-     * @param int $try    Inform ipc_error of repeated failures of the same $error_code
-     * @return boolean  Returns true if the operation should be retried.
-     */
-    protected function ipc_error($error_code, $try=1) {
-
-        $that = $this;
-        $is_parent = Core_Daemon::is('parent');
-
-        // Count errors and compare them against thresholds.
-        // Different thresholds for parent & children
-        $counter = function($type) use($that, $is_parent) {
-            static $error_thresholds = array(
-                'communication' => array(10,  50), // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle (child, parent)
-                'corruption'    => array(10,  25), // Corruption related errors: The underlying data structures are corrupt (or possibly just OOM)
-                'catchall'      => array(10,  25),
-            );
-
-            $that->error_counts[$type]++;
-            if ($that->error_counts[$type] > $error_thresholds[$type][(int)$is_parent])
-                $that->fatal_error("IPC '$type' Error Threshold Reached");
-            else
-                $that->log("Incrementing Error Count for {$type} to " . $that->error_counts[$type]);
-        };
-
-        // Most of the error handling strategy is simply: Sleep for a moment and try again.
-        // Use a simple back-off that would start at, say, 2s, then go to 6s, 14s, 30s, etc
-        // Return int
-        $backoff = function($delay) use ($try) {
-            return $delay * pow(2, min(max($try, 1), 8)) - $delay;
-        };
-
-        // Create an array of random, moderate size and verify it can be written to shared memory
-        // Return boolean
-        $test = function() use($that) {
-            $arr = array_fill(0, mt_rand(10, 100), mt_rand(1000, 1000 * 1000));
-            $key = mt_rand(1000 * 1000, 2000 * 1000);
-            @shm_put_var($that->shm, $key, $arr);
-            usleep(5000);
-            return @shm_get_var($that->shm, $key) == $arr;
-        };
-
-        switch($error_code) {
-            case 0:             // Success
-            case 4:             // System Interrupt
-            case MSG_ENOMSG:    // No message of desired type
-                // Ignored Errors
-                return true;
-                break;
-
-            case MSG_EAGAIN:    // Temporary Problem, Try Again
-                usleep($backoff(20000));
-                return true;
-                break;
-
-            case 22:
-                // Invalid Argument
-                // Probably because the queue was removed in another process.
-
-            case 43:
-                // Identifier Removed
-                // A message queue was re-created at this address but the resource identifier we have needs to be re-created
-                $counter('communication');
-                if (Core_Daemon::is('parent'))
-                    usleep($backoff(20000));
-                else
-                    sleep($backoff(2));
-
-                $this->ipc_create();
-                return true;
-                break;
-
-            case null:
-                // Almost certainly an issue with shared memory
-                $this->log("Shared Memory I/O Error at Address {$this->guid}.");
-                $counter('corruption');
-
-                // If this is a worker, all we can do is try to re-attach the shared memory.
-                // Any corruption or OOM errors will be handled by the parent exclusively.
-                if (!Core_Daemon::is('parent')) {
-                    sleep($backoff(3));
-                    $this->ipc_create();
-                    return true;
-                }
-
-                // If this is the parent, do some diagnostic checks and attempt correction.
-                usleep($backoff(20000));
-
-                // Test writing to shared memory using an array that should come to a few kilobytes.
-                for($i=0; $i<2; $i++) {
-                    if ($test())
-                        return true;
-
-                    // Re-attach the shared memory and try the diagnostic again
-                    $this->ipc_create();
-                }
-
-                $this->log("IPC DIAG: Re-Connect failed to solve the problem.");
-
-                // Attempt to re-connect the shared memory
-                // See if we can read what's in shared memory and re-write it later
-                $items_to_copy = array();
-                $items_to_call = array();
-                for ($i=0; $i<$this->call_count; $i++) {
-                    $call = @shm_get_var($this->shm, $i);
-                    if (!is_object($call))
-                        continue;
-
-                    if (!isset($this->calls[$i]))
-                        continue;
-
-                    if ($this->calls[$i]->status == self::TIMEOUT)
-                        continue;
-
-                    if ($this->calls[$i]->status == self::UNCALLED) {
-                        $items_to_call[$i] = $call;
-                        continue;
-                    }
-
-                    $items_to_copy[$i] = $call;
-                }
-
-                $this->log("IPC DIAG: Preparing to clean SHM and Reconnect...");
-
-                for($i=0; $i<2; $i++) {
-                    $this->ipc_destroy(false, true);
-                    $this->ipc_create();
-
-                    if (!empty($items_to_copy))
-                        foreach($items_to_copy as $key => $value)
-                            @shm_put_var($this->shm, $key, $value);
-
-                    if (!$test()) {
-                        if (empty($items_to_copy)) {
-                            $this->fatal_error("Shared Memory Failure: Unable to proceed.");
-                        } else {
-                            $this->log('IPC DIAG: Purging items from shared memory: ' . implode(', ', array_keys($items_to_copy)));
-                            unset($items_to_copy);
-                        }
-                    }
-                }
-
-                foreach($items_to_call as $call) {
-                    $this->retry($call);
-                }
-
-                return true;
-
-            default:
-                if ($error_code)
-                    $this->log("Message Queue Error {$error_code}: " . posix_strerror($error_code));
-
-                if (Core_Daemon::is('parent'))
-                    usleep($backoff(20000));
-                else
-                    sleep($backoff(3));
-
-                $counter('catchall');
-                $this->ipc_create();
-                return false;
-        }
-    }
-
-    /**
-     * Write and Verify the SHM header
-     * @return void
-     * @throws Exception
-     */
-    private function shm_init() {
-
-        // Write a header to the shared memory block
-        if (!shm_has_var($this->shm, self::HEADER_ADDRESS)) {
-            $header = array(
-                'version' => self::VERSION,
-                'memory_allocation' => $this->memory_allocation,
-            );
-
-            if (!shm_put_var($this->shm, self::HEADER_ADDRESS, $header))
-                throw new Exception(__METHOD__ . " Failed. Could Not Read Header. If this problem persists, try running the daemon with the --resetworkers option.");
-        }
-
-        // Check memory allocation and warn the user if their malloc() is not actually applicable (eg they changed the malloc but used --recoverworkers)
-        $header = shm_get_var($this->shm, self::HEADER_ADDRESS);
-        if ($header['memory_allocation'] <> $this->memory_allocation)
-            $this->log('Warning: Seems you\'ve using --recoverworkers after making a change to the worker malloc memory limit. To apply this change you will have to restart the daemon without the --recoverworkers option.' .
-                PHP_EOL . 'The existing memory_limit is ' . $header['memory_allocation'] . ' bytes.');
-
-        // If we're trying to recover previous messages/shm, scan the shared memory block for call structs and import them
-        if ($this->daemon->recover_workers()) {
-            $max_id = $this->call_count;
-            for ($i=0; $i<100000; $i++) {
-                if(shm_has_var($this->shm, $i)) {
-                    $o = @shm_get_var($this->shm, $i);
-                    if (!is_object($o)) {
-                        @shm_remove_var($this->shm, $i);
-                        continue;
-                    }
-                    $this->calls[$i] = $o;
-                    $max_id = $i;
-                }
-            }
-            $this->log("Starting Job Numbering at $max_id.");
-            $this->call_count = $max_id;
-        }
-    }
 
     /**
      * Fork an appropriate number of daemon processes. Looks at the daemon loop_interval to determine the optimal
@@ -643,7 +342,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
         switch ($this->forking_strategy) {
             case self::LAZY:
-                $stat = $this->ipc_status();
+                $stat = $this->via->state();
                 if ($processes > count($this->running_calls) || count($this->calls) == 0 && $stat['messages'] == 0)
                     $forks = 0;
                 else
@@ -739,8 +438,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
             };
 
             while(true) {
-                $message_type = $message = $message_error = null;
-                if (msg_receive($this->queue, self::WORKER_RUNNING, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
+                $message = $this->via->gets(self::WORKER_RUNNING);
+                if ($message) {
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
                     $this->running_calls[$call_id] = true;
@@ -753,16 +452,15 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     continue;
                 }
 
-                $this->ipc_error($message_error);
+                $this->via->error($this->via->get_last_error());
                 break;
             }
 
             while(true) {
-                $message_type = $message = $message_error = null;
-                if (msg_receive($this->queue, self::WORKER_RETURN, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error)) {
+                $message = $this->via->gets(self::WORKER_RETURN);
+                if ($message) {
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
-
                     unset($this->running_calls[$call_id]);
 
                     // It's possible the process exited after sending this ack, ensure it's still valid.
@@ -775,18 +473,19 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     else
                         $this->log('No onReturn Callback Available');
 
-                    if (!$this->memory_allocation_warning && $call->size > ($this->memory_allocation / 50)) {
-                        $this->memory_allocation_warning = true;
-                        $suggested_size = $call->size * 60;
-                        $this->log("WARNING: The memory allocated to this worker is too low and may lead to out-of-shared-memory errors.\n".
-                                   "         Based on this job, the memory allocation should be at least {$suggested_size} bytes. Current allocation: {$this->memory_allocation} bytes.");
-                    }
+                    // @todo How do we want to handle memory allocation warnings?
+//                    if (!$this->memory_allocation_warning && $call->size > ($this->memory_allocation / 50)) {
+//                        $this->memory_allocation_warning = true;
+//                        $suggested_size = $call->size * 60;
+//                        $this->log("WARNING: The memory allocated to this worker is too low and may lead to out-of-shared-memory errors.\n".
+//                                   "         Based on this job, the memory allocation should be at least {$suggested_size} bytes. Current allocation: {$this->memory_allocation} bytes.");
+//                    }
 
                     $this->log('Job ' . $call_id . ' Is Complete');
                     continue;
                 }
 
-                $this->ipc_error($message_error);
+                $this->via->error($this->via->get_last_error());
                 break;
             }
 
@@ -852,8 +551,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
             if (mt_rand(1, 5) == 1)
                 $this->garbage_collector();
 
-            $message_type = $message = $message_error = null;
-            if (msg_receive($this->queue, self::WORKER_CALL, $message_type, $this->memory_allocation, $message, true, 0, $message_error)) {
+            $message = $this->via->gets(self::WORKER_CALL, true);
+            if ($message) {
                 try {
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
@@ -883,7 +582,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 continue;
             }
 
-            $this->ipc_error($message_error);
+            $this->via->error($this->via->get_last_error());
         }
     }
 

@@ -16,13 +16,19 @@ interface Core_IWorkerVia
    * @param $message_type
    * @return Array  Returns a call struct.
    */
-  public function gets($message_type);
+  public function gets($message_type, $blocking = false);
 
   /**
-   * Returns the last error: poll after a puts or gets failure.
+   * Returns the last error message: poll after a puts or gets failure.
    * @return mixed
    */
   public function get_last_error();
+
+    /**
+     * Handle an Error
+     * @return mixed
+     */
+    public function error();
 
   /**
    * The state of the queue -- The number of pending messages, memory consumption, errors, etc.
@@ -34,7 +40,7 @@ interface Core_IWorkerVia
    * Perform any cleanup & garbage collection necessary.
    * @return boolean
    */
-  public function garbage_collect();
+  public function garbage_collector();
 
   /**
    * Drop any pending messages in the queue
