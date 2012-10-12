@@ -233,14 +233,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected $id;
 
     /**
-     * We use the ftok function to deterministically create worker queue IDs. The function turns a filesystem path to a token.
-     * Since the path of this file is shared among all workers, a hidden temp file is created in /tmp/phpdaemon.
-     * This var holds the variable name so the file can be removed
-     * @var string
-     */
-    protected $ftok;
-
-    /**
      * Return a valid callback for the supplied $method
      * @abstract
      * @param $method
@@ -294,11 +286,12 @@ abstract class Core_Worker_Mediator implements Core_ITask
             // current worker alias.
 
             @mkdir('/tmp/.phpdaemon');
-            $this->ftok = sprintf('/tmp/.phpdaemon/%s_%s', str_replace('/', '_', $this->daemon->filename()), $this->alias);
-            if (!touch($this->ftok))
-                $this->fatal_error("Unable to create Worker ID. ftok() failed. Could not write to /tmp directory at {$this->ftok}");
+            $ftok = sprintf('/tmp/.phpdaemon/%s_%s', str_replace('/', '_', $this->daemon->filename()), $this->alias);
+            if (!touch($ftok))
+                $this->fatal_error("Unable to create Worker ID. ftok() failed. Could not write to /tmp directory at {$ftok}");
 
-            $this->id = ftok($this->ftok, $this->alias[0]);
+            $this->id = ftok($ftok, $this->alias[0]);
+            @unlink($this->ftok);
 
             if (!is_numeric($this->id))
                 $this->fatal_error("Unable to create Worker ID. ftok() failed. Unexpected return value: $this->id");
@@ -370,7 +363,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 return;
             }
 
-            @unlink($this->ftok);
             $this->ipc_destroy();
         }
     }
