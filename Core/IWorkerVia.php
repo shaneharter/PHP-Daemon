@@ -9,14 +9,14 @@ interface Core_IWorkerVia
    * @param $message
    * @return boolean
    */
-  public function puts($message_type, $message);
+  public function put($message);
 
   /**
    * Retrieves a message from the queue
    * @param $message_type
    * @return Array  Returns a call struct.
    */
-  public function gets($message_type, $blocking = false);
+  public function get($message_type, $blocking = false);
 
   /**
    * Returns the last error message: poll after a puts or gets failure.

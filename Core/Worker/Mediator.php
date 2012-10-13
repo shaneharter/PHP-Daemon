@@ -58,11 +58,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
     const AGGRESSIVE = 3;
 
     /**
-     * Each SHM block has a header with needed metadata.
-     */
-    const HEADER_ADDRESS = 1;
-
-    /**
      * The forking strategy of the Worker
      *
      * @example self::LAZY
@@ -182,7 +177,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @example set a Timeout Handler using $this->onTimeout();
      * @var callable
      */
-    protected  $on_timeout;
+    protected $on_timeout;
 
     /**
      * The ID of this worker pool -- used to address shared IPC resources
@@ -438,7 +433,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
             };
 
             while(true) {
-                $message = $this->via->gets(self::WORKER_RUNNING);
+                $message = $this->via->get(self::WORKER_RUNNING);
                 if ($message) {
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
@@ -457,7 +452,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
             }
 
             while(true) {
-                $message = $this->via->gets(self::WORKER_RETURN);
+                $message = $this->via->get(self::WORKER_RETURN);
                 if ($message) {
                     $call_id = $this->message_decode($message);
                     $call = $this->calls[$call_id];
@@ -513,7 +508,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
             // If we've killed all our processes -- either timeouts or maybe they fatal-errored -- and we have pending
             // calls in the queue, fork()
             if (count($this->processes) == 0) {
-                $stat = $this->ipc_status();
+                $stat = $this->via->state();
                 if ($stat['messages'] > 0) {
                     $this->fork();
                 }
@@ -530,6 +525,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return void
      */
     public function start() {
+        // Done - except for error handling at the very bottom of the method
+        // Tested: no
 
         while(!Core_Daemon::is('parent') && !$this->shutdown) {
 
@@ -551,28 +548,26 @@ abstract class Core_Worker_Mediator implements Core_ITask
             if (mt_rand(1, 5) == 1)
                 $this->garbage_collector();
 
-            $message = $this->via->gets(self::WORKER_CALL, true);
-            if ($message) {
+            if ($call = $this->via->get(self::WORKER_CALL, true)) {
                 try {
-                    $call_id = $this->message_decode($message);
-                    $call = $this->calls[$call_id];
 
+                    // If the current via supports it, calls can be cancelled while they are enqueued
                     if ($call->status == self::CANCELLED) {
-                        $this->log("Call {$call_id} Cancelled By Mediator -- Skipping...");
+                        $this->log("Call {$call->id} Cancelled By Mediator -- Skipping...");
                         continue;
                     }
 
                     $call->pid = getmypid();
                     $this->update_struct_status($call, self::RUNNING);
-                    if (!$this->message_encode($call_id)) {
-                        $this->log("Call {$call_id} Could Not Ack Running.");
+                    if (!$this->via->put($call)) {
+                        $this->log("Call {$call->id} Could Not Ack Running.");
                     }
 
                     $call->return = call_user_func_array($this->get_callback($call->method), $call->args);
                     $call->size = strlen(print_r($call, true));
                     $this->update_struct_status($call, self::RETURNED);
-                    if (!$this->message_encode($call_id)) {
-                        $this->log("Call {$call_id} Could Not Ack Complete.");
+                    if (!$this->via->put($call)) {
+                        $this->log("Call {$call->id} Could Not Ack Complete.");
                     }
                 }
                 catch (Exception $e) {
@@ -587,127 +582,13 @@ abstract class Core_Worker_Mediator implements Core_ITask
     }
 
     /**
-     * Send messages for the given $call_id to the right queue based on that call's state. Writes call data
-     * to shared memory at the address specified in the message.
-     * @param $call_id
-     * @return bool
-     */
-    protected function message_encode($call_id) {
-
-        $call = $this->get_struct($call_id);
-
-        $queue_lookup = array(
-            self::UNCALLED  => self::WORKER_CALL,
-            self::RUNNING   => self::WORKER_RUNNING,
-            self::RETURNED  => self::WORKER_RETURN
-        );
-
-        $that = $this;
-        switch($call->status) {
-            case self::UNCALLED:
-            case self::RETURNED:
-                $encoder = function($call) use ($that) {
-                    shm_put_var($that->shm, $call->id, $call);
-                    return shm_has_var($that->shm, $call->id);
-                };
-                break;
-
-            default:
-                $encoder = function($call) {
-                    return true;
-                };
-        }
-
-        $error_code = null;
-        if ($encoder($call)) {
-
-            $message = array (
-                'call_id'   => $call->id,
-                'status'    => $call->status,
-                'microtime' => $call->time[$call->status],
-                'pid'       => $this->daemon->pid(),
-            );
-
-            if (msg_send($this->queue, $queue_lookup[$call->status], $message, true, false, $error_code)) {
-                return true;
-            }
-        }
-
-        $call->errors++;
-        if ($this->ipc_error($error_code, $call->errors) && $call->errors < 3) {
-            $this->log("Message Encode Failed for call_id {$call_id}: Retrying. Error Code: " . $error_code);
-            return $this->message_encode($call_id);
-        }
-
-        return false;
-    }
-
-    /**
-     * Decode the supplied-message. Pulls in data from the shared memory address referenced in the message.
-     * @param array $message
-     * @return mixed
-     * @throws Exception
-     */
-    protected function message_decode(Array $message) {
-        $that = $this;
-        switch($message['status']) {
-            case self::UNCALLED:
-                $decoder = function($message) use($that) {
-                    $call = shm_get_var($that->shm, $message['call_id']);
-                    if ($message['microtime'] < $call->time[Core_Worker_Mediator::UNCALLED])    // Has been requeued - Cancel this call
-                        $that->update_struct_status($call, Core_Worker_Mediator::CANCELLED);
-
-                    return $call;
-                };
-                break;
-
-            case self::RETURNED:
-                $decoder = function($message) use($that) {
-                    $call = shm_get_var($that->shm, $message['call_id']);
-                    if ($call && $call->status == $message['status'])
-                        @shm_remove_var($that->shm, $message['call_id']);
-
-                    return $call;
-                };
-                break;
-
-            default:
-                $decoder = function($message) use($that) {
-                    $call = $that->get_struct($message['call_id']);
-
-                    // If we don't have a local copy of $call the most likely scenario is a --recoverworkers situation.
-                    // Create a placeholder. We'll get a full copy of the struct when it's returned from the worker
-                    if (!$call) {
-                        $call = $that->create_struct();
-                        $call->id = $message['call_id'];
-                    }
-
-                    $that->update_struct_status($call, $message['status']);
-                    $call->pid = $message['pid'];
-                    return $call;
-                };
-        }
-
-        // Now get on with decoding the $message
-        $tries = 1;
-        do {
-            $call = $decoder($message);
-        } while(empty($call) && $this->ipc_error(null, $tries) && $tries++ < 3);
-
-        if (!is_object($call))
-            throw new Exception(__METHOD__ . " Failed. Could Not Decode Message: " . print_r($message, true));
-
-        $this->calls[$call->id] = $this->merge_struct($call);
-        return $call->id;
-    }
-
-    /**
      * Mediate all calls to methods on the contained $object and pass them to instances of $object running in the background.
      * @param stdClass $call
      * @return A unique identifier for the call (unique to this execution only. After a restart the worker re-uses call IDs) OR false on error.
      *         Can be passed to the status() method for call status
      */
     protected function call(stdClass $call) {
+        // Done - No Change
 
         try {
             $this->update_struct_status($call, self::UNCALLED);
@@ -750,6 +631,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @throws Exception
      */
     public function __call($method, $args) {
+        // Done - No Change
 
         if (!in_array($method, $this->methods))
             throw new Exception(__METHOD__ . " Failed. Method `{$method}` is not callable.");
@@ -781,10 +663,13 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return stdClass
      */
     public function create_struct() {
+        // Done - added 'queue'
+
         $call = new stdClass();
         $call->method        = null;
         $call->args          = null;
         $call->status        = null;
+        $call->queue         = null;
         $call->time          = array();
         $call->pid           = null;
         $call->id            = null;
@@ -802,7 +687,17 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return void
      */
     public function update_struct_status(stdClass $call, $status) {
+        // Done
+        // Tested visually
+
+        $lookup = array(
+            self::UNCALLED  => self::WORKER_CALL,
+            self::RUNNING   => self::WORKER_RUNNING,
+            self::RETURNED  => self::WORKER_RETURN
+        );
+
         $call->status = $status;
+        $call->queue  = $lookup[$status];
         $call->time[$status] = microtime(true);
     }
 
@@ -812,6 +707,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return stdClass Return the supplied $call struct, now with details merged-in from the in-memory version.
      */
     public function merge_struct(stdClass $call) {
+        // Done - No Change
 
         // This could end up being more sophisticated and complex.
         // But for now, the real problem it's solving is that we set the CALLED status in the parent AFTER the struct
@@ -831,28 +727,20 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return void
      */
     public function garbage_collector() {
+
+        // Done - haven't touched the via gc() tho
+        // Tested: No
+
+        $this->via->garbage_collector();
+
         $called = array();
-        foreach ($this->calls as $call_id => &$call) {
-            if ($call->gc)
-                continue;
+        if (Core_Daemon::is('parent'))
+            foreach ($this->calls as $call_id => &$call)
+                if ($call->status == self::CALLED)
+                    $called[] = $call_id;
 
-            if ($call->status == self::CALLED) {
-                $called[] = $call_id;
-                continue;
-            }
 
-            // Garbage Collect completed and timed-out call structs
-            if (in_array($call->status, array(self::TIMEOUT, self::RETURNED, self::CANCELLED))) {
-                unset($call->args, $call->return);
-                $call->gc = true;
-                if (Core_Daemon::is('parent') && shm_has_var($this->shm, $call_id))
-                    shm_remove_var($this->shm, $call_id);
-
-                continue;
-            }
-        }
-
-        if (!Core_Daemon::is('parent') || count($called) == 0)
+        if (count($called) == 0)
             return;
 
         // We need to determine if we have any "dropped calls" in CALLED status. This could happen in a few scenarios:
@@ -1189,37 +1077,4 @@ abstract class Core_Worker_Mediator implements Core_ITask
         return $this->workers > count($this->running_calls);
     }
 
-    /**
-     * Allocate the total size of shared memory that will be allocated for passing arguments and return values to/from the
-     * worker processes. Should be sufficient to hold the working set of each worker pool.
-     *
-     * This is can be calculated roughly as:
-     * ([Max Size Of Arguments Passed] + [Max Size of Return Value]) * ([Number of Jobs Running Concurrently] + [Number of Jobs Queued, Waiting to Run])
-     *
-     * The memory used by a job is freed after a worker ack's the job as complete and the onReturn handler is called.
-     * The total pool of memory allocated here is freed when:
-     * 1) The daemon is stopped and no messages are left in the queue.
-     * 2) The daemon is restarted without the --recoverworkers flag (In this case the memory is freed and released and then re-allocated.
-     *    This is useful if you need to resize the shared memory the worker uses or you just want to purge any stale messages)
-     *
-     * Part of the Daemon API - Use from your Daemon to allocate shared memory used among all worker processes.
-     *
-     * @default 1 MB
-     * @param $bytes
-     * @throws Exception
-     * @return int
-     */
-    public function malloc($bytes = null) {
-        if ($bytes !== null) {
-            if (!is_int($bytes))
-                throw new Exception(__METHOD__ . " Failed. Could not set SHM allocation size. Expected Integer. Given: " . gettype($bytes));
-
-            if (is_resource($this->shm))
-                throw new Exception(__METHOD__ . " Failed. Can Not Re-Allocate SHM Size. You will have to restart the daemon without the --recoverworkers option to resize.");
-
-            $this->memory_allocation = $bytes;
-        }
-
-        return $this->memory_allocation;
-    }
 }

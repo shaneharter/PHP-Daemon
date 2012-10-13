@@ -3,6 +3,11 @@
 class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
     /**
+     * Each SHM block has a header with needed metadata.
+     */
+    const HEADER_ADDRESS = 1;
+
+    /**
      * @var Core_Worker_Mediator
      */
     public $mediator;
@@ -53,7 +58,12 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
     public function __construct()
     {
-    $this->memory_allocation = 5 * 1024 * 1024;
+        $this->memory_allocation = 5 * 1024 * 1024;
+    }
+
+    public function __destruct()
+    {
+        unset($this->mediator);
     }
 
     /**
@@ -84,14 +94,87 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     {
     }
 
+
+    /**
+     * Allocate the total size of shared memory that will be allocated for passing arguments and return values to/from the
+     * worker processes. Should be sufficient to hold the working set of each worker pool.
+     *
+     * This is can be calculated roughly as:
+     * ([Max Size Of Arguments Passed] + [Max Size of Return Value]) * ([Number of Jobs Running Concurrently] + [Number of Jobs Queued, Waiting to Run])
+     *
+     * The memory used by a job is freed after a worker ack's the job as complete and the onReturn handler is called.
+     * The total pool of memory allocated here is freed when:
+     * 1) The daemon is stopped and no messages are left in the queue.
+     * 2) The daemon is restarted without the --recoverworkers flag (In this case the memory is freed and released and then re-allocated.
+     *    This is useful if you need to resize the shared memory the worker uses or you just want to purge any stale messages)
+     *
+     * Part of the Daemon API - Use from your Daemon to allocate shared memory used among all worker processes.
+     *
+     * @default 1 MB
+     * @param $bytes
+     * @throws Exception
+     * @return int
+     */
+    public function malloc($bytes = null) {
+        if ($bytes !== null) {
+            if (!is_int($bytes))
+                throw new Exception(__METHOD__ . " Failed. Could not set SHM allocation size. Expected Integer. Given: " . gettype($bytes));
+
+            if (is_resource($this->shm))
+                throw new Exception(__METHOD__ . " Failed. Can Not Re-Allocate SHM Size. You will have to restart the daemon without the --recoverworkers option to resize.");
+
+            $this->memory_allocation = $bytes;
+        }
+
+        return $this->memory_allocation;
+    }
+
     /**
     * Puts the message on the queue
     * @param $message_type
     * @param $message
     * @return boolean
     */
-    public function puts($message_type, $message)
+    public function put($call)
     {
+        $that = $this;
+        switch($call->status) {
+            case self::UNCALLED:
+            case self::RETURNED:
+                $encoder = function($call) use ($that) {
+                    shm_put_var($that->shm, $call->id, $call);
+                    return shm_has_var($that->shm, $call->id);
+                };
+                break;
+
+            default:
+                $encoder = function($call) {
+                    return true;
+                };
+        }
+
+        $error_code = null;
+        if ($encoder($call)) {
+
+            $message = array (
+                'call_id'   => $call->id,
+                'status'    => $call->status,
+                'microtime' => $call->time[$call->status],
+                'pid'       => $this->daemon->pid(),
+            );
+
+            if (msg_send($this->queue, $call->queue, $message, true, false, $error_code)) {
+                return true;
+            }
+        }
+
+        $call->errors++;
+        if ($this->ipc_error($error_code, $call->errors) && $call->errors < 3) {
+            $this->log("Message Encode Failed for call_id {$call_id}: Retrying. Error Code: " . $error_code);
+            return $this->message_encode($call_id);
+        }
+
+        return false;
     }
 
     /**
@@ -99,10 +182,61 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     * @param $message_type
     * @return Array  Returns a call struct.
     */
-    public function gets($message_type, $blocking = false)
+    public function get($message_type, $blocking = false)
     {
         $_message_type = $message = $message_error = null;
         msg_receive($this->queue, $message_type, $_message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error);
+
+        $that = $this;
+        switch($message['status']) {
+            case self::UNCALLED:
+                $decoder = function($message) use($that) {
+                    $call = shm_get_var($that->shm, $message['call_id']);
+                    if ($message['microtime'] < $call->time[Core_Worker_Mediator::UNCALLED])    // Has been requeued - Cancel this call
+                        $that->update_struct_status($call, Core_Worker_Mediator::CANCELLED);
+
+                    return $call;
+                };
+                break;
+
+            case self::RETURNED:
+                $decoder = function($message) use($that) {
+                    $call = shm_get_var($that->shm, $message['call_id']);
+                    if ($call && $call->status == $message['status'])
+                        @shm_remove_var($that->shm, $message['call_id']);
+
+                    return $call;
+                };
+                break;
+
+            default:
+                $decoder = function($message) use($that) {
+                    $call = $that->get_struct($message['call_id']);
+
+                    // If we don't have a local copy of $call the most likely scenario is a --recoverworkers situation.
+                    // Create a placeholder. We'll get a full copy of the struct when it's returned from the worker
+                    if (!$call) {
+                        $call = $that->create_struct();
+                        $call->id = $message['call_id'];
+                    }
+
+                    $that->update_struct_status($call, $message['status']);
+                    $call->pid = $message['pid'];
+                    return $call;
+                };
+        }
+
+        // Now get on with decoding the $message
+        $tries = 1;
+        do {
+            $call = $decoder($message);
+        } while(empty($call) && $this->ipc_error(null, $tries) && $tries++ < 3);
+
+        if (!is_object($call))
+            throw new Exception(__METHOD__ . " Failed. Could Not Decode Message: " . print_r($message, true));
+
+        $this->calls[$call->id] = $this->merge_struct($call);
+        return $call->id
     }
 
     /**
@@ -142,6 +276,16 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     */
     public function garbage_collector()
     {
+        foreach ($this->calls as $call_id => &$call) {
+            if (!$call->gc && in_array($call->status, array(self::TIMEOUT, self::RETURNED, self::CANCELLED))) {
+                unset($call->args, $call->return);
+                $call->gc = true;
+                if (Core_Daemon::is('parent') && shm_has_var($this->shm, $call_id))
+                    shm_remove_var($this->shm, $call_id);
+
+                continue;
+            }
+        }
     }
 
     /**
