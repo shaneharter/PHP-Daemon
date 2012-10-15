@@ -82,7 +82,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
     /**
      * @var Core_Daemon
      */
-    protected $daemon;
+    public $daemon;
 
     /**
      * @var Core_IWorkerVia
@@ -223,7 +223,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         if (function_exists('posix_kill') == false)
             $errors[] = 'The POSIX Extension is Not Installed';
 
-        return $errors;
+        return $this->via->check_environment($errors);
     }
 
     public function setup() {
@@ -419,6 +419,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return void
      */
     public function run() {
+        // Done - Yes except the memory allocation error and general clunk error handling at the bottom of each section
+        // Tested: no
 
         if (empty($this->calls))
             return;
@@ -426,24 +428,22 @@ abstract class Core_Worker_Mediator implements Core_ITask
         try {
 
             // If there are any callbacks registered (onReturn, onTimeout, etc), we will pass
-            // the $call struct to them and this $logger closure
+            // the call struct and this $logger closure to them
             $that = $this;
             $logger = function($message) use($that) {
                 $that->log($message);
             };
 
             while(true) {
-                $message = $this->via->get(self::WORKER_RUNNING);
-                if ($message) {
-                    $call_id = $this->message_decode($message);
-                    $call = $this->calls[$call_id];
-                    $this->running_calls[$call_id] = true;
+
+                if ($call = $this->via->get(self::WORKER_RUNNING)) {
+                    $this->running_calls[$call->id] = true;
 
                     // It's possible the process exited after sending this ack, ensure it's still valid.
                     if (isset($this->processes[$call->pid]))
-                        $this->processes[$call->pid]->job = $call_id;
+                        $this->processes[$call->pid]->job = $call->id;
 
-                    $this->log('Job ' . $call_id . ' Is Running');
+                    $this->log('Job ' . $call->id . ' Is Running');
                     continue;
                 }
 
@@ -452,15 +452,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
             }
 
             while(true) {
-                $message = $this->via->get(self::WORKER_RETURN);
-                if ($message) {
-                    $call_id = $this->message_decode($message);
-                    $call = $this->calls[$call_id];
-                    unset($this->running_calls[$call_id]);
 
-                    // It's possible the process exited after sending this ack, ensure it's still valid.
+                if ($call = $this->via->get(self::WORKER_RETURN)) {
+                    unset($this->running_calls[$call->id]);
                     if (isset($this->processes[$call->pid]))
-                        $this->processes[$call->pid]->job = $call_id;
+                        $this->processes[$call->pid]->job = $call->id;
 
                     $on_return = $this->on_return;
                     if (is_callable($on_return))
@@ -476,7 +472,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 //                                   "         Based on this job, the memory allocation should be at least {$suggested_size} bytes. Current allocation: {$this->memory_allocation} bytes.");
 //                    }
 
-                    $this->log('Job ' . $call_id . ' Is Complete');
+                    $this->log('Job ' . $call->id . ' Is Complete');
                     continue;
                 }
 
