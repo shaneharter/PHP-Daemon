@@ -182,6 +182,14 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     */
     public function get($desired_type, $blocking = false)
     {
+        // @todo How do we want to handle memory allocation warnings?
+//                    if (!$this->memory_allocation_warning && $call->size > ($this->memory_allocation / 50)) {
+//                        $this->memory_allocation_warning = true;
+//                        $suggested_size = $call->size * 60;
+//                        $this->log("WARNING: The memory allocated to this worker is too low and may lead to out-of-shared-memory errors.\n".
+//                                   "         Based on this job, the memory allocation should be at least {$suggested_size} bytes. Current allocation: {$this->memory_allocation} bytes.");
+//                    }
+
         $message_type = $message = $message_error = null;
         msg_receive($this->queue, $desired_type, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error);
 
@@ -191,7 +199,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 $decoder = function($message) use($that) {
                     $call = shm_get_var($that->shm, $message['call_id']);
                     if ($message['microtime'] < $call->time[Core_Worker_Mediator::UNCALLED])    // Has been requeued - Cancel this call
-                        $that->update_struct_status($call, Core_Worker_Mediator::CANCELLED);
+                        $call->cancelled();
 
                     return $call;
                 };
@@ -209,16 +217,14 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
             default:
                 $decoder = function($message) use($that) {
-                    $call = $that->get_struct($message['call_id']);
+                    $call = $that->mediator->get_struct($message['call_id']);
 
                     // If we don't have a local copy of $call the most likely scenario is a --recoverworkers situation.
                     // Create a placeholder. We'll get a full copy of the struct when it's returned from the worker
-                    if (!$call) {
-                        $call = $that->create_struct();
-                        $call->id = $message['call_id'];
-                    }
+                    if (!$call)
+                        $call = new Core_Worker_Call($message['call_id']);
 
-                    $that->update_struct_status($call, $message['status']);
+                    $call->status($message['status']);
                     $call->pid = $message['pid'];
                     return $call;
                 };
@@ -234,7 +240,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
             throw new Exception(__METHOD__ . " Failed. Could Not Decode Message: " . print_r($message, true));
 
         $this->calls[$call->id] = $this->merge_struct($call);
-        return $call->id
+        return $call->id;
     }
 
     /**
@@ -252,20 +258,20 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     */
     public function state()
     {
-        $tuple = array(
+        $out = array(
             'messages' => null,
             'memory_allocation' => null,
         );
 
         $stat = @msg_stat_queue($this->queue);
         if (is_array($stat))
-            $tuple['messages'] = $stat['msg_qnum'];
+            $out['messages'] = $stat['msg_qnum'];
 
         $header = @shm_get_var($this->shm, 1);
         if (is_array($header))
-            $tuple['memory_allocation'] = $header['memory_allocation'];
+            $out['memory_allocation'] = $header['memory_allocation'];
 
-        return $tuple;
+        return $out;
     }
 
     /**
@@ -274,16 +280,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     */
     public function garbage_collector()
     {
-        foreach ($this->calls as $call_id => &$call) {
-            if (!$call->gc && in_array($call->status, array(self::TIMEOUT, self::RETURNED, self::CANCELLED))) {
-                unset($call->args, $call->return);
-                $call->gc = true;
-                if (Core_Daemon::is('parent') && shm_has_var($this->shm, $call_id))
-                    shm_remove_var($this->shm, $call_id);
 
-                continue;
-            }
-        }
     }
 
     /**
@@ -532,5 +529,15 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
      */
     public function error()
     {
+    }
+
+    /**
+     * Drop the single message
+     * @return void
+     */
+    public function drop($call_id)
+    {
+        if (shm_has_var($this->shm, $call_id))
+            shm_remove_var($this->shm, $call_id);
     }
 }

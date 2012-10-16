@@ -3,9 +3,10 @@
 class Core_Worker_Call extends stdClass
 {
 
-    public $method;
     public $return;
     public $args;
+
+    public $method;
     public $status;
     public $queue;
     public $pid;
@@ -17,17 +18,20 @@ class Core_Worker_Call extends stdClass
     public $time          = array();
 
 
-    public function __construct($id, $method, Array $args = null) {
+    public function __construct($id, $method = null, Array $args = null) {
         $this->id          = $id;
         $this->method      = $method;
         $this->args        = $args;
+        $this->update_size();
         $this->uncalled();
     }
 
-    public function __set($k, $v) {
-        // @todo set the return and args to private, update $size here when they're set:
-        // strlen(print_r($call, true))
-    }
+//    public function __get($k) {
+//        if (in_array($k, get_object_vars($this)))
+//            return $this->{$k};
+//
+//        return null;
+//    }
 
     public function runtime() {
         switch($this->status) {
@@ -42,13 +46,30 @@ class Core_Worker_Call extends stdClass
         }
     }
 
-// @todo probably remove -- merging 2 should sorta be up to the mediator i think
-//    public function merge(Core_Worker_Call $call) {
-//        // This could end up being more sophisticated and complex.
-//        // But for now, the only modifications to this struct in the worker are timestamps at status changes.
-//        $this->time[self::CALLED] = $call->time[self::CALLED];
-//    }
+    /**
+     * Merge in data from the supplied $call into this call
+     * @param Core_Worker_Call $call
+     * @return Core_Worker_Call
+     */
+    public function merge(Core_Worker_Call $call) {
+        // This could end up being more sophisticated and complex.
+        // But for now, the only modifications to this struct in the worker are timestamps at status changes.
+        $this->time[self::CALLED] = $call->time[self::CALLED];
+        return $this;
+    }
 
+    public function is_active() {
+        return !in_array($this->status, array(self::TIMEOUT, self::RETURNED, self::CANCELLED));
+    }
+
+    public function gc() {
+        if ($this->gc || $this->is_active())
+            return false;
+
+        unset($this->args, $this->return);
+        $this->gc = true;
+        return true;
+    }
 
     public function timeout($microtime = null) {
         return $this->status(Core_Worker_Mediator::TIMEOUT,    $microtime);
@@ -58,11 +79,14 @@ class Core_Worker_Call extends stdClass
         return $this->status(Core_Worker_Mediator::CANCELLED,  $microtime);
     }
 
-    public function returned($microtime = null) {
+    public function returned($return, $microtime = null) {
+        $this->return = $return;
+        $this->update_size();
         return $this->status(Core_Worker_Mediator::RETURNED,   $microtime);
     }
 
     public function running($microtime = null) {
+        $this->pid = getmypid();
         return $this->status(Core_Worker_Mediator::RUNNING,    $microtime);
     }
 
@@ -74,7 +98,7 @@ class Core_Worker_Call extends stdClass
         return $this->status(Core_Worker_Mediator::UNCALLED,   $microtime);
     }
 
-    private function status($status, $microtime = null) {
+    public function status($status, $microtime = null) {
         if ($status < $this->status)
             throw new Exception(__METHOD__ . " Failed: Cannot Rewind Status. Current Status: {$this->status} Given: {$status}");
 
@@ -86,6 +110,10 @@ class Core_Worker_Call extends stdClass
         $this->time[$status] = $microtime;
 
         return $this;
+    }
+
+    private function update_size() {
+        $this->size = strlen(print_r($this, true));
     }
 
 }

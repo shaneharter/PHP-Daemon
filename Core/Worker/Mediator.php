@@ -196,12 +196,14 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     protected $guid;
 
+
     /**
      * Return a valid callback for the supplied $method
      * @abstract
      * @param $method
      */
     protected abstract function get_callback($method);
+
 
 
     public function __construct($alias, Core_Daemon $daemon, Core_IWorkerVia $via) {
@@ -228,7 +230,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
         // This method intentionally left blank
         // The Daemon destructor calls teardown() on each worker
     }
-
 
     public function check_environment(Array $errors = array()) {
         if (function_exists('posix_kill') == false)
@@ -475,14 +476,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     else
                         $this->log('No onReturn Callback Available');
 
-                    // @todo How do we want to handle memory allocation warnings?
-//                    if (!$this->memory_allocation_warning && $call->size > ($this->memory_allocation / 50)) {
-//                        $this->memory_allocation_warning = true;
-//                        $suggested_size = $call->size * 60;
-//                        $this->log("WARNING: The memory allocated to this worker is too low and may lead to out-of-shared-memory errors.\n".
-//                                   "         Based on this job, the memory allocation should be at least {$suggested_size} bytes. Current allocation: {$this->memory_allocation} bytes.");
-//                    }
-
                     $this->log('Job ' . $call->id . ' Is Complete');
                     continue;
                 }
@@ -495,19 +488,17 @@ abstract class Core_Worker_Mediator implements Core_ITask
             // Timeouts will either be simply that the worker is taking longer than expected to return the call,
             // or the worker actually fatal-errored and killed itself.
             if ($this->timeout > 0) {
-                $now = microtime(true);
                 foreach(array_keys($this->running_calls) as $call_id) {
                     $call = $this->calls[$call_id];
-                    if (isset($call->time[self::RUNNING]) && $now > ($call->time[self::RUNNING] + $this->timeout)) {
+                    if ($call->runtime() > $this->timeout) {
                         $this->log("Enforcing Timeout on Call $call_id in pid " . $call->pid);
                         @posix_kill($call->pid, SIGKILL);
                         unset($this->running_calls[$call_id], $this->processes[$call->pid]);
-                        $call->status = self::TIMEOUT;
+                        $call->timeout();
 
                         $on_timeout = $this->on_timeout;
                         if (is_callable($on_timeout))
                             call_user_func($on_timeout, $call, $logger);
-
                     }
                 }
             }
@@ -557,25 +548,19 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             if ($call = $this->via->get(self::WORKER_CALL, true)) {
                 try {
-
                     // If the current via supports it, calls can be cancelled while they are enqueued
                     if ($call->status == self::CANCELLED) {
                         $this->log("Call {$call->id} Cancelled By Mediator -- Skipping...");
                         continue;
                     }
 
-                    $call->pid = getmypid();
-                    $this->update_struct_status($call, self::RUNNING);
-                    if (!$this->via->put($call)) {
+                    $call->running();
+                    if (!$this->via->put($call))
                         $this->log("Call {$call->id} Could Not Ack Running.");
-                    }
 
-                    $call->return = call_user_func_array($this->get_callback($call->method), $call->args);
-                    $call->size = strlen(print_r($call, true));
-                    $call->returned();
-                    if (!$this->via->put($call)) {
+                    $call->returned(call_user_func_array($this->get_callback($call->method), $call->args));
+                    if (!$this->via->put($call))
                         $this->log("Call {$call->id} Could Not Ack Complete.");
-                    }
                 }
                 catch (Exception $e) {
                     $this->error($e->getMessage());
@@ -647,10 +632,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
     }
 
     /**
-     * Hack to work around deficient $this lexical scoping in PHP5.3 closures. Gives closures used in various
-     * methods herein access to the $calls array. Hopefully can get rid of this when we move to require PHP5.4
-     * @param integer $call_id
-     * @return stdClass
+     * Return the requested call from the local call cache if it exists
+     * @return Core_Worker_Call
      */
     public function get_struct($call_id) {
         if (isset($this->calls[$call_id]))
@@ -660,21 +643,14 @@ abstract class Core_Worker_Mediator implements Core_ITask
     }
 
     /**
-     * Merge the supplied $call with the canonical version in memory
-     * @param stdClass $call    A call struct pass to us from another process
-     * @return stdClass Return the supplied $call struct, now with details merged-in from the in-memory version.
+     * Set the supplied $call into the local call cache, doing any merging with a previously-cached version is necessary
+     * @param Core_Worker_Call $call
      */
-    public function merge_struct(Core_Worker_Call $call) {
-        // Done - No Change
-
-        // This could end up being more sophisticated and complex.
-        // But for now, the real problem it's solving is that we set the CALLED status in the parent AFTER the struct
-        // is written to shared memory. So when it returns, we're losing the CALLED timestamp. Copy that over.
-        if (isset($this->calls[$call->id])) {
-            $call->time[self::CALLED] = $this->calls[$call->id]->time[self::CALLED];
-        }
-
-        return $call;
+    public function set_struct(Core_Worker_Call $call) {
+        if(isset($this->calls[$call->id]))
+            $this->calls[$call->id] = $call->merge($this->calls[$call->id]);
+        else
+            $this->calls[$call->id] = $call;
     }
 
     /**
@@ -686,19 +662,19 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     public function garbage_collector() {
 
-        // Done - haven't touched the via gc() tho
+        // Done - Updated to use Call and Via objects
         // Tested: No
 
-        $this->via->garbage_collector();
-
         $called = array();
-        if (Core_Daemon::is('parent'))
-            foreach ($this->calls as $call_id => &$call)
-                if ($call->status == self::CALLED)
-                    $called[] = $call_id;
+        foreach ($this->calls as $call_id => &$call) {
+            if ($call->gc() && Core_Daemon::is('parent'))
+                $this->via->drop($call_id);
 
+            if ($call->status == self::CALLED)
+                $called[] = $call_id;
+        }
 
-        if (count($called) == 0)
+        if (!Core_Daemon::is('parent') || count($called) == 0)
             return;
 
         // We need to determine if we have any "dropped calls" in CALLED status. This could happen in a few scenarios:
@@ -849,8 +825,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
 
 
-
-
     /**
      * Write do the Daemon's event log
      *
@@ -898,12 +872,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return mixed
      */
     public function daemon($property) {
-        if (isset($this->daemon->{$property}) && !is_callable($this->daemon->{$property})) {
+        if (isset($this->daemon->{$property}) && !is_callable($this->daemon->{$property}))
             return $this->daemon->{$property};
-        }
+
         return null;
     }
-
 
 
 
@@ -920,7 +893,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @param stdClass $call
      * @return bool
      */
-    public function retry(stdClass $call) {
+    public function retry(Core_Worker_Call $call) {
         if (empty($call->method))
             throw new Exception(__METHOD__ . " Failed. A valid call struct is required.");
 
@@ -957,8 +930,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @param callable $on_timeout
      * @throws Exception
      */
-    public function onTimeout($on_timeout)
-    {
+    public function onTimeout($on_timeout) {
         if (!is_callable($on_timeout))
             throw new Exception(__METHOD__ . " Failed. Callback or Closure expected.");
 
@@ -974,8 +946,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @param callable $on_return
      * @throws Exception
      */
-    public function onReturn($on_return)
-    {
+    public function onReturn($on_return) {
         if (!is_callable($on_return))
             throw new Exception(__METHOD__ . " Failed. Callback or Closure expected.");
 
@@ -990,8 +961,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @param $timeout
      * @throws Exception
      */
-    public function timeout($timeout)
-    {
+    public function timeout($timeout) {
         if (!is_numeric($timeout))
             throw new Exception(__METHOD__ . " Failed. Numeric value expected.");
 
@@ -1012,8 +982,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @param int $workers
      * @throws Exception
      */
-    public function workers($workers)
-    {
+    public function workers($workers) {
         if (!is_int($workers))
             throw new Exception(__METHOD__ . " Failed. Integer value expected.");
 
