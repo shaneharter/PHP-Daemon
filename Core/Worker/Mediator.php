@@ -58,6 +58,17 @@ abstract class Core_Worker_Mediator implements Core_ITask
     const AGGRESSIVE = 3;
 
     /**
+     * Map call statuses to the logical queue that messages will be written-to.
+     * @example When a call is in UNCALLED status, it should be written to the WORKER_CALL queue.
+     * @var array
+     */
+    public static $queue_map = array(
+        self::UNCALLED  => self::WORKER_CALL,
+        self::RUNNING   => self::WORKER_RUNNING,
+        self::RETURNED  => self::WORKER_RETURN
+    );
+
+    /**
      * The forking strategy of the Worker
      *
      * @example self::LAZY
@@ -104,7 +115,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
     /**
      * All Calls
      * A periodic garbage collection routine unsets ->args, ->return, leaving just the lightweight call meta-data behind
-     * @var array of stdClass objects
+     * @var Core_Worker_Call[]
      */
     protected $calls = array();
 
@@ -561,7 +572,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
                     $call->return = call_user_func_array($this->get_callback($call->method), $call->args);
                     $call->size = strlen(print_r($call, true));
-                    $this->update_struct_status($call, self::RETURNED);
+                    $call->returned();
                     if (!$this->via->put($call)) {
                         $this->log("Call {$call->id} Could Not Ack Complete.");
                     }
@@ -579,18 +590,17 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
     /**
      * Mediate all calls to methods on the contained $object and pass them to instances of $object running in the background.
-     * @param stdClass $call
-     * @return A unique identifier for the call (unique to this execution only. After a restart the worker re-uses call IDs) OR false on error.
-     *         Can be passed to the status() method for call status
+     * @param Core_Worker_Call $call
+     * @return integer   A unique-per-process identifier for the call OR false on error. That ID can be used to interact
+     *                   with the call, eg checking the call status.
      */
-    protected function call(stdClass $call) {
-        // Done - No Change
+    protected function call(Core_Worker_Call $call) {
+        // Done - Updated to use new Call class & put()
 
         try {
-            $this->update_struct_status($call, self::UNCALLED);
             $this->calls[$call->id] = $call;
-            if ($this->message_encode($call->id)) {
-                $this->update_struct_status($call, self::CALLED);
+            if ($this->via->put($call)) {
+                $call->called();
                 $this->fork();
                 return $call->id;
             }
@@ -627,16 +637,13 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @throws Exception
      */
     public function __call($method, $args) {
-        // Done - No Change
+        // Done - Updated to use Call class
 
         if (!in_array($method, $this->methods))
             throw new Exception(__METHOD__ . " Failed. Method `{$method}` is not callable.");
 
-        $call = $this->create_struct();
-        $call->method = $method;
-        $call->args   = $args;
-        $call->id     = ++$this->call_count;
-        return $this->call($call);
+        $this->call_count++;
+        return $this->call(new Core_Worker_Call($this->call_count, $method, $args));
     }
 
     /**
@@ -653,56 +660,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
     }
 
     /**
-     * Create an empty Call Struct. The decision was made to use a call struct with methods that act on it (a very C thing to do)
-     * to avoid any of the complexity and complication of serializing the object for inter-process transmission.
-     *
-     * @return stdClass
-     */
-    public function create_struct() {
-        // Done - added 'queue'
-
-        $call = new stdClass();
-        $call->method        = null;
-        $call->args          = null;
-        $call->status        = null;
-        $call->queue         = null;
-        $call->time          = array();
-        $call->pid           = null;
-        $call->id            = null;
-        $call->retries       = 0;
-        $call->errors        = 0;
-        $call->size          = null;
-        $call->gc            = false;
-        return $call;
-    }
-
-    /**
-     * Update the status of the supplied Call Struct in-place.
-     * @param stdClass $call
-     * @param $status
-     * @return void
-     */
-    public function update_struct_status(stdClass $call, $status) {
-        // Done
-        // Tested visually
-
-        $lookup = array(
-            self::UNCALLED  => self::WORKER_CALL,
-            self::RUNNING   => self::WORKER_RUNNING,
-            self::RETURNED  => self::WORKER_RETURN
-        );
-
-        $call->status = $status;
-        $call->queue  = $lookup[$status];
-        $call->time[$status] = microtime(true);
-    }
-
-    /**
      * Merge the supplied $call with the canonical version in memory
      * @param stdClass $call    A call struct pass to us from another process
      * @return stdClass Return the supplied $call struct, now with details merged-in from the in-memory version.
      */
-    public function merge_struct(stdClass $call) {
+    public function merge_struct(Core_Worker_Call $call) {
         // Done - No Change
 
         // This could end up being more sophisticated and complex.
@@ -764,7 +726,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             // If there's a retry count above our threshold log and skip to avoid endless requeueing
             if ($call->retries > 3) {
-                $this->update_struct_status($call, self::CANCELLED);
+                $call->cancelled();
                 $this->error("Dropped Call. Requeue threshold reached. Call {$call->id} will not be requeued.");
                 continue;
             }

@@ -178,7 +178,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     /**
     * Retrieves a message from the queue
     * @param $desired_type
-    * @return Array  Returns a call struct.
+    * @return Core_Worker_Calls
     */
     public function get($desired_type, $blocking = false)
     {
