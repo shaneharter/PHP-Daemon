@@ -1090,24 +1090,28 @@ abstract class Core_Daemon
      * Create a persistent Worker process.
      * @param String $alias  The name of the worker -- Will be instantiated at $this->{$alias}
      * @param callable|Core_IWorker $worker An object of type Core_Worker OR a callable (function, callback, closure)
+     * @param Core_IWorkerVia $via  A Core_IWorkerVia object that defines the medium for IPC (In theory could be any message queue, redis, memcache, etc)
      * @return Core_Worker_ObjectMediator Returns a Core_Worker class that can be used to interact with the Worker
      * @todo Use 'callable' type hinting if/when we move to a php 5.4 requirement.
      */
-    protected function worker($alias, $worker)
+    protected function worker($alias, $worker, Core_IWorkerVia $via = null)
     {
         if (!self::is('parent'))
             // While in theory there is nothing preventing you from creating workers in child processes, supporting it
             // would require changing a lot of error handling and process management code and I don't really see the value in it.
             throw new Exception(__METHOD__ . ' Failed. You cannot create workers in a background processes.');
 
+        if ($via === null)
+            $via = new Core_Worker_Via_SysV();
+
         $this->check_alias($alias);
 
         switch (true) {
             case is_object($worker) && !is_a($worker, 'Closure'):
                 if ($this->debug_workers)
-                    $mediator = new Core_Worker_Debug_ObjectMediator($alias, $this);
+                    $mediator = new Core_Worker_Debug_ObjectMediator($alias, $this, $via);
                 else
-                    $mediator = new Core_Worker_ObjectMediator($alias, $this);
+                    $mediator = new Core_Worker_ObjectMediator($alias, $this, $via);
 
                 // Ensure that there are no reserved method names in the worker object -- Determine if there will
                 // be a collision between worker methods and public methods on the Mediator class
@@ -1123,9 +1127,9 @@ abstract class Core_Daemon
 
             case is_callable($worker):
                 if ($this->debug_workers)
-                    $mediator = new Core_Worker_Debug_FunctionMediator($alias, $this);
+                    $mediator = new Core_Worker_Debug_FunctionMediator($alias, $this, $via);
                 else
-                    $mediator = new Core_Worker_FunctionMediator($alias, $this);
+                    $mediator = new Core_Worker_FunctionMediator($alias, $this, $via);
 
                 $mediator->setFunction($worker);
                 break;
