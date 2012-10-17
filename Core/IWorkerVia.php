@@ -9,7 +9,7 @@ interface Core_IWorkerVia
      * @param $message
      * @return boolean
      */
-    public function put($message);
+    public function put(Core_Worker_Call $message);
 
     /**
      * Retrieves a message from the queue
@@ -28,19 +28,13 @@ interface Core_IWorkerVia
      * Handle an Error
      * @return mixed
      */
-    public function error();
+    public function error($error, $try=1);
 
     /**
      * The state of the queue -- The number of pending messages, memory consumption, errors, etc.
      * @return Array with some subset of these keys: messages, memory_allocation, error_count
      */
     public function state();
-
-    /**
-     * Perform any cleanup & garbage collection necessary.
-     * @return boolean
-     */
-    public function garbage_collector();
 
     /**
      * Drop any pending messages in the queue

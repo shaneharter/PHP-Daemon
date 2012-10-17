@@ -62,6 +62,11 @@ class Core_Worker_Call extends stdClass
         return !in_array($this->status, array(self::TIMEOUT, self::RETURNED, self::CANCELLED));
     }
 
+    /**
+     * Reduce the memory footprint of this call by unsetting argument & return details that could be memory intensive.
+     * All other meta-data of the call will be preserved for analytical purposes. Sets a $gc flag upon completion.
+     * @return bool
+     */
     public function gc() {
         if ($this->gc || $this->is_active())
             return false;
@@ -69,6 +74,22 @@ class Core_Worker_Call extends stdClass
         unset($this->args, $this->return);
         $this->gc = true;
         return true;
+    }
+
+    /**
+     * Return a message header with pertinent details. Using the SysV via, for example, this is sent on the mq,
+     * and the message body is set on shm.
+     * @return array
+     */
+    public function header() {
+        return array (
+            'call_id'   => $this->id,
+            'status'    => $this->status,
+            'microtime' => $this->time[$this->status],
+            'pid'       => Core_Daemon::getInstance()->pid(),
+            // I really have no idea why we are sending the pid along in the message header like this, but I assume
+            // there's a good reason so for now I'll just continue to include it.
+        );
     }
 
     public function timeout($microtime = null) {

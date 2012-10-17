@@ -446,42 +446,30 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 $that->log($message);
             };
 
-            while(true) {
+            while($call = $this->via->get(self::WORKER_RUNNING)) {
 
-                if ($call = $this->via->get(self::WORKER_RUNNING)) {
-                    $this->running_calls[$call->id] = true;
+                $this->running_calls[$call->id] = true;
 
-                    // It's possible the process exited after sending this ack, ensure it's still valid.
-                    if (isset($this->processes[$call->pid]))
-                        $this->processes[$call->pid]->job = $call->id;
+                // It's possible the process exited after sending this ack, ensure it's still valid.
+                if (isset($this->processes[$call->pid]))
+                    $this->processes[$call->pid]->job = $call->id;
 
-                    $this->log('Job ' . $call->id . ' Is Running');
-                    continue;
-                }
-
-                $this->via->error($this->via->get_last_error());
-                break;
+                $this->log('Job ' . $call->id . ' Is Running');
             }
 
-            while(true) {
+            while($call = $this->via->get(self::WORKER_RETURN)) {
 
-                if ($call = $this->via->get(self::WORKER_RETURN)) {
-                    unset($this->running_calls[$call->id]);
-                    if (isset($this->processes[$call->pid]))
-                        $this->processes[$call->pid]->job = $call->id;
+                unset($this->running_calls[$call->id]);
+                if (isset($this->processes[$call->pid]))
+                    $this->processes[$call->pid]->job = $call->id;
 
-                    $on_return = $this->on_return;
-                    if (is_callable($on_return))
-                        call_user_func($on_return, $call, $logger);
-                    else
-                        $this->log('No onReturn Callback Available');
+                $on_return = $this->on_return;
+                if (is_callable($on_return))
+                    call_user_func($on_return, $call, $logger);
+                else
+                    $this->log('No onReturn Callback Available');
 
-                    $this->log('Job ' . $call->id . ' Is Complete');
-                    continue;
-                }
-
-                $this->via->error($this->via->get_last_error());
-                break;
+                $this->log('Job ' . $call->id . ' Is Complete');
             }
 
             // Enforce Timeouts
@@ -565,11 +553,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 catch (Exception $e) {
                     $this->error($e->getMessage());
                 }
-
-                continue;
             }
 
-            $this->via->error($this->via->get_last_error());
         }
     }
 

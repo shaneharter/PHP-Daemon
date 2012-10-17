@@ -133,7 +133,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     * @param $message
     * @return boolean
     */
-    public function put($call)
+    public function put(Core_Worker_Call $call)
     {
         $that = $this;
         switch($call->status) {
@@ -152,24 +152,14 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         }
 
         $error_code = null;
-        if ($encoder($call)) {
-
-            $message = array (
-                'call_id'   => $call->id,
-                'status'    => $call->status,
-                'microtime' => $call->time[$call->status],
-                'pid'       => Core_Daemon::getInstance()->pid(),
-            );
-
-            if (msg_send($this->queue, $call->queue, $message, true, false, $error_code)) {
+        if ($encoder($call))
+            if (msg_send($this->queue, $call->queue, $call->header(), true, false, $error_code))
                 return true;
-            }
-        }
 
         $call->errors++;
         if ($this->ipc_error($error_code, $call->errors) && $call->errors < 3) {
-            $this->mediator->log("Message Encode Failed for call_id {$call->id}: Retrying. Error Code: " . $error_code);
-            return $this->message_encode($call->id);
+            $this->mediator->log("SysV::put() Failed for call_id {$call->id}: Retrying. Error Code: " . $error_code);
+            return $this->put($call->id);
         }
 
         return false;
@@ -182,16 +172,12 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     */
     public function get($desired_type, $blocking = false)
     {
-        // @todo How do we want to handle memory allocation warnings?
-//                    if (!$this->memory_allocation_warning && $call->size > ($this->memory_allocation / 50)) {
-//                        $this->memory_allocation_warning = true;
-//                        $suggested_size = $call->size * 60;
-//                        $this->log("WARNING: The memory allocated to this worker is too low and may lead to out-of-shared-memory errors.\n".
-//                                   "         Based on this job, the memory allocation should be at least {$suggested_size} bytes. Current allocation: {$this->memory_allocation} bytes.");
-//                    }
 
+        $blocking = $blocking ? 0 : MSG_IPC_NOWAIT;
         $message_type = $message = $message_error = null;
-        msg_receive($this->queue, $desired_type, $message_type, $this->memory_allocation, $message, true, MSG_IPC_NOWAIT, $message_error);
+        msg_receive($this->queue, $desired_type, $message_type, $this->memory_allocation, $message, true, $blocking, $message_error);
+        if (!$message)
+            return $this->error($message_error);
 
         $that = $this;
         switch($message['status']) {
@@ -239,8 +225,14 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         if (!is_object($call))
             throw new Exception(__METHOD__ . " Failed. Could Not Decode Message: " . print_r($message, true));
 
-        $this->calls[$call->id] = $this->merge_struct($call);
-        return $call->id;
+        if (!$this->memory_allocation_warning && $call->size > ($this->memory_allocation / 50)) {
+            $this->memory_allocation_warning = true;
+            $suggested_size = $call->size * 60;
+            $this->mediator->log("WARNING: The memory allocated to this worker is too low and may lead to out-of-shared-memory errors.\n".
+              "         Based on this job, the memory allocation should be at least {$suggested_size} bytes. Current allocation: {$this->memory_allocation} bytes.");
+        }
+
+        return $call;
     }
 
     /**
@@ -272,15 +264,6 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
             $out['memory_allocation'] = $header['memory_allocation'];
 
         return $out;
-    }
-
-    /**
-    * Perform any cleanup & garbage collection necessary.
-    * @return boolean
-    */
-    public function garbage_collector()
-    {
-
     }
 
     /**
@@ -360,11 +343,11 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
     /**
      * Handle IPC Errors
-     * @param $error_code
+     * @param $error
      * @param int $try    Inform ipc_error of repeated failures of the same $error_code
      * @return boolean  Returns true if the operation should be retried.
      */
-    protected function ipc_error($error_code, $try=1) {
+    public function error($error, $try=1) {
 
         $that = $this;
         $is_parent = Core_Daemon::is('parent');
@@ -402,7 +385,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
             return @shm_get_var($that->shm, $key) == $arr;
         };
 
-        switch($error_code) {
+        switch($error) {
             case 0:             // Success
             case 4:             // System Interrupt
             case MSG_ENOMSG:    // No message of desired type
@@ -509,8 +492,8 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 return true;
 
             default:
-                if ($error_code)
-                    $this->mediator->log("Message Queue Error {$error_code}: " . posix_strerror($error_code));
+                if ($error)
+                    $this->mediator->log("Message Queue Error {$error}: " . posix_strerror($error));
 
                 if (Core_Daemon::is('parent'))
                     usleep($backoff(20000));
@@ -521,14 +504,6 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 $this->ipc_create();
                 return false;
         }
-    }
-
-    /**
-     * Handle an Error
-     * @return mixed
-     */
-    public function error()
-    {
     }
 
     /**
