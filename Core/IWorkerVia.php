@@ -19,12 +19,6 @@ interface Core_IWorkerVia
     public function get($desired_type, $blocking = false);
 
     /**
-     * Returns the last error message: poll after a puts or gets failure.
-     * @return mixed
-     */
-    public function get_last_error();
-
-    /**
      * Handle an Error
      * @return mixed
      */

@@ -69,27 +69,85 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     */
     public function setup()
     {
-      $this->ipc_create();
-      if (Core_Daemon::is('parent')) {
-          $this->shm_init();
-      }
+        $this->setup_ipc();
+        if (Core_Daemon::is('parent'))
+            $this->setup_shm();
+
+        if (!is_resource($this->queue))
+            throw new Exception(__METHOD__ . " Failed. Could not attach message queue id {$this->mediator->guid()}");
+
+        if (!is_resource($this->shm))
+            throw new Exception(__METHOD__ . " Failed. Could not address shared memory block {$this->mediator->guid()}");
     }
 
     /**
-    * Called on Destruct
-    * @return void
-    */
+     * Called on Destruct
+     * @return void
+     */
     public function teardown()
     {
     }
 
     /**
-    * This is called during object construction to validate any dependencies
-    * @return Array  Return array of error messages (Think stuff like "GD Library Extension Required" or "Cannot open /tmp for Writing") or an empty array
-    */
+     * This is called during object construction to validate any dependencies
+     * @return Array  Return array of error messages (Think stuff like "GD Library Extension Required" or "Cannot open /tmp for Writing") or an empty array
+     */
     public function check_environment(Array $errors = array())
     {
+    }
 
+    /**
+     * Setup the channels used by IPC -- A SysV Message Queue for message headers and a Shared Memory block for the payload.
+     * @return void
+     */
+    private function setup_ipc() {
+        $this->shm      = shm_attach($this->guid, $this->memory_allocation, 0666);
+        $this->queue    = msg_get_queue($this->guid, 0666);
+    }
+
+    /**
+     * Write and Verify the SHM header
+     * @return void
+     * @throws Exception
+     */
+    private function setup_shm() {
+
+        // Write a header to the shared memory block
+        if (!shm_has_var($this->shm, self::HEADER_ADDRESS)) {
+            $header = array(
+                'version' => Core_Worker_Mediator::VERSION,
+                'memory_allocation' => $this->memory_allocation,
+            );
+
+            if (!shm_put_var($this->shm, self::HEADER_ADDRESS, $header))
+                throw new Exception(__METHOD__ . " Failed. Could Not Read Header. If this problem persists, try running the daemon with the --resetworkers option.");
+        }
+
+        // Check memory allocation and warn the user if their malloc() is not actually applicable (eg they changed the malloc but used --recoverworkers)
+        $header = shm_get_var($this->shm, self::HEADER_ADDRESS);
+        if ($header['memory_allocation'] <> $this->memory_allocation)
+            $this->mediator->log('Warning: Seems you\'ve using --recoverworkers after making a change to the worker malloc memory limit. To apply this change you will have to restart the daemon without the --recoverworkers option.' .
+              PHP_EOL . 'The existing memory_limit is ' . $header['memory_allocation'] . ' bytes.');
+
+        // If we're trying to recover previous messages/shm, scan the shared memory block for call structs and import them
+        // @todo if we keep this functionality, we need to at least remove it as a CLI option implemented by Core_Daemon because this will not apply to other Via conveyances
+
+        if (Core_Daemon::getInstance()->recover_workers()) {
+            $max_id = $this->call_count;
+            for ($i=0; $i<100000; $i++) {
+                if(shm_has_var($this->shm, $i)) {
+                    $o = @shm_get_var($this->shm, $i);
+                    if (!is_object($o)) {
+                        @shm_remove_var($this->shm, $i);
+                        continue;
+                    }
+                    $this->mediator->set_struct($o);
+                    $max_id = $i;
+                }
+            }
+            $this->mediator->log("Starting Job Numbering at $max_id.");
+            $this->call_count = $max_id;
+        }
     }
 
 
@@ -137,8 +195,8 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     {
         $that = $this;
         switch($call->status) {
-            case self::UNCALLED:
-            case self::RETURNED:
+            case Core_Worker_Mediator::UNCALLED:
+            case Core_Worker_Mediator::RETURNED:
                 $encoder = function($call) use ($that) {
                     shm_put_var($that->shm, $call->id, $call);
                     return shm_has_var($that->shm, $call->id);
@@ -157,7 +215,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 return true;
 
         $call->errors++;
-        if ($this->ipc_error($error_code, $call->errors) && $call->errors < 3) {
+        if ($this->error($error_code, $call->errors) && $call->errors < 3) {
             $this->mediator->log("SysV::put() Failed for call_id {$call->id}: Retrying. Error Code: " . $error_code);
             return $this->put($call->id);
         }
@@ -168,11 +226,10 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     /**
     * Retrieves a message from the queue
     * @param $desired_type
-    * @return Core_Worker_Calls
+    * @return Core_Worker_Call
     */
     public function get($desired_type, $blocking = false)
     {
-
         $blocking = $blocking ? 0 : MSG_IPC_NOWAIT;
         $message_type = $message = $message_error = null;
         msg_receive($this->queue, $desired_type, $message_type, $this->memory_allocation, $message, true, $blocking, $message_error);
@@ -181,7 +238,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
         $that = $this;
         switch($message['status']) {
-            case self::UNCALLED:
+            case Core_Worker_Mediator::UNCALLED:
                 $decoder = function($message) use($that) {
                     $call = shm_get_var($that->shm, $message['call_id']);
                     if ($message['microtime'] < $call->time[Core_Worker_Mediator::UNCALLED])    // Has been requeued - Cancel this call
@@ -191,7 +248,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 };
                 break;
 
-            case self::RETURNED:
+            case Core_Worker_Mediator::RETURNED:
                 $decoder = function($message) use($that) {
                     $call = shm_get_var($that->shm, $message['call_id']);
                     if ($call && $call->status == $message['status'])
@@ -228,20 +285,11 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         if (!$this->memory_allocation_warning && $call->size > ($this->memory_allocation / 50)) {
             $this->memory_allocation_warning = true;
             $suggested_size = $call->size * 60;
-            $this->mediator->log("WARNING: The memory allocated to this worker is too low and may lead to out-of-shared-memory errors.\n".
-              "         Based on this job, the memory allocation should be at least {$suggested_size} bytes. Current allocation: {$this->memory_allocation} bytes.");
+            $this->mediator->log("WARNING: The memory allocated to this worker is too low and may lead to out-of-shared-memory errors.\n" .
+                                 "         Based on this job, the memory allocation should be at least {$suggested_size} bytes. Current allocation: {$this->memory_allocation} bytes.");
         }
 
         return $call;
-    }
-
-    /**
-    * Returns the last error: poll after a puts or gets failure.
-    * @return mixed
-    */
-    public function get_last_error()
-    {
-
     }
 
     /**
@@ -276,7 +324,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         $mq = $shm = true;
 
         if (($mq && !is_resource($this->queue)) || ($shm && !is_resource($this->shm)))
-            $this->ipc_create();
+            $this->setup_ipc();
 
         if ($mq) {
             @msg_remove_queue($this->queue);
@@ -289,57 +337,6 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
             $this->shm = null;
         }
     }
-
-
-    private function ipc_create() {
-        $this->shm      = shm_attach($this->guid, $this->memory_allocation, 0666);
-        $this->queue    = msg_get_queue($this->guid, 0666);
-    }
-
-
-    /**
-     * Write and Verify the SHM header
-     * @return void
-     * @throws Exception
-     */
-    private function shm_init() {
-
-        // Write a header to the shared memory block
-        if (!shm_has_var($this->shm, self::HEADER_ADDRESS)) {
-            $header = array(
-                'version' => self::VERSION,
-                'memory_allocation' => $this->memory_allocation,
-            );
-
-            if (!shm_put_var($this->shm, self::HEADER_ADDRESS, $header))
-                throw new Exception(__METHOD__ . " Failed. Could Not Read Header. If this problem persists, try running the daemon with the --resetworkers option.");
-        }
-
-        // Check memory allocation and warn the user if their malloc() is not actually applicable (eg they changed the malloc but used --recoverworkers)
-        $header = shm_get_var($this->shm, self::HEADER_ADDRESS);
-        if ($header['memory_allocation'] <> $this->memory_allocation)
-            $this->mediator->log('Warning: Seems you\'ve using --recoverworkers after making a change to the worker malloc memory limit. To apply this change you will have to restart the daemon without the --recoverworkers option.' .
-              PHP_EOL . 'The existing memory_limit is ' . $header['memory_allocation'] . ' bytes.');
-
-        // If we're trying to recover previous messages/shm, scan the shared memory block for call structs and import them
-        if ($this->daemon->recover_workers()) {
-            $max_id = $this->call_count;
-            for ($i=0; $i<100000; $i++) {
-                if(shm_has_var($this->shm, $i)) {
-                    $o = @shm_get_var($this->shm, $i);
-                    if (!is_object($o)) {
-                        @shm_remove_var($this->shm, $i);
-                        continue;
-                    }
-                    $this->calls[$i] = $o;
-                    $max_id = $i;
-                }
-            }
-            $this->mediator->log("Starting Job Numbering at $max_id.");
-            $this->call_count = $max_id;
-        }
-    }
-
 
     /**
      * Handle IPC Errors
@@ -363,7 +360,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
             $that->error_counts[$type]++;
             if ($that->error_counts[$type] > $error_thresholds[$type][(int)$is_parent])
-                $that->fatal_error("IPC '$type' Error Threshold Reached");
+                $that->mediator->fatal_error("IPC '$type' Error Threshold Reached");
             else
                 $that->mediator->log("Incrementing Error Count for {$type} to " . $that->error_counts[$type]);
         };
@@ -411,7 +408,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 else
                     sleep($backoff(2));
 
-                $this->ipc_create();
+                $this->setup_ipc();
                 return true;
                 break;
 
@@ -424,7 +421,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 // Any corruption or OOM errors will be handled by the parent exclusively.
                 if (!Core_Daemon::is('parent')) {
                     sleep($backoff(3));
-                    $this->ipc_create();
+                    $this->setup_ipc();
                     return true;
                 }
 
@@ -437,7 +434,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                         return true;
 
                     // Re-attach the shared memory and try the diagnostic again
-                    $this->ipc_create();
+                    $this->setup_ipc();
                 }
 
                 $this->mediator->log("IPC DIAG: Re-Connect failed to solve the problem.");
@@ -446,18 +443,19 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 // See if we can read what's in shared memory and re-write it later
                 $items_to_copy = array();
                 $items_to_call = array();
-                for ($i=0; $i<$this->call_count; $i++) {
+                for ($i=0; $i<$this->mediator->call_count(); $i++) {
                     $call = @shm_get_var($this->shm, $i);
                     if (!is_object($call))
                         continue;
 
-                    if (!isset($this->calls[$i]))
+                    $cached = $this->mediator->get_struct($i);
+                    if (!is_object($cached))
                         continue;
 
-                    if ($this->calls[$i]->status == self::TIMEOUT)
+                    if ($cached->status == Core_Worker_Mediator::TIMEOUT)
                         continue;
 
-                    if ($this->calls[$i]->status == self::UNCALLED) {
+                    if ($cached->status == Core_Worker_Mediator::UNCALLED) {
                         $items_to_call[$i] = $call;
                         continue;
                     }
@@ -468,8 +466,8 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 $this->mediator->log("IPC DIAG: Preparing to clean SHM and Reconnect...");
 
                 for($i=0; $i<2; $i++) {
-                    $this->ipc_destroy(false, true);
-                    $this->ipc_create();
+                    $this->purge(false, true);
+                    $this->setup_ipc();
 
                     if (!empty($items_to_copy))
                         foreach($items_to_copy as $key => $value)
@@ -477,7 +475,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
                     if (!$test()) {
                         if (empty($items_to_copy)) {
-                            $this->fatal_error("Shared Memory Failure: Unable to proceed.");
+                            $this->mediator->fatal_error("Shared Memory Failure: Unable to proceed.");
                         } else {
                             $this->mediator->log('IPC DIAG: Purging items from shared memory: ' . implode(', ', array_keys($items_to_copy)));
                             unset($items_to_copy);
@@ -486,7 +484,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 }
 
                 foreach($items_to_call as $call) {
-                    $this->retry($call);
+                    $this->mediator->retry($call);
                 }
 
                 return true;
@@ -501,7 +499,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                     sleep($backoff(3));
 
                 $counter('catchall');
-                $this->ipc_create();
+                $this->setup_ipc();
                 return false;
         }
     }

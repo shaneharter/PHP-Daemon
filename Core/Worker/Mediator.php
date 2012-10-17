@@ -29,7 +29,7 @@
 abstract class Core_Worker_Mediator implements Core_ITask
 {
     /**
-     * The version is used in case SHM memory formats change in the future.
+     * The version is used in case formats change in the future.
      */
     const VERSION = 2.0;
 
@@ -120,8 +120,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected $calls = array();
 
     /**
-     * Call Counter - Used to assign keys in the local and shm $calls array
-     * Note: Start at 1 because the first key in shm memory is reserved for the header
+     * Call Counter - Used to assign keys in the $calls array
+     * Note: Start at 1 because the 0 key is reserved for via classes to use as needed for metadata.
      * @var int
      */
     protected $call_count = 1;
@@ -284,12 +284,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
             call_user_func($this->get_callback('setup'));
             $this->log('Worker Process Started');
         }
-
-        if (!is_resource($this->queue))
-            throw new Exception(__METHOD__ . " Failed. Could not attach message queue id {$this->guid}");
-
-        if (!is_resource($this->shm))
-            throw new Exception(__METHOD__ . " Failed. Could not address shared memory block {$this->guid}");
     }
 
     /**
@@ -616,6 +610,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
         return $this->call(new Core_Worker_Call($this->call_count, $method, $args));
     }
 
+    public function call_count() {
+        return count($this->call_count);
+    }
+
     /**
      * Return the requested call from the local call cache if it exists
      * @return Core_Worker_Call
@@ -666,7 +664,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         // 1) There was a silent message-queue failure and the item was never presented to workers.
         // 2) A worker received the message but fatal-errored before acking.
         // 3) A worker received the message but a message queue failure prevented the acks being sent.
-        // @todo On the off chance #3 was true, the job may have been finished. Give a try to checking SHM for that and processing the result.
+        // @todo On the off chance #3 was true, the job may have been finished. Give a try to checking the via object for that and processing the result.
 
         // Look at all the jobs recently acked and determine which of them was called first. Get the time of that call as the $cutoff.
         // Any structs in CALLED status that were called prior to that $cutoff have been dropped and will be requeued.
