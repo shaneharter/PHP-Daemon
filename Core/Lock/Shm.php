@@ -20,7 +20,7 @@ class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
 	
 	public function setup()
 	{
-        $ftok = ftok(Core_Daemon::filename(), 'L');
+        $ftok = ftok(Core_Daemon::get('filename'), 'L');
         $this->shm = shm_attach($ftok, 512, 0666);
 	}
 	

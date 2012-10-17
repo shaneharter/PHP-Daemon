@@ -25,7 +25,7 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_IPlugin
         if (isset($args['path']))
             $this->path = $args['path'];
         else
-            $this->path = dirname($daemon->filename());
+            $this->path = dirname($daemon->get('filename'));
     }
 
 	public function setup()

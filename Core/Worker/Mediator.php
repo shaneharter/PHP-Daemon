@@ -252,7 +252,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
             // current worker alias.
 
             @mkdir('/tmp/.phpdaemon');
-            $ftok = sprintf('/tmp/.phpdaemon/%s_%s', str_replace('/', '_', $this->daemon->filename()), $this->alias);
+            $ftok = sprintf('/tmp/.phpdaemon/%s_%s', str_replace('/', '_', $this->daemon->get('filename')), $this->alias);
             if (!touch($ftok))
                 $this->fatal_error("Unable to create Worker ID. ftok() failed. Could not write to /tmp directory at {$ftok}");
 

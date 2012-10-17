@@ -35,7 +35,6 @@ class Daemon extends \Core_Daemon
     protected function setup_plugins()
     {
         $this->plugin('Lock_File');
-
         // This daemon will respond to signals sent from the commandline.
         // 1) You can send a signal that will calculate factors of a random number
         // 2) You can send a signal that will find primes within a random range.

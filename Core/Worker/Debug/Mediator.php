@@ -36,7 +36,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
 
     public function setup() {
         ini_set('display_errors', 0); // Displayed errors won't break the debug console but it will make it more difficult to use. Tail a log file in another shell instead.
-        $ftok = ftok(Core_Daemon::filename(), 'D');
+        $ftok = ftok(Core_Daemon::get('filename'), 'D');
         $this->mutex = sem_get($ftok, 1, 0666, 1);
         $this->consoleshm = shm_attach($ftok, 64 * 1024, 0666);
         parent::setup();
@@ -482,7 +482,7 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                     case 'kill':
                         @fclose(STDOUT);
                         @fclose(STDERR);
-                        @exec('ps -C "php ' . $this->daemon->filename() . '" -o pid= | xargs kill -9 ');
+                        @exec('ps -C "php ' . $this->daemon->get('filename') . '" -o pid= | xargs kill -9 ');
                         break;
 
                     case 'cleanipc':
