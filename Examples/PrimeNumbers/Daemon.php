@@ -69,7 +69,7 @@ class Daemon extends \Core_Daemon
 
 
         $via = new \Core_Worker_Via_SysV();
-        $via->malloc();
+        $via->malloc(30 * 1024 * 1024);
 
         $this->worker('PrimeNumbers', new Workers_Primes(), $via);
         $this->PrimeNumbers->timeout(60);
