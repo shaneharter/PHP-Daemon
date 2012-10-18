@@ -215,7 +215,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
         $error_code = null;
         if ($encoder($call))
-            if (msg_send($this->queue, $call->queue, $call->header(), true, false, $error_code))
+            if (msg_send($this->queue, $call->queue(), $call->header(), true, false, $error_code))
                 return true;
 
         $call->errors++;

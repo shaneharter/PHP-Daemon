@@ -8,7 +8,6 @@ class Core_Worker_Call extends stdClass
 
     public $method;
     public $status;
-    public $queue;
     public $pid;
     public $id;
     public $size          = 64;
@@ -119,6 +118,14 @@ class Core_Worker_Call extends stdClass
         return $this->status(Core_Worker_Mediator::UNCALLED,   $microtime);
     }
 
+    /**
+     * Get the appropriate queue based on the current status
+     * @return int
+     */
+    public function queue() {
+        return Core_Worker_Mediator::$queue_map[$this->status];
+    }
+
     public function status($status, $microtime = null) {
         if ($status < $this->status)
             throw new Exception(__METHOD__ . " Failed: Cannot Rewind Status. Current Status: {$this->status} Given: {$status}");
@@ -127,7 +134,6 @@ class Core_Worker_Call extends stdClass
             $microtime = microtime(true);
 
         $this->status = $status;
-        $this->queue = Core_Worker_Mediator::$queue_map[$status];
         $this->time[$status] = $microtime;
 
         return $this;
