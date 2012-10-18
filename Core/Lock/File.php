@@ -43,10 +43,8 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_IPlugin
 			@unlink($this->filename);
 	}
 	
-	public function check_environment()
+	public function check_environment(Array $errors = array())
 	{
-		$errors = array();
-		
 		if (is_writable($this->path) == false)
 			$errors[] = 'Lock File Path ' . $this->path . ' Not Writable.';
 			

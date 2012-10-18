@@ -37,7 +37,7 @@ class Workers_Primes implements \Core_IWorker
      * This is called during object construction to validate any dependencies
      * @return Array    Return array of error messages (Think stuff like "GD Library Extension Required" or "Cannot open /tmp for Writing") or an empty array
      */
-    public function check_environment()
+    public function check_environment(Array $errors = array())
     {
         // Satisfy Interface
     }

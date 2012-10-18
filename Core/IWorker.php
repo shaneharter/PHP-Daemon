@@ -40,5 +40,5 @@ interface Core_IWorker
    * @return Array    Return array of error messages (Think stuff like "GD Library Extension Required" or
    *                  "Cannot open /tmp for Writing") or an empty array
    */
-  public function check_environment();
+  public function check_environment(Array $errors = array());
 }

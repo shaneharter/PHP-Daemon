@@ -53,9 +53,12 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         'catchall'      => 0,
     );
 
-    public function __construct()
+    public function __construct($malloc = null)
     {
-        $this->memory_allocation = 5 * 1024 * 1024;
+        if (!$malloc)
+            $malloc = 5 * 1024 * 1024;
+
+        $this->memory_allocation = $malloc;
     }
 
     public function __destruct()
@@ -94,6 +97,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
      */
     public function check_environment(Array $errors = array())
     {
+        return $errors;
     }
 
     /**
@@ -101,8 +105,8 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
      * @return void
      */
     private function setup_ipc() {
-        $this->shm      = shm_attach($this->guid, $this->memory_allocation, 0666);
-        $this->queue    = msg_get_queue($this->guid, 0666);
+        $this->shm      = shm_attach($this->mediator->guid(), $this->memory_allocation, 0666);
+        $this->queue    = msg_get_queue($this->mediator->guid(), 0666);
     }
 
     /**
@@ -132,7 +136,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         // If we're trying to recover previous messages/shm, scan the shared memory block for call structs and import them
         // @todo if we keep this functionality, we need to at least remove it as a CLI option implemented by Core_Daemon because this will not apply to other Via conveyances
 
-        if (Core_Daemon::getInstance()->recover_workers()) {
+        if ($this->mediator->daemon->recover_workers()) {
             $max_id = $this->call_count;
             for ($i=0; $i<100000; $i++) {
                 if(shm_has_var($this->shm, $i)) {
@@ -233,8 +237,10 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         $blocking = $blocking ? 0 : MSG_IPC_NOWAIT;
         $message_type = $message = $message_error = null;
         msg_receive($this->queue, $desired_type, $message_type, $this->memory_allocation, $message, true, $blocking, $message_error);
-        if (!$message)
-            return $this->error($message_error);
+        if (!$message) {
+            $this->error($message_error);
+            return false;
+        }
 
         $that = $this;
         switch($message['status']) {

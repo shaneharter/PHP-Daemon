@@ -181,15 +181,15 @@ abstract class Core_Daemon
      */
     private $recover_workers = false;
 
-
     /**
-     * Dictionary of application-wide environment vars. Can be set privately from Core_Daemon and read publicly.
+     * Dictionary of application-wide environment vars with defaults.
      * @see Core_Daemon::set()
      * @see Core_Daemon::get()
      * @var array
      */
-    private static $env = array();
-
+    private static $env = array(
+        'parent'    => true,
+    );
 
 
 
@@ -503,8 +503,12 @@ abstract class Core_Daemon
         if (!is_scalar($event))
             throw new Exception(__METHOD__ . ' Failed. Event type must be Scalar. Given: ' . gettype($event));
 
-        if (!is_callable($callback))
-            throw new Exception(__METHOD__ . ' Failed. Second Argument Must be Callable.');
+        if (!is_callable($callback)) {
+
+            $e = new Exception(__METHOD__ . ' Failed. Second Argument Must be Callable.');
+            echo $e->getTraceAsString();
+            echo "<<<";
+        }
 
         if (!isset($this->callbacks[$event]))
             $this->callbacks[$event] = array();
@@ -623,8 +627,8 @@ abstract class Core_Daemon
             case 0:
                 // Child Process
                 $this->start_time = time();
-                self::env_set('parent',  false);
-                self::env_set('parent_pid', $this->pid);
+                self::set('parent',  false);
+                self::set('parent_pid', $this->pid);
                 $this->pid(getmypid());
                 pcntl_setpriority(1);
 

@@ -16,7 +16,8 @@ interface Core_IPlugin
 	
 	/**
 	 * This is called during object construction to validate any dependencies
+   * NOTE: At a minimum you should ensure that if $errors is not empty that you pass it along as the return value.
 	 * @return Array	Return array of error messages (Think stuff like "GD Library Extension Required" or "Cannot open /tmp for Writing") or an empty array
 	 */
-	public function check_environment();
+	public function check_environment(Array $errors = array());
 }

@@ -67,10 +67,13 @@ class Daemon extends \Core_Daemon
         // - By convention, workers are named in UpperCase
         // - Look at Workers_Primes to see the available methods. They are: sieve, is_prime, primes_among
 
-        $this->worker('PrimeNumbers', new Workers_Primes());
+
+        $via = new \Core_Worker_Via_SysV();
+        $via->malloc();
+
+        $this->worker('PrimeNumbers', new Workers_Primes(), $via);
         $this->PrimeNumbers->timeout(60);
         $this->PrimeNumbers->workers(4);
-        $this->PrimeNumbers->malloc(30 * 1024 * 1024);
 
         $this->PrimeNumbers->onReturn(function($call, $log) use($that) {
             $log("Job {$call->id} to {$call->method}() Complete");

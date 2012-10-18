@@ -34,7 +34,7 @@ class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
         }
 	}
 	
-	public function check_environment()
+	public function check_environment(Array $errors = array())
 	{
 		$errors = array();
 		return $errors;

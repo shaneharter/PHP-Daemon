@@ -86,7 +86,7 @@ class Core_Worker_Call extends stdClass
             'call_id'   => $this->id,
             'status'    => $this->status,
             'microtime' => $this->time[$this->status],
-            'pid'       => Core_Daemon::getInstance()->pid(),
+            'pid'       => getmypid(),
             // I really have no idea why we are sending the pid along in the message header like this, but I assume
             // there's a good reason so for now I'll just continue to include it.
         );

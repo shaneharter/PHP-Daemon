@@ -267,7 +267,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             $this->fork();
             $this->daemon->on(Core_Daemon::ON_PREEXECUTE,   array($this, 'run'));
-            $this->daemon->on(Core_Daemon::ON_IDLE,         array($this->via, 'garbage_collector'), ceil(30 / ($this->workers * 0.5)));  // Throttle the garbage collector
+            $this->daemon->on(Core_Daemon::ON_IDLE,         array($this, 'garbage_collector'), ceil(30 / ($this->workers * 0.5)));  // Throttle the garbage collector
             $this->daemon->on(Core_Daemon::ON_SIGNAL,       function($signal) use ($that) {
                 if ($signal == SIGUSR1)
                     $that->dump();

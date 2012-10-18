@@ -45,7 +45,7 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_IPlugin
 			$this->memcache->delete(Core_Lock_Lock::$LOCK_UNIQUE_ID);
 	}
 	
-	public function check_environment()
+	public function check_environment(Array $errors = array())
 	{
 		$errors = array();
 		

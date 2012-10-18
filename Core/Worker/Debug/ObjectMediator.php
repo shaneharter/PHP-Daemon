@@ -46,7 +46,7 @@ final class Core_Worker_Debug_ObjectMediator extends Core_Worker_Debug_Mediator
         parent::setup();
     }
 
-    public function check_environment() {
+    public function check_environment(Array $errors = array()) {
         $errors = array();
 
         if (!is_object($this->object) || !$this->object instanceof Core_IWorker)
