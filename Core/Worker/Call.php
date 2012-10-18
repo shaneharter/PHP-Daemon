@@ -54,12 +54,12 @@ class Core_Worker_Call extends stdClass
     public function merge(Core_Worker_Call $call) {
         // This could end up being more sophisticated and complex.
         // But for now, the only modifications to this struct in the worker are timestamps at status changes.
-        $this->time[self::CALLED] = $call->time[self::CALLED];
+        $this->time[Core_Worker_Mediator::CALLED] = $call->time[Core_Worker_Mediator::CALLED];
         return $this;
     }
 
     public function is_active() {
-        return !in_array($this->status, array(self::TIMEOUT, self::RETURNED, self::CANCELLED));
+        return !in_array($this->status, array(Core_Worker_Mediator::TIMEOUT, Core_Worker_Mediator::RETURNED, Core_Worker_Mediator::CANCELLED));
     }
 
     /**
