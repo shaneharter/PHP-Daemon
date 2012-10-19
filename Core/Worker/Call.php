@@ -25,13 +25,10 @@ class Core_Worker_Call extends stdClass
         $this->uncalled();
     }
 
-//    public function __get($k) {
-//        if (in_array($k, get_object_vars($this)))
-//            return $this->{$k};
-//
-//        return null;
-//    }
-
+    /**
+     * Determine the time this call spent (or has spent thus far) in RUNNING state
+     * @return int|mixed
+     */
     public function runtime() {
         switch($this->status) {
             case Core_Worker_Mediator::RUNNING:
@@ -57,6 +54,10 @@ class Core_Worker_Call extends stdClass
         return $this;
     }
 
+    /**
+     * Active calls
+     * @return bool
+     */
     public function is_active() {
         return !in_array($this->status, array(Core_Worker_Mediator::TIMEOUT, Core_Worker_Mediator::RETURNED, Core_Worker_Mediator::CANCELLED));
     }

@@ -42,16 +42,14 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
      */
     protected $memory_allocation_warning = false;
 
-    public function __construct($malloc = null)
-    {
+    public function __construct($malloc = null) {
         if (!$malloc)
             $malloc = 5 * 1024 * 1024;
 
         $this->memory_allocation = $malloc;
     }
 
-    public function __destruct()
-    {
+    public function __destruct()  {
         unset($this->mediator);
     }
 
@@ -59,8 +57,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     * Called on Construct or Init
     * @return void
     */
-    public function setup()
-    {
+    public function setup() {
         $this->setup_ipc();
         if (Core_Daemon::is('parent'))
             $this->setup_shm();
@@ -76,16 +73,14 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
      * Called on Destruct
      * @return void
      */
-    public function teardown()
-    {
+    public function teardown() {
     }
 
     /**
      * This is called during object construction to validate any dependencies
      * @return Array  Return array of error messages (Think stuff like "GD Library Extension Required" or "Cannot open /tmp for Writing") or an empty array
      */
-    public function check_environment(Array $errors = array())
-    {
+    public function check_environment(Array $errors = array()) {
         return $errors;
     }
 
@@ -143,7 +138,6 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         }
     }
 
-
     /**
      * Allocate the total size of shared memory that will be allocated for passing arguments and return values to/from the
      * worker processes. Should be sufficient to hold the working set of each worker pool.
@@ -184,8 +178,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     * @param $message
     * @return boolean
     */
-    public function put(Core_Worker_Call $call)
-    {
+    public function put(Core_Worker_Call $call) {
         $that = $this;
         switch($call->status) {
             case Core_Worker_Mediator::UNCALLED:
@@ -221,8 +214,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     * @param $desired_type
     * @return Core_Worker_Call
     */
-    public function get($desired_type, $blocking = false)
-    {
+    public function get($desired_type, $blocking = false) {
         $blocking = $blocking ? 0 : MSG_IPC_NOWAIT;
         $message_type = $message = $message_error = null;
         msg_receive($this->queue, $desired_type, $message_type, $this->memory_allocation, $message, true, $blocking, $message_error);
@@ -291,8 +283,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     * The state of the queue -- The number of pending messages, memory consumption, errors, etc.
     * @return Array with some subset of these keys: messages, memory_allocation, error_count
     */
-    public function state()
-    {
+    public function state() {
         $out = array(
             'messages' => null,
             'memory_allocation' => null,
@@ -313,8 +304,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     * Drop any pending messages in the queue
     * @return boolean
     */
-    public function purge()
-    {
+    public function purge() {
         $this->purge_mq();
         $this->purge_shm();
     }
@@ -491,8 +481,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
      * Drop the single message
      * @return void
      */
-    public function drop($call_id)
-    {
+    public function drop($call_id) {
         if (shm_has_var($this->shm, $call_id))
             shm_remove_var($this->shm, $call_id);
     }

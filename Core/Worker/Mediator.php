@@ -222,8 +222,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @var array
      */
     public $error_thresholds = array (
-        'communication' => array(10,  50), // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle (child, parent)
-        'corruption'    => array(10,  25), // Corruption related errors: The underlying data structures are corrupt (or possibly just OOM)
+        'communication' => array(10,  50),
+        'corruption'    => array(10,  25),
         'catchall'      => array(10,  25),
     );
 
@@ -456,8 +456,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return void
      */
     public function run() {
-        // Done - Yes except the memory allocation error and general clunk error handling at the bottom of each section
-        // Tested: no
 
         if (empty($this->calls))
             return;
@@ -536,8 +534,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return void
      */
     public function start() {
-        // Done - except for error handling at the very bottom of the method
-        // Tested: no
 
         while(!Core_Daemon::is('parent') && !$this->shutdown) {
 
@@ -590,7 +586,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
      *                   with the call, eg checking the call status.
      */
     protected function call(Core_Worker_Call $call) {
-        // Done - Updated to use new Call class & put()
 
         try {
             $this->calls[$call->id] = $call;
@@ -632,8 +627,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @throws Exception
      */
     public function __call($method, $args) {
-        // Done - Updated to use Call class
-
         if (!in_array($method, $this->methods))
             throw new Exception(__METHOD__ . " Failed. Method `{$method}` is not callable.");
 
@@ -675,10 +668,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return void
      */
     public function garbage_collector() {
-
-        // Done - Updated to use Call and Via objects
-        // Tested: No
-
         $called = array();
         foreach ($this->calls as $call_id => &$call) {
             if ($call->gc() && Core_Daemon::is('parent'))
@@ -913,7 +902,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
         return null;
     }
-
 
 
 
