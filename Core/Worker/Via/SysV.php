@@ -42,17 +42,6 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
      */
     protected $memory_allocation_warning = false;
 
-    /**
-     * Array of accumulated error counts. Error thresholds are localized and when reached will
-     * raise a fatal error. Generally thresholds on workers are much lower than on the daemon process
-     * @var array
-     */
-    public $error_counts = array(
-        'communication' => 0,
-        'corruption'    => 0,
-        'catchall'      => 0,
-    );
-
     public function __construct($malloc = null)
     {
         if (!$malloc)
@@ -352,34 +341,9 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
      */
     public function error($error, $try=1) {
 
-        $that = $this;
-        $is_parent = Core_Daemon::is('parent');
-
-        // Count errors and compare them against thresholds.
-        // Different thresholds for parent & children
-        $counter = function($type) use($that, $is_parent) {
-            static $error_thresholds = array(
-                'communication' => array(10,  50), // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle (child, parent)
-                'corruption'    => array(10,  25), // Corruption related errors: The underlying data structures are corrupt (or possibly just OOM)
-                'catchall'      => array(10,  25),
-            );
-
-            $that->error_counts[$type]++;
-            if ($that->error_counts[$type] > $error_thresholds[$type][(int)$is_parent])
-                $that->mediator->fatal_error("IPC '$type' Error Threshold Reached");
-            else
-                $that->mediator->log("Incrementing Error Count for {$type} to " . $that->error_counts[$type]);
-        };
-
-        // Most of the error handling strategy is simply: Sleep for a moment and try again.
-        // Use a simple back-off that would start at, say, 2s, then go to 6s, 14s, 30s, etc
-        // Return int
-        $backoff = function($delay) use ($try) {
-            return $delay * pow(2, min(max($try, 1), 8)) - $delay;
-        };
-
         // Create an array of random, moderate size and verify it can be written to shared memory
         // Return boolean
+        $that = $this;
         $test = function() use($that) {
             $arr = array_fill(0, mt_rand(10, 100), mt_rand(1000, 1000 * 1000));
             $key = mt_rand(1000 * 1000, 2000 * 1000);
@@ -397,7 +361,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 break;
 
             case MSG_EAGAIN:    // Temporary Problem, Try Again
-                usleep($backoff(20000));
+                usleep($this->mediator->backoff(20000, $try));
                 return true;
                 break;
 
@@ -408,11 +372,11 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
             case 43:
                 // Identifier Removed
                 // A message queue was re-created at this address but the resource identifier we have needs to be re-created
-                $counter('communication');
+                $this->mediator->error('communication');
                 if (Core_Daemon::is('parent'))
-                    usleep($backoff(20000));
+                    usleep($this->mediator->backoff(20000, $try));
                 else
-                    sleep($backoff(2));
+                    sleep($this->mediator->backoff(2, $try));
 
                 $this->setup_ipc();
                 return true;
@@ -420,19 +384,19 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
             case null:
                 // Almost certainly an issue with shared memory
-                $this->mediator->log("Shared Memory I/O Error at Address {$this->guid}.");
-                $counter('corruption');
+                $this->mediator->log("Shared Memory I/O Error at Address {$this->mediator->guid()}.");
+                $this->mediator->error('corruption');
 
                 // If this is a worker, all we can do is try to re-attach the shared memory.
                 // Any corruption or OOM errors will be handled by the parent exclusively.
                 if (!Core_Daemon::is('parent')) {
-                    sleep($backoff(3));
+                    sleep($this->mediator->backoff(3, $try));
                     $this->setup_ipc();
                     return true;
                 }
 
                 // If this is the parent, do some diagnostic checks and attempt correction.
-                usleep($backoff(20000));
+                usleep($this->mediator->backoff(20000, $try));
 
                 // Test writing to shared memory using an array that should come to a few kilobytes.
                 for($i=0; $i<2; $i++) {
@@ -500,11 +464,11 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                     $this->mediator->log("Message Queue Error {$error}: " . posix_strerror($error));
 
                 if (Core_Daemon::is('parent'))
-                    usleep($backoff(20000));
+                    usleep($this->mediator->backoff(20000, $try));
                 else
-                    sleep($backoff(3));
+                    sleep($this->mediator->backoff(3, $try));
 
-                $counter('catchall');
+                $this->mediator->error('catchall');
                 $this->setup_ipc();
                 return false;
         }

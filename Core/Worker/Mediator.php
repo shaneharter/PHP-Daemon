@@ -196,6 +196,37 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     protected $guid;
 
+    /**
+     * Array of accumulated error counts. Error thresholds are localized and when reached will
+     * raise a fatal error. Generally thresholds on workers are much lower than on the daemon process
+     * @var array
+     * @todo should we move error counts to the mediator? And the Via object needs to report errors to the mediator? I think probably yes.
+     */
+    public $error_counts = array (
+        'communication' => 0,
+        'corruption'    => 0,
+        'catchall'      => 0,
+    );
+
+    /**
+     * Error thresholds for (worker, parent). We want a certain tolerance of errors without restarting the application
+     * and these settings can be tweaked per-application.
+     *
+     * Errors in worker processes have lower thresholds because it is trivial to replace a worker, and workers regularly
+     * retire themselves anyway.
+     *
+     * Communication errors are anything related to a Via object's connection.
+     * Corruption errors indicate the Via object was able to get or put a message but that it seemed improperly formatted
+     * Catch-all for everything else.
+     *
+     * @var array
+     */
+    public $error_thresholds = array (
+        'communication' => array(10,  50), // Identifier related errors: The underlying data structures are fine, but we need to re-create a resource handle (child, parent)
+        'corruption'    => array(10,  25), // Corruption related errors: The underlying data structures are corrupt (or possibly just OOM)
+        'catchall'      => array(10,  25),
+    );
+
 
     /**
      * Return a valid callback for the supplied $method
@@ -698,6 +729,28 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $call->errors = 0;
             $this->call($call);
         }
+    }
+
+    /**
+     * Report an error. Keep a count of error types and act appropriately when thresholds have been met.
+     * @param $type
+     * @return void
+     */
+    public function error($type) {
+        $this->error_counts[$type]++;
+        if ($this->error_counts[$type] > $this->error_thresholds[$type][(int)Core_Daemon::is('parent')])
+            $this->fatal_error("IPC '$type' Error Threshold Reached");
+        else
+            $this->log("Incrementing Error Count for {$type} to " . $this->error_counts[$type]);
+    }
+
+    /**
+     * Increase back-off delays in an exponential way up to a certain plateau.
+     * @param $delay
+     * @param $try
+     */
+    public function backoff($delay, $try) {
+        return $delay * pow(2, min(max($try, 1), 8)) - $delay;
     }
 
     /**
