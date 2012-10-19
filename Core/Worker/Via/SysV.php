@@ -312,25 +312,38 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     /**
     * Drop any pending messages in the queue
     * @return boolean
-    * @todo possibly add-back functionality to purge only SHM or MQ
     */
     public function purge()
     {
-        $mq = $shm = true;
+        $this->purge_mq();
+        $this->purge_shm();
+    }
 
-        if (($mq && !is_resource($this->queue)) || ($shm && !is_resource($this->shm)))
+    /**
+     * The interface forces us to expose a purge() method -- but SysV separates the queue from the payloads
+     * so implement these methods to give us finer control while error handling.
+     * @return void
+     */
+    private function purge_shm() {
+        if (!is_resource($this->shm))
             $this->setup_ipc();
 
-        if ($mq) {
-            @msg_remove_queue($this->queue);
-            $this->queue = null;
-        }
+        @shm_remove($this->shm);
+        @shm_detach($this->shm);
+        $this->shm = null;
+    }
 
-        if ($shm) {
-            @shm_remove($this->shm);
-            @shm_detach($this->shm);
-            $this->shm = null;
-        }
+    /**
+     * The interface forces us to expose a purge() method -- but SysV separates the queue from the payloads
+     * so implement these methods to give us finer control while error handling.
+     * @return void
+     */
+    private function purge_mq() {
+        if (!is_resource($this->queue))
+            $this->setup_ipc();
+
+        @msg_remove_queue($this->queue);
+        $this->queue = null;
     }
 
     /**
@@ -436,7 +449,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 $this->mediator->log("IPC DIAG: Preparing to clean SHM and Reconnect...");
 
                 for($i=0; $i<2; $i++) {
-                    $this->purge(false, true);
+                    $this->purge_shm();
                     $this->setup_ipc();
 
                     if (!empty($items_to_copy))
