@@ -1,116 +1,195 @@
 <?php
-/**
- *
- * @author sharter
- */
 
 class Core_Lib_DebugShell
 {
 
     const INDENT_DEPTH = 6;
 
-    private static $debug = true;
+    /**
+     * The object that is being proxied by this shell
+     * @var stdClass
+     */
+    public $object;
+
+    /**
+     * A simple way to toggle debugging on & off
+     * @var bool
+     */
+    public $debug = true;
 
     /**
      * Used to determine which process has access to issue prompts to the debug console.
      * @var Resource
      */
-    private static $mutex;
+    private $mutex;
 
-    public static $shm;
+    /**
+     * Shared Memory resource to store settings for this debug shell that can be shared across all processes
+     * using it.
+     * @var Resource
+     */
+    public $shm;
 
     /**
      * Does this process currently own the semaphore?
      * @var bool
      */
-    private static $mutex_acquired = false;
+    private $mutex_acquired = false;
 
 
-    public static $daemon;
-
+    public $daemon;
 
     /**
-     * Run the console with the supplied $prompt
-     * @param string $prompt
-     * @return string   Returns the raw input
-     * @throws Exception
+     * List of methods to exclude from debugging -- will be passed directly to the proxied $object
+     * @var array
      */
-    public function prompt($prompt, $args = null, Closure $on_interrupt = null) {
+    public $blacklist = array();
 
-        $that = $this;
-        $daemon = self::$daemon;
-        $alias = Core_Lib_DebugShell::$alias;
+    /**
+     * Associative array of method names and their corresponding prompt -- If ommitted the method name will be used
+     * to form a generic prompt.
+     * @example ['setup', 'Setup the object & connect to the database']
+     * @var array
+     */
+    public $prompts = array();
 
+    /**
+     * Associative array of method names and a callable that will be called if that method is interrupted.
+     * For example, it could be used to print a special message if a given method is interrupted, or clean up unused resources.
+     * @var Closure[]
+     */
+    public $interrupt_callables = array();
+
+    /**
+     * It can be helpful to group multiple lines of the same logical event using indentation. But the rules to distinguish
+     * like-events are unique to each application. You can provide a callback that will be passed the method and args, and
+     * should return an integer: the number of tab characters to indent the prompt .
+     * @var Closure|Callback
+     */
+    public $indent_callback;
+
+
+
+    public function __call($method, $args) {
+
+        $o = $this->object;
+        $cb = function() use($o, $method, $args) {
+            call_user_func_array(array($o, $method), $args);
+        };
+
+        $interrupt = null;
+        if (isset($this->interrupt_callables[$method]))
+            $interrupt = $this->interrupt_callables[$method];
+
+        if ($this->is_breakpoint_active($method))
+            return $cb();
+
+        if ($this->prompt($method, $args))
+            return $cb();
+        elseif(is_callable($interrupt))
+            $interrupt();
+
+        return null;
+    }
+
+    public function __get($k) {
+        if (in_array($k, get_object_vars($this->object)))
+            return $this->object->{$k};
+
+        return null;
+    }
+
+    public function __set($k, $v) {
+        if (in_array($k, get_object_vars($this->object)))
+            return $this->object->{$k} = $v;
+
+        return null;
+    }
+
+
+    private function state($key, $value = null) {
+        static $state = false;
+        $defaults = array(
+            'parent'  => Core_Daemon::get('parent_pid'),
+            'enabled' => true,
+            'indent'  => true,
+            'last'    => '',
+            'banner'  => true,
+            'warned'  => false,
+        );
+
+        if (shm_has_var($this->shm, 1))
+            $state = shm_get_var($this->shm, 1);
+        else
+            $state = $defaults;
+
+        // If the process was kill -9'd we might have settings from last debug session hanging around.. wipe em
+        if ($state['parent'] != Core_Daemon::get('parent_pid')) {
+            $state = $defaults;
+            shm_put_var($this->shm, 1, $state);
+        }
+
+        if ($value === null)
+            if (isset($state[$key]))
+                return $state[$key];
+            else
+                return null;
+
+        $state[$key] = $value;
+        return shm_put_var($this->shm, 1, $state);
+    }
+
+    private function is_breakpoint_active($method) {
+        $a = !in_array($method, $this->blacklist);
+        $b = $this->state('enabled');
+        $c = !$this->state("skip_$method");
+        $d = $this->state('skip_until') === null || $this->state('skip_until') < time();
+        return $a && $b && $c && $d;
+    }
+
+    private function get_text_prompt($method) {
+        if (isset($this->prompts[$method]))
+            return $this->prompts[$method];
+
+        return sprintf('Call to %s::%s()', get_class($this->object), $method);
+    }
+
+    private function prompt($method, $args) {
+
+        $prompt = $this->get_text_prompt($method);
+
+        // @todo we might not need this, can we just use $method?
         $breakpoint = new Exception();
         $breakpoint = $breakpoint->getTrace();
         $breakpoint = sprintf('%s:%s', $breakpoint[0]['file'], $breakpoint[0]['line']);
 
-        static $state = false;
-
-        if(!is_resource(self::shm)) {
+        if(!is_resource($this->shm)) {
             return true;
         }
 
-        // Each running process will display its own debug console. Use a mutex to serialize the execution
-        // and control access to STDIN. We use shared memory -- abstracted using the $state closure -- to share settings among them
-        if (!$state) {
-            $state = function($key, $value = null) use ($that, $daemon) {
-                static $state = false;
-                $defaults = array(
-                    'parent'  => Core_Daemon::get('parent_pid'),
-                    'enabled' => true,
-                    'indent'  => true,
-                    'last'    => '',
-                    'banner'  => true,
-                    'warned'  => false,
-                );
-
-                if (shm_has_var($that->shm, 1))
-                    $state = shm_get_var($that->shm, 1);
-                else
-                    $state = $defaults;
-
-                // If the process was kill -9'd we might have settings from last debug session hanging around.. wipe em
-                if ($state['parent'] != Core_Daemon::get('parent_pid')) {
-                    $state = $defaults;
-                    shm_put_var($that->shm, 1, $state);
-                }
-
-                if ($value === null)
-                    if (isset($state[$key]))
-                        return $state[$key];
-                    else
-                        return null;
-
-                $state[$key] = $value;
-                return shm_put_var($that->shm, 1, $state);
-            };
-        }
-
-        if ((!$state('enabled') || $state("skip_$breakpoint") || ($state('skip_until') !== null && $state('skip_until') > time())))
-            return true;
-
-        if (!Core_Lib_DebugShell::$mutex_acquired) {
-            Core_Lib_DebugShell::$mutex_acquired = sem_acquire(Core_Lib_DebugShell::$mutex);
-            // Just in case another process changed settings while we were waiting for the mutex...
-            if ((!$state('enabled') || $state("skip_$breakpoint") || ($state('skip_until') !== null && $state('skip_until') > time())))
+        // Each running process will display its own debug console. Use a mutex to serialize the execution and control
+        // access to STDIN. If the mutex is currently in use, pause this process while we wait for acquisition. And
+        // make sure that the user didn't disable debugging or deactivate this breakpoint in the currently active process
+        if (!$this->mutex_acquired) {
+            $this->mutex_acquired = sem_acquire($this->mutex);
+            if (!$this->is_breakpoint_active($method))
                 return true;
         }
 
-        if ($state('banner')) {
-            echo PHP_EOL, get_class(Core_Lib_DebugShell::$daemon), ' Debug Console';
+        if ($this->state('banner')) {
+            echo PHP_EOL, get_class($this->daemon), ' Debug Console';
             echo PHP_EOL, 'Use `help` for list of commands', PHP_EOL, PHP_EOL;
-            $state('banner', false);
+            $this->state('banner', false);
         }
 
         try {
 
-            if (!$state('indent'))
+            if (!$this->state('indent'))
                 $prompt = str_replace("\t", '', $prompt);
 
-            $pid    = Core_Lib_DebugShell::$daemon->pid();
+            $pid    = $this->daemon->pid();
             $dw     = (Core_Daemon::is('parent')) ? 'D' : 'W';
-            $prompt = "[$alias $pid $dw] $prompt > ";
+            $prompt = "[$this->alias $pid $dw] $prompt > ";
             $break  = false;
 
             // We have to clear the buffer of any input that occurred in the terminal in the space after they submitted their last
@@ -139,71 +218,7 @@ class Core_Lib_DebugShell
 
                 // Validate the input as an expression
 
-                // @todo I started replacing some of the $this calls with self::
-                // but we need to figure out what to do about things like this... how modular do we want to go. In other words, how much work....
 
-                if (!$matches && preg_match('/^show local (\d+)/i', $input, $matches) == 1) {
-                    if (!is_array($this->calls)) {
-                        echo "No Calls In Memory", PHP_EOL;
-                        continue;
-                    }
-
-                    if (isset($this->calls[$matches[1]]))
-                        $message = print_r(@$this->calls[$matches[1]], true);
-                    else
-                        $message = "Item Does Not Exist";
-                }
-
-                if (!$matches && preg_match('/^show[\s]*(\d+)?$/i', $input, $matches) == 1) {
-                    if (empty($this->shm)) {
-                        echo "Shared Memory Not Connected Yet", PHP_EOL;
-                        continue;
-                    }
-
-                    if (count($matches) == 1) {
-                        $id = 1; // show the header
-                    } else {
-                        $id = $matches[1];
-                    }
-
-                    $message = print_r(@shm_get_var($this->shm, $id), true);
-                }
-
-                if (!$matches && preg_match('/^signal (\d+)/i', $input, $matches) == 1) {
-                    posix_kill(Core_Daemon::get('parent_pid'), $matches[1]);
-                    $message = "Signal Sent";
-                }
-
-                if (!$matches && preg_match('/^skipfor (\d+)/i', $input, $matches) == 1) {
-                    $time = time() + $matches[1];
-                    $state("skip_until", $time);
-                    $message = "Skipping Breakpoints for $matches[1] seconds. Will resume at " . date('H:i:s', $time);
-                }
-
-                if (!$matches && preg_match('/^call ([A-Z_0-9]+) (.*)?/i', $input, $matches) == 1) {
-                    if (count($matches) == 3) {
-                        $args = str_replace(',', ' ', $matches[2]);
-                        $args = explode(' ', $args);
-                    }
-
-                    $context = ($this instanceof Core_Worker_Debug_ObjectMediator) ? $this->object : $this;
-                    $function = array($context, $matches[1]);
-
-                    if (is_callable($function))
-                        if (call_user_func_array($function, $args) === true)
-                            $message = $break = true;
-                        else
-                            $message = "Function Not Callable!";
-                }
-
-                if (!$matches && preg_match('/^eval (.*)/i', $input, $matches) == 1) {
-                    $return = @eval($matches[1]);
-                    if ($return === false)
-                        $message = "eval returned false -- possibly a parse error. Check semi-colons, parens, braces, etc.";
-                    elseif ($return !== null)
-                        $message = "eval() returned:" . PHP_EOL . print_r($return, true);
-                    echo PHP_EOL;
-                }
 
                 if ($matches) {
                     if ($message)
