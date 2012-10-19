@@ -372,7 +372,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
             case 43:
                 // Identifier Removed
                 // A message queue was re-created at this address but the resource identifier we have needs to be re-created
-                $this->mediator->error('communication');
+                $this->mediator->count_error('communication');
                 if (Core_Daemon::is('parent'))
                     usleep($this->mediator->backoff(20000, $try));
                 else
@@ -385,7 +385,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
             case null:
                 // Almost certainly an issue with shared memory
                 $this->mediator->log("Shared Memory I/O Error at Address {$this->mediator->guid()}.");
-                $this->mediator->error('corruption');
+                $this->mediator->count_error('corruption');
 
                 // If this is a worker, all we can do is try to re-attach the shared memory.
                 // Any corruption or OOM errors will be handled by the parent exclusively.
@@ -468,7 +468,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 else
                     sleep($this->mediator->backoff(3, $try));
 
-                $this->mediator->error('catchall');
+                $this->mediator->count_error('catchall');
                 $this->setup_ipc();
                 return false;
         }

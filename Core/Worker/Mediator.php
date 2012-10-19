@@ -736,7 +736,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @param $type
      * @return void
      */
-    public function error($type) {
+    public function count_error($type) {
         $this->error_counts[$type]++;
         if ($this->error_counts[$type] > $this->error_thresholds[$type][(int)Core_Daemon::is('parent')])
             $this->fatal_error("IPC '$type' Error Threshold Reached");
