@@ -269,6 +269,55 @@ abstract class Core_Worker_Mediator implements Core_ITask
         return $this->via->check_environment($errors);
     }
 
+
+    public function debug() {
+
+        $that = $this;
+
+        // Proxy the $via object through a debug shell
+        $this->via = new Core_Lib_DebugShell($this->via);
+
+        $this->via->parser('eval [php]', 'Eval the supplied code. Passed to eval() as-is. Any return values will be printed. Current instance of Core_Worker_Mediator class available as $that.',
+            function ($input, $printer) use($that) {
+                if (preg_match('/^eval (.*)/i', $input, $matches) == 1) {
+                  $return = @eval($matches[1]);
+                  if ($return === false)
+                      $printer("eval returned false -- possibly a parse error. Check semi-colons, parens, braces, etc.");
+                  elseif ($return !== null)
+                      $printer("eval() returned:" . PHP_EOL . print_r($return, true));
+
+                  return true;
+                }
+
+                return false;
+            }
+        );
+
+        $this->via->parser('call [f] [a,b..]', 'Call a worker\'s function in the local process, passing remaining values as args. Return true: a "continue" will be implied. Non-true: keep you at the prompt',
+            function ($input, $printer) use($that) {
+                if (preg_match('/^call ([A-Z_0-9]+) (.*)?/i', $input, $matches) == 1) {
+                    if (count($matches) == 3) {
+                        $args = str_replace(',', ' ', $matches[2]);
+                        $args = explode(' ', $args);
+                    }
+
+                    $context = ($that instanceof Core_Worker_Debug_ObjectMediator) ? $that->inline() : $that;
+                    $function = array($context, $matches[1]);
+                    if (is_callable($function))
+                        if (call_user_func_array($function, $args) === true)
+                            $message = $break = true;
+                        else
+                            $message = "Function Not Callable!";
+                }
+            }
+        );
+
+
+
+
+
+    }
+
     public function setup() {
 
         // This class implements both the Task and the Plugin interfaces. Like plugins, this setup() method will be

@@ -2,7 +2,6 @@
 
 class Core_Lib_DebugShell
 {
-
     const INDENT_DEPTH = 6;
 
     /**
@@ -36,7 +35,6 @@ class Core_Lib_DebugShell
      */
     private $mutex_acquired = false;
 
-
     public $daemon;
 
     /**
@@ -54,6 +52,18 @@ class Core_Lib_DebugShell
     public $prompts = array();
 
     /**
+     * Array of callables
+     * @var closure[]
+     */
+    private $parsers = array();
+
+    /**
+     * Array of commands and their descriptions
+     * @var array
+     */
+    private $commands = array();
+
+    /**
      * Associative array of method names and a callable that will be called if that method is interrupted.
      * For example, it could be used to print a special message if a given method is interrupted, or clean up unused resources.
      * @var Closure[]
@@ -64,10 +74,26 @@ class Core_Lib_DebugShell
      * It can be helpful to group multiple lines of the same logical event using indentation. But the rules to distinguish
      * like-events are unique to each application. You can provide a callback that will be passed the method and args, and
      * should return an integer: the number of tab characters to indent the prompt .
-     * @var Closure|Callback
+     * This callable will be passed $method, $args and should return the number of spaces to indent.
+     * Note: The return value will be mod'd using the INDENT_DEPTH constant to ensure we don't just indent perpetually.
+     * @var Callable
      */
     public $indent_callback;
 
+    /**
+     * The prompt prefix should have any relevant state data. Think about standard bash prompts. You get the cwd, etc, in the prompt.
+     * This callable will be passed $method, $args and should return the prompt prefix.
+     * @var Callable
+     */
+    public $prompt_prefix_callback;
+
+
+    public function __construct($object) {
+        if (!is_object($object))
+            throw new Exception("DebugShell Failed: You must supply an object to be proxied.");
+
+        $this->object = $object;
+    }
 
 
     public function __call($method, $args) {
@@ -106,7 +132,24 @@ class Core_Lib_DebugShell
         return null;
     }
 
+    /**
+     * Add a parser to the queue. Will be evaluated FIFO.
+     * The parser functions will be passed the method, args
+     * @param $command
+     * @param $callable
+     * @param string $description
+     */
+    public function parser($command, $description, $callable) {
+        $this->parsers[$command] = $callable;
+        $this->commands[$command] = $description;
+    }
 
+    /**
+     * Get and Set state variables to share settings for this console across processes
+     * @param $key
+     * @param null $value
+     * @return bool|null
+     */
     private function state($key, $value = null) {
         static $state = false;
         $defaults = array(
@@ -147,25 +190,38 @@ class Core_Lib_DebugShell
         return $a && $b && $c && $d;
     }
 
-    private function get_text_prompt($method) {
+    private function get_text_prompt($method, $args) {
         if (isset($this->prompts[$method]))
-            return $this->prompts[$method];
+            $prompt = $this->prompts[$method];
+        else
+            $prompt = sprintf('Call to %s::%s()', get_class($this->object), $method);
 
-        return sprintf('Call to %s::%s()', get_class($this->object), $method);
+        $indenter = $this->indent_callback;
+        if (is_callable($indenter) && $this->state('indent')) {
+            $indent = $indenter($method, $args);
+            if (is_numeric($indent) && $indent > 0)
+              $prompt = str_repeat("\t", $indent % self::INDENT_DEPTH) . $prompt;
+        }
+
+        $prefixer = $this->prompt_prefix_callback;
+        if (is_callable($prefixer))
+          $prompt = "[" . $prefixer($method, $args) . "]" . $prompt;
+
+        return "$prompt > ";
+    }
+
+    private function print_banner() {
+        if ($this->state('banner')) {
+            echo PHP_EOL, get_class($this->daemon), ' Debug Console';
+            echo PHP_EOL, 'Use `help` for list of commands', PHP_EOL, PHP_EOL;
+            $this->state('banner', false);
+        }
     }
 
     private function prompt($method, $args) {
 
-        $prompt = $this->get_text_prompt($method);
-
-        // @todo we might not need this, can we just use $method?
-        $breakpoint = new Exception();
-        $breakpoint = $breakpoint->getTrace();
-        $breakpoint = sprintf('%s:%s', $breakpoint[0]['file'], $breakpoint[0]['line']);
-
-        if(!is_resource($this->shm)) {
+        if(!is_resource($this->shm))
             return true;
-        }
 
         // Each running process will display its own debug console. Use a mutex to serialize the execution and control
         // access to STDIN. If the mutex is currently in use, pause this process while we wait for acquisition. And
@@ -176,20 +232,17 @@ class Core_Lib_DebugShell
                 return true;
         }
 
-        if ($this->state('banner')) {
-            echo PHP_EOL, get_class($this->daemon), ' Debug Console';
-            echo PHP_EOL, 'Use `help` for list of commands', PHP_EOL, PHP_EOL;
-            $this->state('banner', false);
-        }
+        // Pass a simple print-line closure to parsers to use instead of just "echo" or "print"
+        $printer = function($message) {
+            if ($message)
+              echo $message, PHP_EOL;
+        };
 
         try {
 
-            if (!$this->state('indent'))
-                $prompt = str_replace("\t", '', $prompt);
-
+            $this->print_banner();
             $pid    = $this->daemon->pid();
-            $dw     = (Core_Daemon::is('parent')) ? 'D' : 'W';
-            $prompt = "[$this->alias $pid $dw] $prompt > ";
+            $prompt = $this->get_text_prompt($method, $args);
             $break  = false;
 
             // We have to clear the buffer of any input that occurred in the terminal in the space after they submitted their last
@@ -210,25 +263,19 @@ class Core_Lib_DebugShell
                 $matches = false;
                 $message = '';
 
-                if (substr($input, -2) == '[A') {
-                    $input = $state('last');
-                } elseif(!empty($input)) {
-                    $state('last', $input);
-                }
+                // Use the ascii up-arrow key to re-run the last command
+                if (substr($input, -2) == '[A')
+                    $input = $this->state('last');
+                elseif(!empty($input))
+                    $this->state('last', $input);
 
                 // Validate the input as an expression
+                foreach ($this->parsers as $parser)
+                  if ($parser($input, $printer))
+                    break;
 
-
-
-                if ($matches) {
-                    if ($message)
-                        echo $message, PHP_EOL;
-
-                    continue;
-                }
-
-                // Wasn't an expression.
-                // Validate input as a command.
+                // If one of the parsers didn't catch the message
+                // fall through to the built-in commands
 
                 switch(strtolower($input)) {
                     case 'help':
@@ -240,8 +287,6 @@ class Core_Lib_DebugShell
                         $out[] = 'y                 Step to the next break point';
                         $out[] = 'n                 Interrupt';
                         $out[] = '';
-                        $out[] = 'call [f] [a,b..]  Call a worker\'s function in the local process, passing remaining values as args. Return true: a "continue" will be implied. Non-true: keep you at the prompt';
-                        $out[] = 'cleanipc          Clean all systemv resources including shared memory and message queues. Does not remove semaphores. REQUIRES CONFIRMATION.  ';
                         $out[] = 'end               End the debugging session, continue the daemon as normal.';
                         $out[] = 'eval [php]        Eval the supplied code. Passed to eval() as-is. Any return values will be printed. Run context is the Core_Worker_Mediator class.';
                         $out[] = 'help              Print This Help';
@@ -249,43 +294,25 @@ class Core_Lib_DebugShell
                         $out[] = 'kill              Kill the daemon and all of its worker processes.';
                         $out[] = 'skip              Skip this breakpoint from now on.';
                         $out[] = 'skipfor [n]       Run the daemon (and skip ALL breakpoints) for N seconds, then return to normal break point operation.';
-                        $out[] = 'show [n]          Display the Nth item in shared memory. If no ID is passed, `show` will show the shared memory header.';
                         $out[] = 'show args         Display any arguments that may have been passed at the breakpoint.';
-                        $out[] = 'show local [n]    Display the Nth item in local memory - from the $this->calls array';
                         $out[] = 'signal [n]        Send the n signal to the parent daemon.';
                         $out[] = 'shutdown          End Debugging and Gracefully shutdown the daemon after the current loop_interval.';
-                        $out[] = 'status            Display current process stats';
                         $out[] = 'trace             Print A Stack Trace';
-                        $out[] = 'types             Display a table of message types and statuses so you can figure out what they mean.';
                         $out[] = '';
-                        $message = implode(PHP_EOL, $out);
-                        break;
 
-                    case 'types':
-                        $out = array();
-                        $out[] = 'Message Types:';
-                        $out[] = '1     Worker Sending "onReturn" message to the Daemon';
-                        $out[] = '2     Worker Notifying Daemon that it received the Call message and will now begin work.';
-                        $out[] = '3     Daemon sending a Call message to the Worker';
-                        $out[] = '';
-                        $out[] = 'Statuses:';
-                        $out[] = '0     Uncalled';
-                        $out[] = '1     Called';
-                        $out[] = '2     Running';
-                        $out[] = '3     Returned';
-                        $out[] = '4     Cancelled';
-                        $out[] = '10    Timeout';
-                        $out[] = '';
+                        foreach(array_keys($this->commands) as $command => $description)
+                          $out[] = sprintf('%s%s', str_pad($command, 18, ' ', STR_PAD_RIGHT), $description);
+
                         $message = implode(PHP_EOL, $out);
                         break;
 
                     case 'indent y':
-                        $state('indent', true);
+                        $this->state('indent', true);
                         $message = 'Indent enabled';
                         break;
 
                     case 'indent n':
-                        $state('indent', false);
+                        $this->state('indent', false);
                         $message = 'Indent disabled';
                         break;
 
@@ -305,47 +332,17 @@ class Core_Lib_DebugShell
                         break;
 
                     case 'end':
-                        $state('enabled', false);
+                        $this->state('enabled', false);
                         $break = true;
                         $message = 'Debugging Ended..';
                         $input = true;
                         break;
 
                     case 'skip':
-                        $state("skip_$breakpoint", true);
+                        $this->state("skip_$method", true);
                         $break = true;
                         $message = 'Breakpoint Turned Off..';
                         $input = true;
-                        break;
-
-                    case 'status':
-                        if (Core_Daemon::is('parent')) {
-                            $out = array();
-                            $out[] = '';
-                            $out[] = 'Daemon Process';
-                            $out[] = 'Alias: ' . $this->alias;
-                            $out[] = 'IPC ID: ' . $this->id;
-                            $out[] = 'Workers: ' . count($this->processes);
-                            $out[] = 'Max Workers: ' . $this->workers;
-                            $out[] = 'Running Jobs: ' . count($this->running_calls);
-                            $out[] = '';
-                            $out[] = 'Processes:';
-                            if ($this->processes)
-                                $out[] = $this->processes;
-                            else
-                                $out[] = 'None';
-
-                            $out[] = '';
-                            $message = implode(PHP_EOL, $out);
-                        } else {
-                            $out = array();
-                            $out[] = '';
-                            $out[] = 'Worker Process';
-                            $out[] = 'Alias: ' . $this->alias;
-                            $out[] = 'IPC ID: ' . $this->id;
-                            $out[] = '';
-                            $message = implode(PHP_EOL, $out);
-                        }
                         break;
 
                     case 'kill':
@@ -354,40 +351,22 @@ class Core_Lib_DebugShell
                         @exec('ps -C "php ' . $this->daemon->get('filename') . '" -o pid= | xargs kill -9 ');
                         break;
 
-                    case 'cleanipc':
-                        if (!$state('warned')) {
-                            $message = "WARNING: This will release all Shared Memory and Message Queue IPC resources. Only run this if you want ALL resources released.";
-                            $message .= "If this is a production server, you should probably not do this. Does NOT release semaphores. To clean all types, including semaphores, use the scripts/clean_ipc.php tool";
-                            $message .= PHP_EOL . PHP_EOL . "Repeat command to proceed with the IPC cleaning.";
-                            $state('warned', true);
-                            break;
-                        }
-                        $script = dirname(dirname(dirname(dirname(__FILE__)))) . '/scripts/clean_ipc.php';
-                        @passthru("php $script -s --confirm");
-                        echo PHP_EOL;
-                        break;
-
                     case 'y':
-                        $break = true;
                         $input = true;
+                        $break = true;
                         break;
 
                     case 'n':
-                        if (is_callable($on_interrupt))
-                            $on_interrupt();
-
                         $input = false;
                         $break = true;
                         break;
 
                     default:
-
                         if ($input)
                             $message = "Unknown Command! See `help` for list of commands.";
                 }
 
-                if ($message)
-                    echo $message, PHP_EOL;
+                $printer($message);
             }
         } catch (Exception $e) {
             @sem_release($this->mutex);

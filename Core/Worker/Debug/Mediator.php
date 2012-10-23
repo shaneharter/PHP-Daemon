@@ -371,10 +371,10 @@ abstract class Core_Worker_Debug_Mediator extends Core_Worker_Mediator
                         $out[] = 'y                 Step to the next break point';
                         $out[] = 'n                 Interrupt';
                         $out[] = '';
-                        $out[] = 'call [f] [a,b..]  Call a worker\'s function in the local process, passing remaining values as args. Return true: a "continue" will be implied. Non-true: keep you at the prompt';
+                        $out[] = '';
                         $out[] = 'cleanipc          Clean all systemv resources including shared memory and message queues. Does not remove semaphores. REQUIRES CONFIRMATION.  ';
                         $out[] = 'end               End the debugging session, continue the daemon as normal.';
-                        $out[] = 'eval [php]        Eval the supplied code. Passed to eval() as-is. Any return values will be printed. Run context is the Core_Worker_Mediator class.';
+                        $out[] = 'eval [php]        ';
                         $out[] = 'help              Print This Help';
                         $out[] = 'indent [y|n]      When turned-on, indentation will be used to group messages from the same call in a column so you can easily match them together.';
                         $out[] = 'kill              Kill the daemon and all of its worker processes.';
