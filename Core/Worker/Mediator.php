@@ -276,46 +276,90 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
         // Proxy the $via object through a debug shell
         $this->via = new Core_Lib_DebugShell($this->via);
+        $this->via->setup();
 
-        $this->via->parser('eval [php]', 'Eval the supplied code. Passed to eval() as-is. Any return values will be printed. Current instance of Core_Worker_Mediator class available as $that.',
-            function ($input, $printer) use($that) {
-                if (preg_match('/^eval (.*)/i', $input, $matches) == 1) {
-                  $return = @eval($matches[1]);
-                  if ($return === false)
-                      $printer("eval returned false -- possibly a parse error. Check semi-colons, parens, braces, etc.");
-                  elseif ($return !== null)
-                      $printer("eval() returned:" . PHP_EOL . print_r($return, true));
 
-                  return true;
-                }
+        $this->via->indent_callback = function($method, $args) {
+            switch($method){
+                case 'put':
+                    if ($args[0] instanceof Core_Worker_Call)
+                        return $args[0]->id;
+                    break;
+            }
 
+            return 0;
+        };
+
+        $alias = $this->alias;
+        $this->via->prompt_prefix_callback = function($method, $args) use($alias) {
+              return sprintf('%s %s %s', $alias, getmypid(), (Core_Daemon::is('parent')) ? 'D' : 'W');
+        };
+
+        $this->via->prompts['put'] = function($method, $args) {
+            $statuses = array(
+                Core_Worker_Mediator::UNCALLED   =>  'Daemon sending Call message to Worker',
+                Core_Worker_Mediator::RUNNING    =>  'Worker sending "running" ack message to Daemon',
+                Core_Worker_Mediator::RETURNED   =>  'Worker sending "return" ack message to Daemon',
+            );
+
+            if (!$args[0] instanceof Core_Worker_Call)
                 return false;
-            }
+
+            return "[Call {$args[0]->id}] " . $statuses[$args[0]->status];
+        };
+
+        $parsers = array();
+        $parsers[] = array(
+            'regex'       => '/^call ([A-Z_0-9]+) (.*)?/i',
+            'command'     => 'call [f] [a,b..]',
+            'description' => 'Call a worker\'s method in the local process with any additional arguments you supply after the method name.',
+            'closure'     => function($matches, $printer) use($that) {
+                                // Extract any args that may have been passed.
+                                // They can be delimited by a comma or space
+                                $args = array();
+                                if (count($matches) == 3)
+                                    $args = explode(' ', str_replace(',', ' ', $matches[2]));
+
+                                // If this is an object mediator, use inline() to grab an instance of the underlying worker object.
+                                // Otherwise use the mediator itself as the call context.
+                                $context = ($that instanceof Core_Worker_ObjectMediator) ? $that->inline() : $that;
+                                $function = array($context, $matches[1]);
+                                if (!is_callable($function)) {
+                                    $printer('Function Not Callable!');
+                                    return false;
+                                }
+
+                                $printer("Calling Function $matches[1]()...");
+                                $return = call_user_func_array($function, $args);
+                                if (is_scalar($return))
+                                    $printer("Return: $return", 100);
+                                else
+                                    $printer("Return: [" . gettype($return) . "]");
+
+                                return false;
+                            }
         );
 
-        $this->via->parser('call [f] [a,b..]', 'Call a worker\'s function in the local process, passing remaining values as args. Return true: a "continue" will be implied. Non-true: keep you at the prompt',
-            function ($input, $printer) use($that) {
-                if (preg_match('/^call ([A-Z_0-9]+) (.*)?/i', $input, $matches) == 1) {
-                    if (count($matches) == 3) {
-                        $args = str_replace(',', ' ', $matches[2]);
-                        $args = explode(' ', $args);
-                    }
+        $this->via->loadParsers($parsers);
+    }
 
-                    $context = ($that instanceof Core_Worker_Debug_ObjectMediator) ? $that->inline() : $that;
-                    $function = array($context, $matches[1]);
-                    if (is_callable($function))
-                        if (call_user_func_array($function, $args) === true)
-                            $message = $break = true;
-                        else
-                            $message = "Function Not Callable!";
-                }
-            }
-        );
+    /**
+     * If the daemon is in debug-mode, you can set breakpoints in your worker code. If "continue" commands were passed
+     * in the debug shell, breakpoint will return true, otherwise false. It's up to you to handle that behavior in your app.
+     * Note: If the daemon is not in debug mode, it will always just return true.
+     * @param string $description
+     * @return bool
+     */
+    public function breakpoint($description = '') {
+        if (!Core_Daemon::get('debug_workers'))
+            return true;
 
+        $call = debug_backtrace();
+        $call = $call[1];
+        if ($this->via instanceof Core_Lib_DebugShell)
+            return $this->via->prompt(sprintf('%s::%s', $call['class'], $call['function']), $call['args']);
 
-
-
-
+        return true;
     }
 
     public function setup() {
@@ -342,7 +386,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
             if (!is_numeric($this->guid))
                 $this->fatal_error("Unable to create Worker ID. ftok() failed. Unexpected return value: $this->guid");
 
-            if (!$this->daemon->recover_workers())
+            if (!$this->daemon->get('recover_workers'))
                 $this->via->purge();
 
             $this->fork();
@@ -354,6 +398,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
             });
 
             $this->via->setup();
+
+            if ($this->daemon->get('debug_workers'))
+                $this->debug();
 
         } else {
             unset($this->calls, $this->processes, $this->running_calls, $this->on_return, $this->on_timeout, $this->call_count);

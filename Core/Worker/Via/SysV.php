@@ -120,7 +120,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         // If we're trying to recover previous messages/shm, scan the shared memory block for call structs and import them
         // @todo if we keep this functionality, we need to at least remove it as a CLI option implemented by Core_Daemon because this will not apply to other Via conveyances
 
-        if ($this->mediator->daemon->recover_workers()) {
+        if ($this->mediator->daemon->get('recover_workers')) {
             $max_id = $this->call_count;
             for ($i=0; $i<100000; $i++) {
                 if(shm_has_var($this->shm, $i)) {
@@ -203,7 +203,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         $call->errors++;
         if ($this->error($error_code, $call->errors) && $call->errors < 3) {
             $this->mediator->log("SysV::put() Failed for call_id {$call->id}: Retrying. Error Code: " . $error_code);
-            return $this->put($call->id);
+            return $this->put($call);
         }
 
         return false;

@@ -1,5 +1,4 @@
 <?php
-
 class Core_Lib_DebugShell
 {
     const INDENT_DEPTH = 6;
@@ -97,7 +96,6 @@ class Core_Lib_DebugShell
 
 
     public function __call($method, $args) {
-
         $o = $this->object;
         $cb = function() use($o, $method, $args) {
             call_user_func_array(array($o, $method), $args);
@@ -107,7 +105,7 @@ class Core_Lib_DebugShell
         if (isset($this->interrupt_callables[$method]))
             $interrupt = $this->interrupt_callables[$method];
 
-        if ($this->is_breakpoint_active($method))
+        if (!$this->is_breakpoint_active($method))
             return $cb();
 
         if ($this->prompt($method, $args))
@@ -132,6 +130,34 @@ class Core_Lib_DebugShell
         return null;
     }
 
+
+    public function setup() {
+        ini_set('display_errors', 0); // Displayed errors won't break the debug console but it will make it more difficult to use. Tail a log file in another shell instead.
+        $ftok = ftok(Core_Daemon::get('filename'), 'D');
+        $this->mutex = sem_get($ftok, 1, 0666, 1);
+        $this->shm = shm_attach($ftok, 64 * 1024, 0666);
+
+        // Add any default parsers
+        $parsers = array();
+        $parsers[] = array(
+            'regex'       => '/^eval (.*)/i',
+            'command'     => 'eval [php]',
+            'description' => 'Eval the supplied code. Passed to eval() as-is. Any return values will be printed.',
+            'closure'     => function($matches, $printer) {
+                $return = @eval($matches[1]);
+                if ($return === false)
+                    $printer("eval returned false -- possibly a parse error. Check semi-colons, parens, braces, etc.");
+                elseif ($return !== null)
+                    $printer("eval() returned:" . PHP_EOL . print_r($return, true));
+
+                return false;
+            }
+        );
+
+
+        $this->loadParsers($parsers);
+    }
+
     /**
      * Add a parser to the queue. Will be evaluated FIFO.
      * The parser functions will be passed the method, args
@@ -139,9 +165,23 @@ class Core_Lib_DebugShell
      * @param $callable
      * @param string $description
      */
-    public function parser($command, $description, $callable) {
-        $this->parsers[$command] = $callable;
-        $this->commands[$command] = $description;
+    public function addParser($regex, $command, $description, $closure) {
+        $this->parsers[] = compact('regex', 'command', 'description', 'closure');
+    }
+
+    /**
+     * Append the given array of parsers to the end of the parser queue
+     * Array should contain associative array with keys: regex, command, description, closure
+     * @param array $parsers
+     * @throws Exception
+     */
+    public function loadParsers(array $parsers) {
+        $test = array_keys(current($parsers));
+        $keys = array('regex', 'command', 'description', 'closure');
+        if ($test != $keys)
+            throw new Exception("Cannot Load Parser Queue: Invalid array format. Expected Keys: " . implode(', ', $test) . " Given Keys: " . implode(', ', $keys));
+
+        $this->parsers = array_merge($this->parsers, $parsers);
     }
 
     /**
@@ -192,8 +232,12 @@ class Core_Lib_DebugShell
 
     private function get_text_prompt($method, $args) {
         if (isset($this->prompts[$method]))
-            $prompt = $this->prompts[$method];
-        else
+            if (is_callable($this->prompts[$method]))
+                $prompt = $this->prompts[$method]($method, $args);
+            else
+                $prompt = $this->prompts[$method];
+
+        if (empty($prompt))
             $prompt = sprintf('Call to %s::%s()', get_class($this->object), $method);
 
         $indenter = $this->indent_callback;
@@ -205,7 +249,7 @@ class Core_Lib_DebugShell
 
         $prefixer = $this->prompt_prefix_callback;
         if (is_callable($prefixer))
-          $prompt = "[" . $prefixer($method, $args) . "]" . $prompt;
+          $prompt = "[" . $prefixer($method, $args) . "] " . $prompt;
 
         return "$prompt > ";
     }
@@ -218,8 +262,7 @@ class Core_Lib_DebugShell
         }
     }
 
-    private function prompt($method, $args) {
-
+    public function prompt($method, $args) {
         if(!is_resource($this->shm))
             return true;
 
@@ -233,15 +276,21 @@ class Core_Lib_DebugShell
         }
 
         // Pass a simple print-line closure to parsers to use instead of just "echo" or "print"
-        $printer = function($message) {
-            if ($message)
-              echo $message, PHP_EOL;
+        $printer = function($message, $maxlen = null) {
+            if (empty($message))
+                return;
+
+            if ($maxlen && strlen($message) > $maxlen) {
+                $message = substr($message, 0, $maxlen-3) . '...';
+            }
+
+            echo $message . PHP_EOL;
         };
 
         try {
 
             $this->print_banner();
-            $pid    = $this->daemon->pid();
+            $pid    = getmypid();
             $prompt = $this->get_text_prompt($method, $args);
             $break  = false;
 
@@ -264,19 +313,26 @@ class Core_Lib_DebugShell
                 $message = '';
 
                 // Use the ascii up-arrow key to re-run the last command
-                if (substr($input, -2) == '[A')
+                if (substr($input, -2) == '[A') {
+                    echo chr(8) . chr(8);
                     $input = $this->state('last');
-                elseif(!empty($input))
+                    echo $input;
+                }elseif(!empty($input))
                     $this->state('last', $input);
 
                 // Validate the input as an expression
+                $matches = array();
                 foreach ($this->parsers as $parser)
-                  if ($parser($input, $printer))
-                    break;
+                  if (preg_match($parser['regex'], $input, $matches) == 1) {
+                      $break = $parser['closure']($matches, $printer);
+                      break;
+                  }
+
+                if ($matches)
+                    continue;
 
                 // If one of the parsers didn't catch the message
                 // fall through to the built-in commands
-
                 switch(strtolower($input)) {
                     case 'help':
                         $out = array();
@@ -288,67 +344,69 @@ class Core_Lib_DebugShell
                         $out[] = 'n                 Interrupt';
                         $out[] = '';
                         $out[] = 'end               End the debugging session, continue the daemon as normal.';
-                        $out[] = 'eval [php]        Eval the supplied code. Passed to eval() as-is. Any return values will be printed. Run context is the Core_Worker_Mediator class.';
                         $out[] = 'help              Print This Help';
-                        $out[] = 'indent [y|n]      When turned-on, indentation will be used to group messages from the same call in a column so you can easily match them together.';
                         $out[] = 'kill              Kill the daemon and all of its worker processes.';
                         $out[] = 'skip              Skip this breakpoint from now on.';
                         $out[] = 'skipfor [n]       Run the daemon (and skip ALL breakpoints) for N seconds, then return to normal break point operation.';
                         $out[] = 'show args         Display any arguments that may have been passed at the breakpoint.';
                         $out[] = 'signal [n]        Send the n signal to the parent daemon.';
                         $out[] = 'shutdown          End Debugging and Gracefully shutdown the daemon after the current loop_interval.';
-                        $out[] = 'trace             Print A Stack Trace';
+                        $out[] = 'trace             Print A Stack Trace';;
+
+                        if (is_callable($this->indent_callback))
+                            $out[] = 'indent [y|n]      When turned-on, indentation will be used to group messages from the same call in a column so you can easily match them together.';
+
                         $out[] = '';
+                        foreach($this->parsers as $parser)
+                          $out[] = sprintf('%s%s', str_pad($parser['command'], 18, ' ', STR_PAD_RIGHT), $parser['description']);
 
-                        foreach(array_keys($this->commands) as $command => $description)
-                          $out[] = sprintf('%s%s', str_pad($command, 18, ' ', STR_PAD_RIGHT), $description);
-
-                        $message = implode(PHP_EOL, $out);
+                        $out[] = '';
+                        $printer(implode(PHP_EOL, $out));
                         break;
 
                     case 'indent y':
                         $this->state('indent', true);
-                        $message = 'Indent enabled';
+                        $printer('Indent enabled');
                         break;
 
                     case 'indent n':
                         $this->state('indent', false);
-                        $message = 'Indent disabled';
+                        $printer('Indent disabled');
                         break;
 
                     case 'show args':
-                        $message = print_r($args, true);
+                        $printer(print_r($args, true));
                         break;
 
                     case 'shutdown':
-                        $this->daemon->shutdown();
-                        $message = "Shutdown In Progress... Use `end` command to cease debugging until shutdown is complete.";
+                        //$this->daemon->shutdown();
+                        $printer("Shutdown In Progress... Use `end` command to cease debugging until shutdown is complete.");
                         $break = true;
                         break;
 
                     case 'trace':
                         $e = new exception();
-                        $message = $e->getTraceAsString();
+                        $printer($e->getTraceAsString());
                         break;
 
                     case 'end':
                         $this->state('enabled', false);
                         $break = true;
-                        $message = 'Debugging Ended..';
+                        $printer('Debugging Ended..');
                         $input = true;
                         break;
 
                     case 'skip':
                         $this->state("skip_$method", true);
                         $break = true;
-                        $message = 'Breakpoint Turned Off..';
+                        $printer('Breakpoint Turned Off..');
                         $input = true;
                         break;
 
                     case 'kill':
                         @fclose(STDOUT);
                         @fclose(STDERR);
-                        @exec('ps -C "php ' . $this->daemon->get('filename') . '" -o pid= | xargs kill -9 ');
+                        @exec('ps -C "php ' . Core_Daemon::get('filename') . '" -o pid= | xargs kill -9 ');
                         break;
 
                     case 'y':
@@ -363,10 +421,8 @@ class Core_Lib_DebugShell
 
                     default:
                         if ($input)
-                            $message = "Unknown Command! See `help` for list of commands.";
+                            $printer("Unknown Command! See `help` for list of commands.");
                 }
-
-                $printer($message);
             }
         } catch (Exception $e) {
             @sem_release($this->mutex);

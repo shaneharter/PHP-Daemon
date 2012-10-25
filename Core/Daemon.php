@@ -165,23 +165,6 @@ abstract class Core_Daemon
     private $stats = array();
 
     /**
-     * Set this in your daemon to run a debug console to interact with your worker processes.
-     * @example Pass CLI argument: --debugworkers
-     * @var bool
-     */
-    private $debug_workers = false;
-
-    /**
-     * By default, any buffered calls and acks between a daemon and its worker processes do not persist after a restart.
-     * You can retain these calls -- and attempt to pick-up where you left off -- by using the the --recoverworkers
-     * option.
-     * Note: When a daemon auto-restarts itself it will use this function to retain worker operation.
-     * @example Pass CLI argument: --recoverworkers
-     * @var bool
-     */
-    private $recover_workers = false;
-
-    /**
      * Dictionary of application-wide environment vars with defaults.
      * @see Core_Daemon::set()
      * @see Core_Daemon::get()
@@ -825,7 +808,7 @@ abstract class Core_Daemon
             if ($this->pid_file)
                 $command .= ' -p ' . $this->pid_file;
 
-            if ($this->debug_workers)
+            if ($this->get('debug_workers'))
                 $command .= ' --debugworkers';
         }
         else {
@@ -1112,10 +1095,7 @@ abstract class Core_Daemon
 
         switch (true) {
             case is_object($worker) && !is_a($worker, 'Closure'):
-                if ($this->debug_workers)
-                    $mediator = new Core_Worker_Debug_ObjectMediator($alias, $this, $via);
-                else
-                    $mediator = new Core_Worker_ObjectMediator($alias, $this, $via);
+                $mediator = new Core_Worker_ObjectMediator($alias, $this, $via);
 
                 // Ensure that there are no reserved method names in the worker object -- Determine if there will
                 // be a collision between worker methods and public methods on the Mediator class
@@ -1130,11 +1110,7 @@ abstract class Core_Daemon
                 break;
 
             case is_callable($worker):
-                if ($this->debug_workers)
-                    $mediator = new Core_Worker_Debug_FunctionMediator($alias, $this, $via);
-                else
-                    $mediator = new Core_Worker_FunctionMediator($alias, $this, $via);
-
+                $mediator = new Core_Worker_FunctionMediator($alias, $this, $via);
                 $mediator->setFunction($worker);
                 break;
 
@@ -1196,9 +1172,10 @@ abstract class Core_Daemon
             $this->pid(getmypid()); // We have a new pid now
         }
 
-        $this->recover_workers = isset($opts['recoverworkers']);
-        $this->debug_workers = isset($opts['debugworkers']);
-        $this->verbose = $this->daemon == false && $this->debug_workers == false;
+        $this->set('recover_workers', isset($opts['recoverworkers']));
+        $this->set('debug_workers', isset($opts['debugworkers']));
+        $this->verbose = $this->daemon == false && $this->get('debug_workers') == false;
+        $this->verbose = true;
 
         if (isset($opts['p'])) {
             $handle = @fopen($opts['p'], 'w');
@@ -1337,15 +1314,6 @@ abstract class Core_Daemon
     public function is_daemon()
     {
         return $this->daemon;
-    }
-
-    /**
-     * Is the --recoverworkers flag set?
-     * @return boolean
-     */
-    public function recover_workers()
-    {
-        return $this->recover_workers;
     }
 
     /**

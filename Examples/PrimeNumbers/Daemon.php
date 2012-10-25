@@ -25,7 +25,7 @@ class Daemon extends \Core_Daemon
     public $run_sieve        = false;
     public $run_getfactors   = false;
     public $run_inline_sieve = false;
-    public $auto_run         = false;
+    public $auto_run         = true;
 
     /**
      * @var Resource
