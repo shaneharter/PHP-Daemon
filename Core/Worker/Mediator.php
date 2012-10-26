@@ -274,16 +274,21 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
         $that = $this;
 
-        // Proxy the $via object through a debug shell
+        ##
+        ## Wrap the current $via object in a DebugShell mediator
+        ##
         $this->via = new Core_Lib_DebugShell($this->via);
         $this->via->setup();
 
-
+        ##
+        ## Set callbacks to empower the indentation feature (for easy visual grouping)
+        ## and the prompt-prefix (for prompt pid/alias/status identification)
+        ##
         $this->via->indent_callback = function($method, $args) {
             switch($method){
                 case 'put':
                     if ($args[0] instanceof Core_Worker_Call)
-                        return $args[0]->id;
+                        return $args[0]->id - 1;    // Start -1 b/c call id 0 is reserved
                     break;
             }
 
@@ -295,6 +300,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
               return sprintf('%s %s %s', $alias, getmypid(), (Core_Daemon::is('parent')) ? 'D' : 'W');
         };
 
+        ##
+        ## Set more specific and informative prompts for certain methods
+        ##
         $this->via->prompts['put'] = function($method, $args) {
             $statuses = array(
                 Core_Worker_Mediator::UNCALLED   =>  'Daemon sending Call message to Worker',
@@ -308,6 +316,27 @@ abstract class Core_Worker_Mediator implements Core_ITask
             return "[Call {$args[0]->id}] " . $statuses[$args[0]->status];
         };
 
+//        $this->via->prompts['get'] = function($method, $args) {
+//            $queues = array(
+//                Core_Worker_Mediator::WORKER_CALL       =>  'Attach to WORKER_CALL queue and wait for messages',
+//                Core_Worker_Mediator::WORKER_RUNNING    =>  'Poll for enqueued "worker is running" acks',
+//                Core_Worker_Mediator::WORKER_RETURN     =>  'Poll for enqueued "worker is complete" acks',
+//            );
+//
+//            if (!isset($queues[$args[0]]))
+//                return false;
+//
+//            return $queues[$args[0]];
+//        };
+
+        ##
+        ## Add any methods to the blacklist that shouldn't trigger a debug prompt. Mostly ones that would just be noise.
+        ##
+        $this->via->blacklist[] = 'get';
+
+        ##
+        ## Add additional command parsers
+        ##
         $parsers = array();
         $parsers[] = array(
             'regex'       => '/^call ([A-Z_0-9]+) (.*)?/i',
@@ -347,19 +376,35 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * If the daemon is in debug-mode, you can set breakpoints in your worker code. If "continue" commands were passed
      * in the debug shell, breakpoint will return true, otherwise false. It's up to you to handle that behavior in your app.
      * Note: If the daemon is not in debug mode, it will always just return true.
-     * @param string $description
+     * @param string $prompt    The prompt to display
+     * @param integer $indent   The indentation level to use for the prompt, useful for grouping like-prompts together
      * @return bool
      */
-    public function breakpoint($description = '') {
+    public function breakpoint($prompt = '', $indent = 0) {
         if (!Core_Daemon::get('debug_workers'))
             return true;
 
         $call = debug_backtrace();
         $call = $call[1];
-        if ($this->via instanceof Core_Lib_DebugShell)
-            return $this->via->prompt(sprintf('%s::%s', $call['class'], $call['function']), $call['args']);
+        $method = sprintf('%s::%s', $call['class'], $call['function']);
+        $this->via->prompts[$method] = $prompt;
 
-        return true;
+        if ($indent) {
+            $tmp = $this->via->indent_callback;
+            $this->via->indent_callback = function() use($indent){
+                return $indent;
+            };
+
+        }
+
+        $return = true;
+        if ($this->via instanceof Core_Lib_DebugShell)
+            $return = $this->via->prompt($method, $call['args']);
+
+        if (isset($tmp))
+            $this->via->indent_callback = $tmp;
+
+        return $return;
     }
 
     public function setup() {
@@ -386,8 +431,12 @@ abstract class Core_Worker_Mediator implements Core_ITask
             if (!is_numeric($this->guid))
                 $this->fatal_error("Unable to create Worker ID. ftok() failed. Unexpected return value: $this->guid");
 
-            if (!$this->daemon->get('recover_workers'))
-                $this->via->purge();
+//            @todo figure out what i want to do w/ this
+//            if (!$this->daemon->get('recover_workers'))
+//                $this->via->purge();
+            $this->via->setup();
+            if ($this->daemon->get('debug_workers'))
+                $this->debug();
 
             $this->fork();
             $this->daemon->on(Core_Daemon::ON_PREEXECUTE,   array($this, 'run'));
@@ -397,10 +446,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     $that->dump();
             });
 
-            $this->via->setup();
 
-            if ($this->daemon->get('debug_workers'))
-                $this->debug();
 
         } else {
             unset($this->calls, $this->processes, $this->running_calls, $this->on_return, $this->on_timeout, $this->call_count);
@@ -411,6 +457,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
             call_user_func($this->get_callback('setup'));
             $this->log('Worker Process Started');
         }
+
+
     }
 
     /**
@@ -464,6 +512,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return mixed
      */
     protected function fork() {
+
         $processes = count($this->processes);
         if ($this->workers <= $processes)
             return;
@@ -482,6 +531,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 $forks = $this->workers - $processes;
                 break;
         }
+
+        if (!$this->breakpoint("Forking {$forks} New Worker Processes"))
+            return false;
 
         $errors = array();
         for ($i=0; $i<$forks; $i++) {
@@ -598,6 +650,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 foreach(array_keys($this->running_calls) as $call_id) {
                     $call = $this->calls[$call_id];
                     if ($call->runtime() > $this->timeout) {
+
+                        if (!$this->breakpoint("[Call {$call_id}] Enforcing timeout at runtime: " . $call->runtime(), $call_id-1))
+                            continue;
+
                         $this->log("Enforcing Timeout on Call $call_id in pid " . $call->pid);
                         @posix_kill($call->pid, SIGKILL);
                         unset($this->running_calls[$call_id], $this->processes[$call->pid]);
@@ -659,6 +715,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
                         continue;
                     }
 
+                    if (!$this->breakpoint(sprintf('[Call %s] Calling method in worker', $call->id, ($this instanceof Core_Worker_ObjectMediator) ? $call->method : $this->alias), $call->id - 1)) {
+                        $call->cancelled();
+                        continue;
+                    }
+
                     $call->running();
                     if (!$this->via->put($call))
                         $this->log("Call {$call->id} Could Not Ack Running.");
@@ -682,6 +743,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
      *                   with the call, eg checking the call status.
      */
     protected function call(Core_Worker_Call $call) {
+
+        if (!$this->breakpoint(sprintf('[Call %s] Call to %s()', $call->id, ($this instanceof Core_Worker_ObjectMediator) ? $call->method : $this->alias), $call->id - 1)) {
+            $call->cancelled();
+            return false;
+        }
 
         try {
             $this->calls[$call->id] = $call;

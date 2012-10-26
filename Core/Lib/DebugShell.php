@@ -107,7 +107,6 @@ class Core_Lib_DebugShell
 
         if (!$this->is_breakpoint_active($method))
             return $cb();
-
         if ($this->prompt($method, $args))
             return $cb();
         elseif(is_callable($interrupt))

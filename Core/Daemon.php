@@ -1175,7 +1175,6 @@ abstract class Core_Daemon
         $this->set('recover_workers', isset($opts['recoverworkers']));
         $this->set('debug_workers', isset($opts['debugworkers']));
         $this->verbose = $this->daemon == false && $this->get('debug_workers') == false;
-        $this->verbose = true;
 
         if (isset($opts['p'])) {
             $handle = @fopen($opts['p'], 'w');
