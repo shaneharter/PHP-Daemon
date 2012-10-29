@@ -87,6 +87,31 @@ class Core_Lib_DebugShell
     public $prompt_prefix_callback;
 
 
+    /**
+     * Return a monotonically incrementing integer. Designed to work with the indent feature, preventing the reuse
+     * of a given indent level between multiple instances of DebugShell (from 2 or more different workers for example)
+     *
+     * @param string $key  Some kind of key to identify whether we've already assigned an indent level here.
+     * @return integer
+     */
+    public function increment_indent($key) {
+        $map = $this->state('indent_map');
+        $i = $this->state('indent_incrementor');
+        if (!$map) $map = array();
+        if (!$i) $i = 1;
+
+        if (isset($map[$key]))
+            return $map[$key];
+
+        $map[$key] = $i;
+        $i++;
+
+        $this->state('indent_map', $map);
+        $this->state('indent_incrementor', $i);
+        return $map[$key];
+    }
+
+
     public function __construct($object) {
         if (!is_object($object))
             throw new Exception("DebugShell Failed: You must supply an object to be proxied.");
@@ -94,11 +119,10 @@ class Core_Lib_DebugShell
         $this->object = $object;
     }
 
-
     public function __call($method, $args) {
         $o = $this->object;
         $cb = function() use($o, $method, $args) {
-            call_user_func_array(array($o, $method), $args);
+            return call_user_func_array(array($o, $method), $args);
         };
 
         $interrupt = null;
@@ -130,7 +154,7 @@ class Core_Lib_DebugShell
     }
 
 
-    public function setup() {
+    public function setup_shell() {
         ini_set('display_errors', 0); // Displayed errors won't break the debug console but it will make it more difficult to use. Tail a log file in another shell instead.
         $ftok = ftok(Core_Daemon::get('filename'), 'D');
         $this->mutex = sem_get($ftok, 1, 0666, 1);
@@ -200,6 +224,12 @@ class Core_Lib_DebugShell
             'warned'  => false,
         );
 
+//        $pid = getmypid();
+//        if ($value)
+//            echo PHP_EOL, "Writing $key = $value in $pid", PHP_EOL;
+//        else
+//            echo PHP_EOL, "Reading $key in $pid", PHP_EOL;
+
         if (shm_has_var($this->shm, 1))
             $state = shm_get_var($this->shm, 1);
         else
@@ -225,7 +255,7 @@ class Core_Lib_DebugShell
         $a = !in_array($method, $this->blacklist);
         $b = $this->state('enabled');
         $c = !$this->state("skip_$method");
-        $d = $this->state('skip_until') === null || $this->state('skip_until') < time();
+        $d = $this->state('skip__until') === null || $this->state('skip__until') < time();
         return $a && $b && $c && $d;
     }
 
@@ -255,7 +285,7 @@ class Core_Lib_DebugShell
 
     private function print_banner() {
         if ($this->state('banner')) {
-            echo PHP_EOL, get_class($this->daemon), ' Debug Console';
+            echo PHP_EOL, 'PHP Daemon - Worker Debug Console';
             echo PHP_EOL, 'Use `help` for list of commands', PHP_EOL, PHP_EOL;
             $this->state('banner', false);
         }
@@ -283,7 +313,7 @@ class Core_Lib_DebugShell
                 $message = substr($message, 0, $maxlen-3) . '...';
             }
 
-            echo $message . PHP_EOL;
+            echo $message . PHP_EOL . PHP_EOL;
         };
 
         try {
