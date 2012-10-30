@@ -262,6 +262,17 @@ abstract class Core_Worker_Mediator implements Core_ITask
         // The Daemon destructor calls teardown() on each worker
     }
 
+    /**
+     * Make private & protected instance vars available for inspection
+     * Primarily for access within the debugshell during mediator development
+     */
+    public function __get($k) {
+        if (in_array($k, get_object_vars($this)))
+            return $this->{$k};
+
+        return null;
+    }
+
     public function check_environment(Array $errors = array()) {
         if (function_exists('posix_kill') == false)
             $errors[] = 'The POSIX Extension is Not Installed';
@@ -276,6 +287,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         ## Wrap the current $via object in a DebugShell mediator
         ##
         $this->via = new Core_Lib_DebugShell($this->via);
+        $this->via->daemon = $this->daemon;
         $this->via->setup_shell();
 
         ## We'll use these in the many closures below..
@@ -288,18 +300,25 @@ abstract class Core_Worker_Mediator implements Core_ITask
         ## and the prompt-prefix (for prompt pid/alias/status identification)
         ##
         $this->via->indent_callback = function($method, $args) use($shell, $alias) {
-            switch($method){
-                case 'put':
-                    if ($args[0] instanceof Core_Worker_Call)
-                        return $shell->increment_indent($alias . $args[0]->id);    // -1 b/c call id 0 is reserved
+            $call_id = null;
+            switch($method) {
+                case 'drop':
+                    $call_id = $args[0];
                     break;
+
+                default:
+                    if (isset($args[0]) && $args[0] instanceof Core_Worker_Call)
+                        $call_id = $args[0]->id;
             }
+
+            if ($call_id)
+                return $shell->increment_indent($alias . $call_id);
 
             return 0;
         };
 
         $this->via->prompt_prefix_callback = function($method, $args) use($alias) {
-              return sprintf('%s %s %s', $alias, getmypid(), (Core_Daemon::is('parent')) ? 'D' : 'W');
+            return sprintf('%s %s %s', $alias, getmypid(), (Core_Daemon::is('parent')) ? 'D' : 'W');
         };
 
         ##
@@ -315,11 +334,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
             if (!$args[0] instanceof Core_Worker_Call)
                 return false;
 
-            return "[{$alias} Call {$args[0]->id}] " . $statuses[$args[0]->status];
+            return "[Call {$args[0]->id}] " . $statuses[$args[0]->status];
         };
 
         $this->via->prompts['drop'] = function($method, $args) use($alias) {
-            return "[{$alias} Call {$args[0]}] Garbage-collect this call?";
+            return "[Call {$args[0]}] Garbage-collect this call?";
         };
 
 //        $this->via->prompts['get'] = function($method, $args) {
@@ -442,14 +461,15 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
 //            @todo figure out what i want to do w/ this
 //            if (!$this->daemon->get('recover_workers'))
-//                $this->via->purge();
+
             $this->via->setup();
+            $this->via->purge();
             if ($this->daemon->get('debug_workers'))
                 $this->debug();
 
             $this->fork();
             $this->daemon->on(Core_Daemon::ON_PREEXECUTE,   array($this, 'run'));
-            $this->daemon->on(Core_Daemon::ON_IDLE,         array($this, 'garbage_collector'), ceil(30 / ($this->workers * 0.5)));  // Throttle the garbage collector
+            $this->daemon->on(Core_Daemon::ON_IDLE,         array($this, 'garbage_collector'), ceil(120 / ($this->workers * 0.5)));  // Throttle the garbage collector
             $this->daemon->on(Core_Daemon::ON_SIGNAL,       function($signal) use ($that) {
                 if ($signal == SIGUSR1)
                     $that->dump();
@@ -461,6 +481,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
             unset($this->calls, $this->processes, $this->running_calls, $this->on_return, $this->on_timeout, $this->call_count);
             $this->calls = $this->processes = $this->running_calls = array();
             $this->via->setup();
+            $this->debug();
+//            $this->via->setup_shell();
             $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'signal'));
             call_user_func($this->get_callback('setup'));
             $this->log('Worker Process Started');
@@ -627,6 +649,12 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             while($call = $this->via->get(self::WORKER_RUNNING)) {
 
+                if (!isset($this->calls[$call->id])) {
+                    $this->log("Warning: Messages recevied from workers tied to previous instances of the application.");
+                    $this->log("Consider purging the messages using whatever processes exist for your selected queue provider");
+                    continue;
+                }
+
                 $this->running_calls[$call->id] = true;
 
                 // It's possible the process exited after sending this ack, ensure it's still valid.
@@ -637,6 +665,12 @@ abstract class Core_Worker_Mediator implements Core_ITask
             }
 
             while($call = $this->via->get(self::WORKER_RETURN)) {
+
+                if (!isset($this->calls[$call->id])) {
+                    $this->log("Warning: Messages recevied from workers tied to previous instances of the application.");
+                    $this->log("Consider purging the messages using whatever processes exist for your selected queue provider");
+                    continue;
+                }
 
                 unset($this->running_calls[$call->id]);
                 if (isset($this->processes[$call->pid]))
@@ -656,11 +690,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
             // or the worker actually fatal-errored and killed itself.
             if ($this->timeout > 0) {
                 foreach(array_keys($this->running_calls) as $call_id) {
-                    if (!isset($this->calls[$call_id])) {
-                        $this->log("Running Calls has a call that is not in the Calls stack??");
-                        $this->log("Running Calls: " . implode(', ', array_keys($this->running_calls)));
-                        $this->log("Calls: " . print_r($this->calls, true));
-                    }
 
                     $call = $this->calls[$call_id];
                     if ($call->runtime() > $this->timeout) {
@@ -731,7 +760,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     }
 
                     $alias  = ($this instanceof Core_Worker_ObjectMediator) ? $call->method : $this->alias;
-                    if (!$this->breakpoint(sprintf('[%s Call %s] Calling method in worker', $this->alias, $call->id, $alias), $call->id)) {
+                    if (!$this->breakpoint(sprintf('[Call %s] Calling method in worker', $call->id, $alias), $call->id)) {
                         $call->cancelled();
                         continue;
                     }
@@ -763,7 +792,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         $this->calls[$call->id] = $call;
 
         $alias  = ($this instanceof Core_Worker_ObjectMediator) ? $call->method : $this->alias;
-        if (!$this->breakpoint(sprintf('[%s Call %s] Call to %s()', $this->alias, $call->id, $alias), $call->id)) {
+        if (!$this->breakpoint(sprintf('[Call %s] Call to %s()', $call->id, $alias), $call->id)) {
             $call->cancelled();
             return false;
         }

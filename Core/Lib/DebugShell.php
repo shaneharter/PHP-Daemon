@@ -28,11 +28,13 @@ class Core_Lib_DebugShell
      */
     public $shm;
 
+    public $ftok;
+
     /**
      * Does this process currently own the semaphore?
      * @var bool
      */
-    private $mutex_acquired = false;
+    public $mutex_acquired = null;
 
     public $daemon;
 
@@ -86,32 +88,6 @@ class Core_Lib_DebugShell
      */
     public $prompt_prefix_callback;
 
-
-    /**
-     * Return a monotonically incrementing integer. Designed to work with the indent feature, preventing the reuse
-     * of a given indent level between multiple instances of DebugShell (from 2 or more different workers for example)
-     *
-     * @param string $key  Some kind of key to identify whether we've already assigned an indent level here.
-     * @return integer
-     */
-    public function increment_indent($key) {
-        $map = $this->state('indent_map');
-        $i = $this->state('indent_incrementor');
-        if (!$map) $map = array();
-        if (!$i) $i = 1;
-
-        if (isset($map[$key]))
-            return $map[$key];
-
-        $map[$key] = $i;
-        $i++;
-
-        $this->state('indent_map', $map);
-        $this->state('indent_incrementor', $i);
-        return $map[$key];
-    }
-
-
     public function __construct($object) {
         if (!is_object($object))
             throw new Exception("DebugShell Failed: You must supply an object to be proxied.");
@@ -153,20 +129,23 @@ class Core_Lib_DebugShell
         return null;
     }
 
-
     public function setup_shell() {
         ini_set('display_errors', 0); // Displayed errors won't break the debug console but it will make it more difficult to use. Tail a log file in another shell instead.
-        $ftok = ftok(Core_Daemon::get('filename'), 'D');
-        $this->mutex = sem_get($ftok, 1, 0666, 1);
-        $this->shm = shm_attach($ftok, 64 * 1024, 0666);
+        $this->ftok = ftok(Core_Daemon::get('filename'), 'D');
+        $this->mutex = sem_get($this->ftok, 1, 0666, 1);
+        $this->shm = shm_attach($this->ftok, 64 * 1024, 0666);
+
+        $shell = $this;
+        $object = $this->object;
+        $daemon = $this->daemon;
 
         // Add any default parsers
         $parsers = array();
         $parsers[] = array(
             'regex'       => '/^eval (.*)/i',
             'command'     => 'eval [php]',
-            'description' => 'Eval the supplied code. Passed to eval() as-is. Any return values will be printed.',
-            'closure'     => function($matches, $printer) {
+            'description' => 'Eval the supplied code. Passed to eval() as-is. Any return values will be printed. In this context, $shell, $object and $daemon objects are available',
+            'closure'     => function($matches, $printer) use($shell, $object, $daemon){
                 $return = @eval($matches[1]);
                 if ($return === false)
                     $printer("eval returned false -- possibly a parse error. Check semi-colons, parens, braces, etc.");
@@ -182,13 +161,38 @@ class Core_Lib_DebugShell
     }
 
     /**
+     * Return a thread-safe monotonically incrementing integer. Optionally supply a $key to cache the integer assignment
+     * and return that to subsequent requests with the same key.
+     *
+     * @param string $key  If we've already assigned an integer to this key, return that. Otherwise, assign, cache and return it.
+     * @return integer
+     */
+    public function increment_indent($key = null) {
+        $i = 1 + $this->state('indent_incrementor', null, 0);
+        if ($key === null) {
+            $this->state('indent_incrementor', $i);
+            return $i;
+        }
+
+        $map = $this->state('indent_map', null, array());
+        if (!isset($map[$key])) {
+            $map[$key] = $i;
+            $this->state('indent_map', $map);
+            $this->state('indent_incrementor', $i);
+        }
+
+        return $map[$key];
+    }
+
+
+    /**
      * Add a parser to the queue. Will be evaluated FIFO.
      * The parser functions will be passed the method, args
      * @param $command
      * @param $callable
      * @param string $description
      */
-    public function addParser($regex, $command, $description, $closure) {
+    public function addParser ($regex, $command, $description, $closure) {
         $this->parsers[] = compact('regex', 'command', 'description', 'closure');
     }
 
@@ -198,7 +202,7 @@ class Core_Lib_DebugShell
      * @param array $parsers
      * @throws Exception
      */
-    public function loadParsers(array $parsers) {
+    public function loadParsers (array $parsers) {
         $test = array_keys(current($parsers));
         $keys = array('regex', 'command', 'description', 'closure');
         if ($test != $keys)
@@ -208,12 +212,45 @@ class Core_Lib_DebugShell
     }
 
     /**
+     * Acquire the mutex. If it's acquired elsewhere, method will block until the mutex is acquired.
+     * Note: this method is not thread-aware. The point of caching the pid the mutex was assigned to
+     * is to avoid problems where a mutex is acquired, the process forks, and the child thinks IT owns the mutex.
+     * @return bool
+     */
+    private function mutex_acquire () {
+        $pid = getmypid();
+        if ($pid == $this->mutex_acquired)
+            return true;
+
+        if (sem_acquire($this->mutex))
+            $this->daemon->log("Mutex Granted");
+        else
+            $this->daemon->log("Mutex Grant Failed");
+
+            //throw new Exception("Cannot acquire mutex: Unknown Error.");
+
+        $this->mutex_acquired = $pid;
+        return true;
+    }
+
+    /**
+     * Release the mutex
+     * @return void
+     */
+    private function mutex_release () {
+        @sem_release($this->mutex);
+        $this->mutex_acquired = false;
+        $this->daemon->log('Mutex Released');
+    }
+
+
+    /**
      * Get and Set state variables to share settings for this console across processes
      * @param $key
      * @param null $value
      * @return bool|null
      */
-    private function state($key, $value = null) {
+    private function state ($key, $value = null, $default = null) {
         static $state = false;
         $defaults = array(
             'parent'  => Core_Daemon::get('parent_pid'),
@@ -223,12 +260,6 @@ class Core_Lib_DebugShell
             'banner'  => true,
             'warned'  => false,
         );
-
-//        $pid = getmypid();
-//        if ($value)
-//            echo PHP_EOL, "Writing $key = $value in $pid", PHP_EOL;
-//        else
-//            echo PHP_EOL, "Reading $key in $pid", PHP_EOL;
 
         if (shm_has_var($this->shm, 1))
             $state = shm_get_var($this->shm, 1);
@@ -245,7 +276,7 @@ class Core_Lib_DebugShell
             if (isset($state[$key]))
                 return $state[$key];
             else
-                return null;
+                return $default;
 
         $state[$key] = $value;
         return shm_put_var($this->shm, 1, $state);
@@ -292,17 +323,15 @@ class Core_Lib_DebugShell
     }
 
     public function prompt($method, $args) {
+
         if(!is_resource($this->shm))
             return true;
 
-        // Each running process will display its own debug console. Use a mutex to serialize the execution and control
-        // access to STDIN. If the mutex is currently in use, pause this process while we wait for acquisition. And
-        // make sure that the user didn't disable debugging or deactivate this breakpoint in the currently active process
-        if (!$this->mutex_acquired) {
-            $this->mutex_acquired = sem_acquire($this->mutex);
-            if (!$this->is_breakpoint_active($method))
-                return true;
-        }
+        // The single debug shell is shared across the parent and all worker processes. Use a mutex to serialize
+        // access to the shell. If the mutex isn't owned by this process, this will block until this process acquires it.
+        $this->mutex_acquire();
+        if (!$this->is_breakpoint_active($method))
+            return true;
 
         // Pass a simple print-line closure to parsers to use instead of just "echo" or "print"
         $printer = function($message, $maxlen = null) {
@@ -313,11 +342,11 @@ class Core_Lib_DebugShell
                 $message = substr($message, 0, $maxlen-3) . '...';
             }
 
-            echo $message . PHP_EOL . PHP_EOL;
+            $message = str_replace(PHP_EOL, PHP_EOL . ' ', $message);
+            echo " $message\n\n";
         };
 
         try {
-
             $this->print_banner();
             $pid    = getmypid();
             $prompt = $this->get_text_prompt($method, $args);
@@ -341,12 +370,10 @@ class Core_Lib_DebugShell
                 $matches = false;
                 $message = '';
 
-                // Use the ascii up-arrow key to re-run the last command
-                if (substr($input, -2) == '[A') {
-                    echo chr(8) . chr(8);
+                // Use the familiar bash !! to re-run the last command
+                if (substr($input, -2) == '!!')
                     $input = $this->state('last');
-                    echo $input;
-                }elseif(!empty($input))
+                elseif(!empty($input))
                     $this->state('last', $input);
 
                 // Validate the input as an expression
@@ -390,6 +417,7 @@ class Core_Lib_DebugShell
                           $out[] = sprintf('%s%s', str_pad($parser['command'], 18, ' ', STR_PAD_RIGHT), $parser['description']);
 
                         $out[] = '';
+                        $out[] = '!!                Repeat previous command';
                         $printer(implode(PHP_EOL, $out));
                         break;
 
@@ -428,7 +456,7 @@ class Core_Lib_DebugShell
                     case 'skip':
                         $this->state("skip_$method", true);
                         $break = true;
-                        $printer('Breakpoint Turned Off..');
+                        $printer('Breakpoint "' . $method . '" Turned Off..');
                         $input = true;
                         break;
 
@@ -453,14 +481,13 @@ class Core_Lib_DebugShell
                             $printer("Unknown Command! See `help` for list of commands.");
                 }
             }
+
         } catch (Exception $e) {
-            @sem_release($this->mutex);
-            $this->mutex_acquired = false;
+            $this->mutex_release();
             throw $e;
         }
 
-        @sem_release($this->mutex);
-        $this->mutex_acquired = false;
+        $this->mutex_release();
         return $input;
     }
 
