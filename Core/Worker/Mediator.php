@@ -398,6 +398,82 @@ abstract class Core_Worker_Mediator implements Core_ITask
                             }
         );
 
+        $parsers[] = array(
+            'regex'       => '/^show (\d+)/i',
+            'command'     => 'show [n]',
+            'description' => 'Display the Nth item in local memory - from the $this->calls array',
+            'closure'     => function($matches, $printer) use($that) {
+                if (!is_array($that->calls)) {
+                    $printer("No Calls In Memory", PHP_EOL);
+                    return;
+                }
+
+                if (isset($that->calls[$matches[1]]))
+                    $printer(print_r(@$that->calls[$matches[1]], true));
+                else
+                    $printer("Item Does Not Exist");
+
+            }
+        );
+
+        $parsers[] = array(
+            'regex'       => '/^types$/i',
+            'command'     => 'types',
+            'description' => 'Display a table of message types and statuses so you can figure out what they mean.',
+            'closure'     => function($matches, $printer) use($that) {
+                $out = array();
+                $out[] = 'Message Types:';
+                $out[] = '1     Worker Sending "onReturn" message to the Daemon';
+                $out[] = '2     Worker Notifying Daemon that it received the Call message and will now begin work.';
+                $out[] = '3     Daemon sending a Call message to the Worker';
+                $out[] = '';
+                $out[] = 'Statuses:';
+                $out[] = '0     Uncalled';
+                $out[] = '1     Called';
+                $out[] = '2     Running';
+                $out[] = '3     Returned';
+                $out[] = '4     Cancelled';
+                $out[] = '10    Timeout';
+                $out[] = '';
+                $printer(implode(PHP_EOL, $out));
+            }
+        );
+
+        $parsers[] = array(
+            'regex'       => '/^status$/i',
+            'command'     => 'call [f] [a,b..]',
+            'description' => 'Display current process details.',
+            'closure'     => function($matches, $printer) use($that) {
+                if (Core_Daemon::is('parent')) {
+                    $out = array();
+                    $out[] = '';
+                    $out[] = 'Daemon Process';
+                    $out[] = 'Alias: '          . $that->alias;
+                    $out[] = 'IPC ID: '         . $that->guid();
+                    $out[] = 'Workers: '        . count($that->processes);
+                    $out[] = 'Max Workers: '    . $that->workers;
+                    $out[] = 'Running Jobs: '   . count($that->running_calls);
+                    $out[] = '';
+                    $out[] = 'Processes:';
+                    if ($that->processes)
+                        $out[] = $that->processes;
+                    else
+                        $out[] = 'None';
+
+                    $out[] = '';
+                    $printer(implode(PHP_EOL, $out));
+                } else {
+                    $out = array();
+                    $out[] = '';
+                    $out[] = 'Worker Process';
+                    $out[] = 'Alias: '          . $that->alias;
+                    $out[] = 'IPC ID: '         . $that->id;
+                    $out[] = '';
+                    $printer(implode(PHP_EOL, $out));
+                }
+            }
+        );
+
         $this->via->loadParsers($parsers);
     }
 

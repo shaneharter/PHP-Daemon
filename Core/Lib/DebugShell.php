@@ -185,6 +185,26 @@ class Core_Lib_DebugShell
             }
         );
 
+        $parsers[] = array(
+            'regex'       => '/^signal (\d+)/i',
+            'command'     => 'skipfor [n]',
+            'description' => 'Run the daemon (and skip ALL breakpoints) for N seconds, then return to normal break point operation.',
+            'closure'     => function($matches, $printer) {
+                posix_kill(Core_Daemon::get('parent_pid'), $matches[1]);
+                $printer("Signal Sent");
+            }
+        );
+
+        $parsers[] = array(
+            'regex'       => '/^skipfor (\d+)/i',
+            'command'     => 'signal [n]',
+            'description' => 'Send the n signal to the parent daemon.',
+            'closure'     => function($matches, $printer) use($shell) {
+                $time = time() + $matches[1];
+                $shell->state("skip__until", $time);
+                $printer("Skipping Breakpoints for $matches[1] seconds. Will resume at " . date('H:i:s', $time));
+            }
+        );
 
         $this->loadParsers($parsers);
     }
@@ -279,7 +299,7 @@ class Core_Lib_DebugShell
      * @param null $value
      * @return bool|null
      */
-    private function state ($key, $value = null, $default = null) {
+    public function state ($key, $value = null, $default = null) {
         static $state = false;
         $defaults = array(
             'parent'  => Core_Daemon::get('parent_pid'),
@@ -443,8 +463,6 @@ class Core_Lib_DebugShell
                         $out[] = 'help              Print This Help';
                         $out[] = 'kill              Kill the daemon and all of its worker processes.';
                         $out[] = 'skip              Skip this breakpoint from now on.';
-                        $out[] = 'skipfor [n]       Run the daemon (and skip ALL breakpoints) for N seconds, then return to normal break point operation.';
-                        $out[] = 'signal [n]        Send the n signal to the parent daemon.';
                         $out[] = 'shutdown          End Debugging and Gracefully shutdown the daemon after the current loop_interval.';
                         $out[] = 'trace             Print A Stack Trace';;
 
