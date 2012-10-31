@@ -341,6 +341,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
             return "[Call {$args[0]}] Garbage-collect this call?";
         };
 
+        $this->via->prompts['state'] = 'Load IPC state details?';
+
 //        $this->via->prompts['get'] = function($method, $args) {
 //            $queues = array(
 //                Core_Worker_Mediator::WORKER_CALL       =>  'Attach to WORKER_CALL queue and wait for messages',
@@ -562,7 +564,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 break;
         }
 
-        if (!$this->breakpoint("Forking {$forks} New Worker Processes"))
+        if ($forks && !$this->breakpoint("Forking {$forks} New Worker Processes"))
             return false;
 
         $errors = array();

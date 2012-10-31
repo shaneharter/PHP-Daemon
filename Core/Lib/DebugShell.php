@@ -1,6 +1,11 @@
 <?php
 class Core_Lib_DebugShell
 {
+
+    const ABORT     = 0;
+    const CONT      = 1;
+    const CAPTURE   = 2;
+
     const INDENT_DEPTH = 6;
 
     /**
@@ -95,6 +100,12 @@ class Core_Lib_DebugShell
         $this->object = $object;
     }
 
+    public function __destruct() {
+        @shm_remove($this->consoleshm);
+        @shm_detach($this->consoleshm);
+        @sem_remove($this->mutex);
+    }
+
     public function __call($method, $args) {
         $o = $this->object;
         $cb = function() use($o, $method, $args) {
@@ -107,10 +118,24 @@ class Core_Lib_DebugShell
 
         if (!$this->is_breakpoint_active($method))
             return $cb();
-        if ($this->prompt($method, $args))
-            return $cb();
-        elseif(is_callable($interrupt))
-            $interrupt();
+
+        switch($this->prompt($method, $args)) {
+            case self::CONT:
+                return $cb();
+
+            case self::CAPTURE:
+                $return = $cb();
+                echo "\nReturn Value:";
+                print_r($return);
+                echo "\n";
+                if ($this->prompt(self::CAPTURE, null))
+                    return $return;
+
+                break;
+        }
+
+        if(is_callable($interrupt))
+            return $interrupt();
 
         return null;
     }
@@ -139,6 +164,8 @@ class Core_Lib_DebugShell
         $object = $this->object;
         $daemon = $this->daemon;
 
+        $this->prompts[self::CAPTURE] = 'Pass-thru captured return value?';
+
         // Add any default parsers
         $parsers = array();
         $parsers[] = array(
@@ -151,6 +178,8 @@ class Core_Lib_DebugShell
                     $printer("eval returned false -- possibly a parse error. Check semi-colons, parens, braces, etc.");
                 elseif ($return !== null)
                     $printer("eval() returned:" . PHP_EOL . print_r($return, true));
+                else
+                    echo PHP_EOL;
 
                 return false;
             }
@@ -274,6 +303,14 @@ class Core_Lib_DebugShell
 
         if ($value === null)
             if (isset($state[$key]))
+                $this->daemon->log("State get $key = " . $state[$key]);
+            else
+                $this->daemon->log("State get $key = [$default]");
+        else
+            $this->daemon->log("State SET $key=$value");
+
+        if ($value === null)
+            if (isset($state[$key]))
                 return $state[$key];
             else
                 return $default;
@@ -330,8 +367,10 @@ class Core_Lib_DebugShell
         // The single debug shell is shared across the parent and all worker processes. Use a mutex to serialize
         // access to the shell. If the mutex isn't owned by this process, this will block until this process acquires it.
         $this->mutex_acquire();
-        if (!$this->is_breakpoint_active($method))
+        if (!$this->is_breakpoint_active($method)) {
+            $this->mutex_release();
             return true;
+        }
 
         // Pass a simple print-line closure to parsers to use instead of just "echo" or "print"
         $printer = function($message, $maxlen = null) {
@@ -399,12 +438,12 @@ class Core_Lib_DebugShell
                         $out[] = 'y                 Step to the next break point';
                         $out[] = 'n                 Interrupt';
                         $out[] = '';
+                        $out[] = 'capture           Call the current method and capture its return value. Will print_r the return value and return a prompt.';
                         $out[] = 'end               End the debugging session, continue the daemon as normal.';
                         $out[] = 'help              Print This Help';
                         $out[] = 'kill              Kill the daemon and all of its worker processes.';
                         $out[] = 'skip              Skip this breakpoint from now on.';
                         $out[] = 'skipfor [n]       Run the daemon (and skip ALL breakpoints) for N seconds, then return to normal break point operation.';
-                        $out[] = 'show args         Display any arguments that may have been passed at the breakpoint.';
                         $out[] = 'signal [n]        Send the n signal to the parent daemon.';
                         $out[] = 'shutdown          End Debugging and Gracefully shutdown the daemon after the current loop_interval.';
                         $out[] = 'trace             Print A Stack Trace';;
@@ -455,8 +494,8 @@ class Core_Lib_DebugShell
 
                     case 'skip':
                         $this->state("skip_$method", true);
-                        $break = true;
                         $printer('Breakpoint "' . $method . '" Turned Off..');
+                        $break = true;
                         $input = true;
                         break;
 
@@ -466,13 +505,24 @@ class Core_Lib_DebugShell
                         @exec('ps -C "php ' . Core_Daemon::get('filename') . '" -o pid= | xargs kill -9 ');
                         break;
 
+                    case 'capture':
+                        $backtrace = debug_backtrace();
+                        if ($backtrace[1]['function'] !== '__call' || $method == self::CAPTURE) {
+                            $printer('Cannot capture this :(');
+                            break;
+                        }
+
+                        $input = self::CAPTURE;
+                        $break = true;
+                        break;
+
                     case 'y':
-                        $input = true;
+                        $input = self::CONT;
                         $break = true;
                         break;
 
                     case 'n':
-                        $input = false;
+                        $input = self::ABORT;
                         $break = true;
                         break;
 
