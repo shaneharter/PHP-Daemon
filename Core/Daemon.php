@@ -70,7 +70,7 @@ abstract class Core_Daemon
      *
      * Note: If you want to take responsibility for dispatching the ON_IDLE event in your application, just set
      *       this to 0 and dispatch the event periodically, eg:
-     *       $this->dispatch(array(self::ON_IDLE));
+     *       $this->dispatch(array($this->ON_IDLE));
      *
      *
      *
@@ -90,24 +90,10 @@ abstract class Core_Daemon
     protected $auto_restart_interval = 43200;
 
     /**
-     * Timestamp when was the application started
-     * @var integer
-     */
-    private $start_time;
-
-    /**
      * Process ID
      * @var integer
      */
     private $pid;
-
-    /**
-     * An optional filename the PID was written to at startup
-     * @see Core_Daemon::pid()
-     * @example Pass CLI argument: -p pidfile
-     * @var string
-     */
-    private $pid_file = false;
 
     /**
      * Is this process running as a Daemon?
@@ -116,23 +102,6 @@ abstract class Core_Daemon
      * @var boolean
      */
     private $daemon = false;
-
-    /**
-     * Is your application shutting down at the end of the current event loop iteration?
-     * @see Core_Daemon::shutdown()
-     * @var boolean
-     */
-    private $shutdown = false;
-
-    /**
-     * In verbose mode, every log entry is also dumped to stdout, as long as were not in daemon mode.
-     * Note: This was originally attached to a commandline option (-v) but it's not implicit based on whether the
-     *       application is being run inside your shell (verbose=true) or as a daemon (verbose=false)
-     *
-     * @see Core_Daemon::verbose()
-     * @var boolean
-     */
-    private $verbose = false;
 
     /**
      * Array of worker aliases
@@ -305,7 +274,7 @@ abstract class Core_Daemon
         // We have to set any installation instructions before we call getopt()
         $this->install_instructions[] = "Add to Supervisor or Monit, or add a Crontab Entry:\n   * * * * * " . $this->getFilename();
 
-        $this->start_time = time();
+        $this->set('start_time', time());
         $this->pid(getmypid());
         $this->getopt();
     }
@@ -320,7 +289,7 @@ abstract class Core_Daemon
      */
     protected function check_environment(Array $errors = array())
     {
-        if (self::get('filename') === null)
+        if ($this->get('filename') === null)
             $errors[] = 'Filename is Missing: set_filename must be called before an instance can be initialized';
 
         if (is_numeric($this->loop_interval) == false)
@@ -395,7 +364,7 @@ abstract class Core_Daemon
             foreach($this->plugins as $plugin)
                 $this->{$plugin}->teardown();
 
-            while(self::is('parent') && count($this->worker_pids) > 0) {
+            while($this->is('parent') && count($this->worker_pids) > 0) {
                 foreach(array_unique($this->worker_pids) as $worker)
                     $this->{$worker}->teardown();
 
@@ -410,10 +379,10 @@ abstract class Core_Daemon
         }
 
         $this->reap(false);
-        if (self::is('parent') && !empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
-            unlink($this->pid_file);
+        if ($this->is('parent') && $this->get('pid_file') && file_exists($this->get('pid_file')) && file_get_contents($this->get('pid_file')) == $this->pid)
+            unlink($this->get('pid_file'));
 
-        if (self::is('parent') && $this->verbose)
+        if ($this->is('parent') && $this->is('verbose'))
             echo PHP_EOL;
     }
 
@@ -452,7 +421,7 @@ abstract class Core_Daemon
     {
         try
         {
-            while ($this->shutdown == false && self::is('parent'))
+            while ($this->is('parent') && !$this->is('shutdown'))
             {
                 $this->timer(true);
                 $this->auto_restart();
@@ -578,7 +547,7 @@ abstract class Core_Daemon
      */
     public function task($task)
     {
-        if ($this->shutdown) {
+        if ($this->is('shutdown')) {
             $this->log("Daemon is shutting down: Cannot run task()");
             return false;
         }
@@ -609,9 +578,9 @@ abstract class Core_Daemon
 
             case 0:
                 // Child Process
-                $this->start_time = time();
-                self::set('parent',  false);
-                self::set('parent_pid', $this->pid);
+                $this->set('start_time', time());
+                $this->set('parent',  false);
+                $this->set('parent_pid', $this->pid);
                 $this->pid(getmypid());
                 pcntl_setpriority(1);
 
@@ -678,9 +647,9 @@ abstract class Core_Daemon
 
         if ($handle === false) {
             if (strlen($log_file) > 0 && $handle = @fopen($log_file, 'a+')) {
-                if (self::is('parent')) {
+                if ($this->is('parent')) {
                     fwrite($handle, $header);
-                    if ($this->verbose)
+                    if ($this->is('verbose'))
                         echo $header;
                 }
             } elseif (!$log_file_error) {
@@ -694,7 +663,7 @@ abstract class Core_Daemon
         if ($handle)
             fwrite($handle, $message);
 
-        if ($this->verbose)
+        if ($this->is('verbose'))
             echo $message;
     }
 
@@ -722,7 +691,7 @@ abstract class Core_Daemon
     {
         $this->error($message, $label);
 
-        if (self::is('parent')) {
+        if ($this->is('parent')) {
             $this->log(get_class($this) . ' is Shutting Down...');
 
             $delay = 2;
@@ -757,10 +726,10 @@ abstract class Core_Daemon
                 break;
             case SIGINT:
             case SIGTERM:
-                if (self::is('parent'))
+                if ($this->is('parent'))
                     $this->log("Shutdown Signal Received\n");
 
-                $this->shutdown = true;
+                $this->set('shutdown', true);
                 break;
         }
     }
@@ -801,12 +770,12 @@ abstract class Core_Daemon
      */
     private function getFilename($options = false)
     {
-        $command = 'php ' . self::get('filename');
+        $command = 'php ' . $this->get('filename');
 
         if ($options === false) {
             $command .= ' -d --recoverworkers';
-            if ($this->pid_file)
-                $command .= ' -p ' . $this->pid_file;
+            if ($this->get('pid_file'))
+                $command .= ' -p ' . $this->get('pid_file');
 
             if ($this->get('debug_workers'))
                 $command .= ' --debugworkers';
@@ -869,16 +838,16 @@ abstract class Core_Daemon
         $out[] = "---------------------------------------------------------------------------------------------------";
         $out[] = "Application Runtime Statistics";
         $out[] = "---------------------------------------------------------------------------------------------------";
-        $out[] = "Command:              " . (self::is('parent') ? self::get('filename') : 'Forked Process from pid ' . self::get('parent_pid'));
+        $out[] = "Command:              " . ($this->is('parent') ? $this->get('filename') : 'Forked Process from pid ' . $this->get('parent_pid'));
         $out[] = "Loop Interval:        " . $this->loop_interval;
         $out[] = "Idle Probability      " . $this->idle_probability;
         $out[] = "Restart Interval:     " . $this->auto_restart_interval;
-        $out[] = sprintf("Start Time:           %s (%s)", $this->start_time, date('Y-m-d H:i:s', $this->start_time));
+        $out[] = sprintf("Start Time:           %s (%s)", $this->get('start_time'), date('Y-m-d H:i:s', $this->get('start_time')));
         $out[] = sprintf("Duration:             %s (%s)", $this->runtime(), $pretty_duration($this->runtime()));
         $out[] = "Log File:             " . $this->log_file();
         $out[] = "Daemon Mode:          " . $pretty_bool($this->daemon);
-        $out[] = "Shutdown Signal:      " . $pretty_bool($this->shutdown);
-        $out[] = "Process Type:         " . (self::is('parent') ? 'Application Process' : 'Background Process');
+        $out[] = "Shutdown Signal:      " . $pretty_bool($this->is('shutdown'));
+        $out[] = "Process Type:         " . ($this->is('parent') ? 'Application Process' : 'Background Process');
         $out[] = "Plugins:              " . implode(', ', $this->plugins);
         $out[] = "Workers:              " . $workers;
         $out[] = sprintf("Memory:               %s (%s)", memory_get_usage(true), $pretty_memory(memory_get_usage(true)));
@@ -975,7 +944,7 @@ abstract class Core_Daemon
     private function reap($block = false)
     {
         do {
-            $pid = pcntl_wait($status, ($block && self::is('parent')) ? NULL : WNOHANG);
+            $pid = pcntl_wait($status, ($block && $this->is('parent')) ? NULL : WNOHANG);
             if (isset($this->worker_pids[$pid])) {
                 $alias = $this->worker_pids[$pid];
                 $this->{$alias}->reap($pid, $status);
@@ -991,10 +960,10 @@ abstract class Core_Daemon
      */
     public function restart()
     {
-        if (!self::is('parent'))
+        if (!$this->is('parent'))
             return;
 
-        $this->shutdown = true;
+        $this->set('shutdown', true);
         $this->log('Restart Happening Now...');
         foreach($this->plugins as $plugin)
             $this->{$plugin}->teardown();
@@ -1083,7 +1052,7 @@ abstract class Core_Daemon
      */
     protected function worker($alias, $worker, Core_IWorkerVia $via = null)
     {
-        if (!self::is('parent'))
+        if (!$this->is('parent'))
             // While in theory there is nothing preventing you from creating workers in child processes, supporting it
             // would require changing a lot of error handling and process management code and I don't really see the value in it.
             throw new Exception(__METHOD__ . ' Failed. You cannot create workers in a background processes.');
@@ -1172,9 +1141,9 @@ abstract class Core_Daemon
             $this->pid(getmypid()); // We have a new pid now
         }
 
-        $this->set('recover_workers', isset($opts['recoverworkers']));
-        $this->set('debug_workers', isset($opts['debugworkers']));
-        $this->verbose = $this->daemon == false && $this->get('debug_workers') == false;
+        $this->set('recover_workers',   isset($opts['recoverworkers']));
+        $this->set('debug_workers',     isset($opts['debugworkers']));
+        $this->set('verbose',           $this->daemon == false && $this->get('debug_workers') == false);
 
         if (isset($opts['p'])) {
             $handle = @fopen($opts['p'], 'w');
@@ -1184,7 +1153,7 @@ abstract class Core_Daemon
             fwrite($handle, $this->pid);
             fclose($handle);
 
-            $this->pid_file = $opts['p'];
+            $this->set('pid_file', $opts['p']);
         }
     }
 
@@ -1205,7 +1174,7 @@ abstract class Core_Daemon
 
         echo get_class($this);
         $out[] =  'USAGE:';
-        $out[] =  ' # ' . basename(self::get('filename')) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--recoverworkers] [--debugworkers]';
+        $out[] =  ' # ' . basename($this->get('filename')) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--recoverworkers] [--debugworkers]';
         $out[] =  '';
         $out[] =  'OPTIONS:';
         $out[] =  ' -H Shows this help';
@@ -1257,7 +1226,7 @@ abstract class Core_Daemon
      */
     protected function create_init_script($template_name, $install = false)
     {
-        $template = dirname(self::get('filename')) . '/Core/Templates/' . $template_name;
+        $template = dirname($this->get('filename')) . '/Core/Templates/' . $template_name;
 
         if (!file_exists($template))
             $this->show_help("Invalid Template Name '{$template_name}'");
@@ -1303,7 +1272,7 @@ abstract class Core_Daemon
      */
     public function runtime()
     {
-        return time() - $this->start_time;
+        return time() - $this->get('start_time');
     }
 
     /**
@@ -1365,32 +1334,6 @@ abstract class Core_Daemon
     }
 
     /**
-     * Combination getter/setter for the $shutdown property.
-     * @param boolean $set_value
-     * @return boolean
-     */
-    protected function shutdown($set_value = null)
-    {
-        if (is_bool($set_value))
-            $this->shutdown = $set_value;
-
-        return $this->shutdown;
-    }
-
-    /**
-     * Combination getter/setter for the $verbose property.
-     * @param boolean $set_value
-     * @return boolean
-     */
-    protected function verbose($set_value = null)
-    {
-        if (is_bool($set_value))
-            $this->verbose = $set_value;
-
-        return $this->verbose;
-    }
-
-    /**
      * Combination getter/setter for the $loop_interval property.
      * @param boolean $set_value
      * @return int
@@ -1402,17 +1345,10 @@ abstract class Core_Daemon
                 $this->loop_interval = $set_value;
                 switch(true) {
                     case $set_value >= 5.0 || $set_value <= 0.0:
-                        $priority = 0; break;
-                    case $set_value > 2.0:
-                        $priority = -1; break;
-                    case $set_value > 1.0:
-                        $priority = -2; break;
-                    case $set_value > 0.5:
-                        $priority = -3; break;
-                    case $set_value > 0.1:
-                        $priority = -4; break;
+                        $priority = 0;
+                        break;
                     default:
-                        $priority = -5;
+                        $priority = -1;
                 }
 
                 if ($priority <> pcntl_getpriority()) {
@@ -1448,10 +1384,10 @@ abstract class Core_Daemon
             else
                 throw new Exception(__METHOD__ . ' Failed. Could not set pid. Integer Expected. Given: ' . $set_value);
 
-            if (self::is('parent'))
-                self::set('parent_pid', $set_value);
+            if ($this->is('parent'))
+                $this->set('parent_pid', $set_value);
 
-            $this->dispatch(array(self::ON_PIDCHANGE), array($set_value));
+            $this->dispatch(array($this->ON_PIDCHANGE), array($set_value));
         }
 
         return $this->pid;
