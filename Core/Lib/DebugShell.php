@@ -1,4 +1,15 @@
 <?php
+
+
+/**
+ * Wrap a supplied object in a commandline debug shell. Calls to the objects public methods will be proxied to the shell
+ * where the developer can poke and prod. Designed to be used in a multi-process application like those created when using
+ * the Workers feature in a PHP Daemon application. In those cases it's not possible to use a conventional debugger.
+ *
+ * Easily add custom commands to the shell, custom prompt language, callbacks that handle interrupts, etc.
+ *
+ * @author Shane Harter
+ */
 class Core_Lib_DebugShell
 {
 
@@ -106,6 +117,16 @@ class Core_Lib_DebugShell
         @sem_remove($this->mutex);
     }
 
+    /**
+     * While the prompt() method can be called from anywhere to simulate "breakpoints" in your code, this class is designed foremost
+     * as a simple mediator between callers and the given $object instance variable.
+     *
+     * The __call method will do the hard work of implementing the proxy and acting on the commands returned from prompt().
+     *
+     * @param $method
+     * @param $args
+     * @return bool|mixed|null|void
+     */
     public function __call($method, $args) {
         $o = $this->object;
         $cb = function() use($o, $method, $args) {
@@ -154,6 +175,10 @@ class Core_Lib_DebugShell
         return null;
     }
 
+    /**
+     * Setup the debug shell: Attach any shared resources and register any prompts or parsers.
+     * @return void
+     */
     public function setup_shell() {
         ini_set('display_errors', 0); // Displayed errors won't break the debug console but it will make it more difficult to use. Tail a log file in another shell instead.
         $this->ftok = ftok(Core_Daemon::get('filename'), 'D');
@@ -210,7 +235,7 @@ class Core_Lib_DebugShell
     }
 
     /**
-     * Return a thread-safe monotonically incrementing integer. Optionally supply a $key to cache the integer assignment
+     * Return a thread-aware monotonically incrementing integer. Optionally supply a $key to cache the integer assignment
      * and return that to subsequent requests with the same key.
      *
      * @param string $key  If we've already assigned an integer to this key, return that. Otherwise, assign, cache and return it.
@@ -339,6 +364,17 @@ class Core_Lib_DebugShell
         return shm_put_var($this->shm, 1, $state);
     }
 
+    /**
+     * Determine if a prompt should be displayed. There are several ways to skip/suppress prompts:
+     *
+     * 1. Disable debugging.
+     * 2. Add a given $method to the blacklist at design-time.
+     * 3. At runtime, you can temporarily add a $method to the blacklist with the "skip" command.
+     * 4. At runtime, you can temporarily disable ALL prompts for a duration using the "skipfor" command.
+     *
+     * @param $method
+     * @return bool
+     */
     private function is_breakpoint_active($method) {
         $a = !in_array($method, $this->blacklist);
         $b = $this->state('enabled');
@@ -347,6 +383,22 @@ class Core_Lib_DebugShell
         return $a && $b && $c && $d;
     }
 
+    /**
+     * Display the prompt.
+     * If a prompt has been added for this $method (either as a closure or a static textual prompt), use it. Otherwise
+     * use a default prompt.
+     *
+     * Supports indentation of the prompt if an indent_callback has been registered. The idea is to visually group
+     * prompts together at a specific indent level to more easily follow along. It could be something like each process
+     * has its own indent level, or each prompt relating to a specific task or item could have its own, etc. To do this,
+     * indent_callback must return an integer to indicate the number of tab chars that will be parsed into the prompt.
+     *
+     * Also supports a prefix that can be shared across all prompts by registering a prompt_prefix_callback.
+     *
+     * @param $method
+     * @param $args
+     * @return string
+     */
     private function get_text_prompt($method, $args) {
         if (isset($this->prompts[$method]))
             if (is_callable($this->prompts[$method]))
@@ -371,6 +423,11 @@ class Core_Lib_DebugShell
         return "$prompt > ";
     }
 
+    /**
+     * Print a simple banner when the console starts
+     *
+     * @return void
+     */
     private function print_banner() {
         if ($this->state('banner')) {
             echo PHP_EOL, 'PHP Daemon - Worker Debug Console';
@@ -379,6 +436,27 @@ class Core_Lib_DebugShell
         }
     }
 
+    /**
+     * Display a command prompt, block on input from STDIN, then parse and execute the specified commands.
+     *
+     * Multiple processes share a single command prompt by accessing a semaphore identified by the current application.
+     * This method will block the process while it waits for the mutex, and then again while it waits for input on STDIN.
+     *
+     * The text of the prompt itself will be written when get_text_prompt() is called. Custom prompts for a given $method
+     * can be added to the $prompts array.
+     *
+     * Several commands are built-in, and additional commands can be added with addParser().
+     *
+     * Parsers can either:
+     * 1. Continue from the prompt.
+     * 2. Abort from the prompt. Call any interrupt_callable that may be registered for this $method.
+     * 3. Take some action or perform some activity and then return to the same prompt for additional commands.
+     *
+     * @param $method
+     * @param $args
+     * @return bool|int|mixed|null
+     * @throws Exception
+     */
     public function prompt($method, $args) {
 
         if(!is_resource($this->shm))

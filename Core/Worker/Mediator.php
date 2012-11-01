@@ -281,6 +281,12 @@ abstract class Core_Worker_Mediator implements Core_ITask
     }
 
 
+    /**
+     * Create an instance of Core_Lib_DebugShell and pass in the current via object. Add appropriate closures and settings
+     * for the desired commands, prompts, etc.
+     *
+     * @return void
+     */
     public function debug() {
 
         ##
