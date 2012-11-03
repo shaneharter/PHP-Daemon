@@ -101,12 +101,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected $via;
 
     /**
-     * Running worker processes
-     * @var stdClass[]
-     */
-    protected $processes = array();
-
-    /**
      * Methods available on the $object
      * @var array
      */
@@ -451,18 +445,22 @@ abstract class Core_Worker_Mediator implements Core_ITask
             'description' => 'Display current process details.',
             'closure'     => function($matches, $printer) use($that) {
                 if (Core_Daemon::is('parent')) {
+                    $processes = $that->processes();
+
                     $out = array();
                     $out[] = '';
                     $out[] = 'Daemon Process';
                     $out[] = 'Alias: '          . $that->alias;
                     $out[] = 'IPC ID: '         . $that->guid();
-                    $out[] = 'Workers: '        . count($that->processes);
+                    $out[] = 'Workers: '        . count($processes);
                     $out[] = 'Max Workers: '    . $that->workers;
                     $out[] = 'Running Jobs: '   . count($that->running_calls);
                     $out[] = '';
                     $out[] = 'Processes:';
-                    if ($that->processes)
-                        $out[] = $that->processes;
+
+                    if ($processes)
+                        foreach($processes as $pid => $process)
+                            $out[] = "[$pid] Runtime: " . $process->runtime();
                     else
                         $out[] = 'None';
 
@@ -506,7 +504,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $this->via->indent_callback = function() use($indent){
                 return $indent;
             };
-
         }
 
         $return = true;
@@ -562,8 +559,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
 
         } else {
-            unset($this->calls, $this->processes, $this->running_calls, $this->on_return, $this->on_timeout, $this->call_count);
-            $this->calls = $this->processes = $this->running_calls = array();
+            unset($this->calls, $this->running_calls, $this->on_return, $this->on_timeout, $this->call_count);
+            $this->calls = $this->running_calls = array();
             $this->via->setup();
             $this->debug();
 //            $this->via->setup_shell();
@@ -581,7 +578,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return mixed
      */
     public function teardown() {
-        static $state = array();
 
         if (!Core_Daemon::is('parent'))
             return;
@@ -591,29 +587,20 @@ abstract class Core_Worker_Mediator implements Core_ITask
         else
             $timeout = 30;
 
-        foreach(array_keys($this->processes) as $pid) {
-            if (!isset($state[$pid])) {
-                posix_kill($pid, SIGTERM);
-                $state[$pid] = time();
-                continue;
-            }
+        foreach($this->processes() as $pid => $process)
+            if ($message = $process->stop())
+                $this->log($message);
 
-            if (isset($state[$pid]) && ($state[$pid] + $timeout) < time()) {
-                $this->log("Worker '{$pid}' Time Out: Killing Process.");
-                posix_kill($pid, SIGKILL);
-                unset($state[$pid]);
-            }
-        }
-
+        // @todo is there a chance it won't get here? If the next iteration of core_daemon::__destruct sees no pids, it wont call in here again, right? so we wouldn't ever release() ?
         // If there are no pending messages, release all shared resources.
         // If there are, then we want to preserve them so we can allow for daemon restarts without losing the call buffer
-        if (count($this->processes) == 0) {
+        if (count($this->processes()) == 0) {
             $stat = $this->via->state();
             if ($stat['messages'] > 0) {
                 return;
             }
 
-            $this->via->purge();
+            $this->via->release();
         }
     }
 
@@ -627,7 +614,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     protected function fork() {
 
-        $processes = count($this->processes);
+        $processes = count($this->processes());
         if ($this->workers <= $processes)
             return;
 
@@ -653,14 +640,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
         for ($i=0; $i<$forks; $i++) {
 
             if ($pid = $this->daemon->task($this)) {
-
-                $process = new stdClass();
+                $process = new Core_Worker_Process();
                 $process->microtime = microtime(true);
-                $process->job = null;
-
-                // @todo Consider merging these two maps. Maybe a class var array in Core_Worker_Mediator would be cleaner?
-                $this->processes[$pid] = $process;
-                $this->daemon->worker_pid($this->alias, $pid);
+                $process->alias     = $this->alias;
+                $process->pid       = $pid;
+                Core_Daemon::process($process);
                 continue;
             }
 
@@ -691,7 +675,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         static $last_failure = null;
 
         // Keep track of processes that fail within the first 30 seconds of being forked.
-        if (isset($this->processes[$pid]) && time() - $this->processes[$pid]->microtime < 30) {
+        if ($this->process($pid) && $this->process($pid)->runtime() < 30) {
             $failures++;
             $last_failure = time();
         }
@@ -708,7 +692,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $last_failure = null;
         }
 
-        unset($this->processes[$pid]);
+        unset(Core_Daemon::$processes[$this->alias][$pid]);
     }
 
     /**
@@ -742,8 +726,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 $this->running_calls[$call->id] = true;
 
                 // It's possible the process exited after sending this ack, ensure it's still valid.
-                if (isset($this->processes[$call->pid]))
-                    $this->processes[$call->pid]->job = $call->id;
+                if ($this->process($call->pid))
+                    $this->process($call->pid)->job = $call->id;
 
                 $this->log('Job ' . $call->id . ' Is Running');
             }
@@ -757,8 +741,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 }
 
                 unset($this->running_calls[$call->id]);
-                if (isset($this->processes[$call->pid]))
-                    $this->processes[$call->pid]->job = $call->id;
+                if ($this->process($call->pid))
+                    $this->process($call->pid)->job = $call->id;
 
                 $on_return = $this->on_return;
                 if (is_callable($on_return))
@@ -783,7 +767,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
                         $this->log("Enforcing Timeout on Call $call_id in pid " . $call->pid);
                         @posix_kill($call->pid, SIGKILL);
-                        unset($this->running_calls[$call_id], $this->processes[$call->pid]);
+                        unset($this->running_calls[$call_id], Core_Daemon::$processes[$this->alias][$call->pid]);
                         $call->timeout();
 
                         $on_timeout = $this->on_timeout;
@@ -795,7 +779,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             // If we've killed all our processes -- either timeouts or maybe they fatal-errored -- and we have pending
             // calls in the queue, fork()
-            if (count($this->processes) == 0) {
+            if (count($this->processes()) == 0) {
                 $stat = $this->via->state();
                 if ($stat['messages'] > 0) {
                     $this->fork();
@@ -987,7 +971,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         // Any structs in CALLED status that were called prior to that $cutoff have been dropped and will be requeued.
 
         $cutoff = $this->calls[$this->call_count]->time[self::CALLED];
-        foreach($this->processes as $process) {
+        foreach($this->processes() as $process) {
             if ($process->job === null && time() - $process->microtime < 30)
                 return; // Give processes time to ack their first job
 
@@ -1069,6 +1053,33 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
         }
     }
+
+    /**
+     * Helper function to retrieve the selected process from the Core_Daemon process registry
+     * @param $pid
+     * @return Core_Worker_Process
+     */
+    public function process($pid) {
+        if(!isset(Core_Daemon::$processes[$this->alias]))
+            return null;
+
+        if(!isset(Core_Daemon::$processes[$this->alias][$pid]))
+            return null;
+
+        return Core_Daemon::$processes[$this->alias][$pid];
+    }
+
+    /**
+     * Helper function to retrieve all of this workers processes from the Core_Daemon process registry
+     * @return Core_Worker_Process[]
+     */
+    public function processes() {
+        if(!isset(Core_Daemon::$processes[$this->alias]))
+            return array();
+
+        return Core_Daemon::$processes[$this->alias];
+    }
+
 
     /**
      * Dump runtime stats in tabular fashion to the log.

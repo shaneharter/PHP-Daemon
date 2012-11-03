@@ -51,6 +51,11 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
     public function __destruct()  {
         unset($this->mediator);
+
+        @shm_detach($this->shm);
+        $this->shm = null;
+
+        $this->queue = null;
     }
 
     /**
@@ -484,5 +489,19 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     public function drop($call_id) {
         if (shm_has_var($this->shm, $call_id))
             shm_remove_var($this->shm, $call_id);
+    }
+
+    /**
+     * Remove and release shared memory and message queue resources
+     * @return mixed
+     */
+    public function release()
+    {
+        // Ensure we have an open connection to the resources we want to release.
+        if (!$this->shm || !$this->queue)
+            $this->setup_ipc();
+
+        @shm_remove($this->shm);
+        @msg_remove_queue($this->queue);
     }
 }

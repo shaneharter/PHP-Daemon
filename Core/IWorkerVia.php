@@ -2,7 +2,6 @@
 
 interface Core_IWorkerVia
 {
-
     /**
      * Puts the message on the queue
      * @param $message_type
@@ -31,15 +30,21 @@ interface Core_IWorkerVia
     public function state();
 
     /**
+     * Drop the single message
+     * @return void
+     */
+    public function drop($call_id);
+
+    /**
      * Drop any pending messages in the queue
      * @return void
      */
     public function purge();
 
     /**
-     * Drop the single message
-     * @return void
+     * Remove and release any resources consumed by this Via. For SysV, this means removing the SHM and MQ resources.
+     * In other cases, a blank implementation would also be fine: We don't want to drop a logical queue in RabbitMQ for example just because we're shutting down the listener.
+     * @return mixed
      */
-    public function drop($call_id);
-
+    public function release();
 }

@@ -110,12 +110,6 @@ abstract class Core_Daemon
     private $workers = array();
 
     /**
-     * Map of PID's to Worker aliases
-     * @var array
-     */
-    private $worker_pids = array();
-
-    /**
      * Array of plugin aliases
      * @var Array
      */
@@ -142,6 +136,12 @@ abstract class Core_Daemon
     private static $env = array(
         'parent'    => true,
     );
+
+    /**
+     * Array of worker processes. Associative array, pid as the key
+     * @var Core_Worker_Process[]
+     */
+    public static $processes = array();
 
 
 
@@ -364,9 +364,10 @@ abstract class Core_Daemon
             foreach($this->plugins as $plugin)
                 $this->{$plugin}->teardown();
 
-            while($this->is('parent') && count($this->worker_pids) > 0) {
-                foreach(array_unique($this->worker_pids) as $worker)
-                    $this->{$worker}->teardown();
+            while($this->is('parent') && count($this->process_map()) > 0) {
+                foreach(self::$processes as $worker => $pids)
+                    if (count($pids))
+                        $this->{$worker}->teardown();
 
                 $this->reap(false);
                 usleep(50000);
@@ -943,12 +944,14 @@ abstract class Core_Daemon
      */
     private function reap($block = false)
     {
+        $map = $this->process_map();
+
         do {
             $pid = pcntl_wait($status, ($block && $this->is('parent')) ? NULL : WNOHANG);
-            if (isset($this->worker_pids[$pid])) {
-                $alias = $this->worker_pids[$pid];
+            if (isset($map[$pid])) {
+                $alias = $map[$pid];
                 $this->{$alias}->reap($pid, $status);
-                unset($this->worker_pids[$pid]);
+                unset(self::$processes[$alias][$pid]);
             }
         } while($pid > 0);
     }
@@ -1098,8 +1101,24 @@ abstract class Core_Daemon
      * @param $alias
      * @param $pid
      */
-    public function worker_pid($alias, $pid) {
-        $this->worker_pids[$pid] = $alias;
+    public static function process(Core_Worker_Process $process) {
+        if(!isset(self::$processes[$process->alias]))
+            self::$processes[$process->alias] = array();
+
+        self::$processes[$process->alias][$process->pid] = $process;
+    }
+
+    /**
+     * Return a dictionary of pid's pointing to the worker (alias) that spawned them
+     * @return array
+     */
+    public static function process_map() {
+        $map = array();
+        foreach(self::$processes as $alias => $processes)
+            foreach(array_keys($processes) as $pid)
+                $map[$pid] = $alias;
+
+        return $map;
     }
 
     /**
