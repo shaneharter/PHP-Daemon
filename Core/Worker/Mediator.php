@@ -670,29 +670,21 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @param int $status
      * @return void
      */
-    public function reap($pid, $status) {
-        static $failures = 0;
-        static $last_failure = null;
+    public function reap(Core_Worker_Process $process, $status) {
+        static $failures = array();
 
         // Keep track of processes that fail within the first 30 seconds of being forked.
-        if ($this->process($pid) && $this->process($pid)->runtime() < 30) {
-            $failures++;
-            $last_failure = time();
-        }
+        // If too many failures of new processes occur inside a given interval, that's a problem. Fatal error to prevent
+        // runaway process forking which can be very damaging to a server
+        if ($process->runtime() > 30)
+            return;
 
-        if ($failures == 5) {
+        foreach($failures as $key => $failure_time)
+            if ($failure_time + 120 < time())
+                unset($failures[$key]);
+
+        if (count($failures) > 5)
             $this->fatal_error("Unsuccessful Fork: Recently forked processes are continuously failing. See error log for additional details.");
-        }
-
-        // If there hasn't been a failure in 90 seconds, reset the counter.
-        // The counter only exists to prevent an endless fork loop due to child processes fatal-erroring right after a successful fork.
-        // Other types of errors will be handled elsewhere
-        if ($failures && time() - $last_failure > 90) {
-            $failures = 0;
-            $last_failure = null;
-        }
-
-        unset(Core_Daemon::$processes[$this->alias][$pid]);
     }
 
     /**

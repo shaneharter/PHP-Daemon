@@ -948,11 +948,13 @@ abstract class Core_Daemon
 
         do {
             $pid = pcntl_wait($status, ($block && $this->is('parent')) ? NULL : WNOHANG);
-            if (isset($map[$pid])) {
-                $alias = $map[$pid];
-                $this->{$alias}->reap($pid, $status);
-                unset(self::$processes[$alias][$pid]);
-            }
+            if (!isset($map[$pid]))
+                continue;
+
+            $alias = $map[$pid];
+            $this->{$alias}->reap(self::$processes[$alias][$pid], $status);
+            unset(self::$processes[$alias][$pid]);
+
         } while($pid > 0);
     }
 
