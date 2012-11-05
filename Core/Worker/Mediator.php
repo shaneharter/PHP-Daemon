@@ -665,11 +665,12 @@ abstract class Core_Worker_Mediator implements Core_ITask
     }
 
     /**
-     * Called in the Daemon to inform a worker one of it's forked processes has ed
-     * @param int $pid
+     * Called in Core_Daemon to inform a worker one of it's processes has exited
+     * @param Core_Worker_Process $process
      * @param int $status
      * @return void
      */
+
     public function reap(Core_Worker_Process $process, $status) {
         static $failures = array();
 
