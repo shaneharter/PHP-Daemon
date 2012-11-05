@@ -96,14 +96,6 @@ abstract class Core_Daemon
     private $pid;
 
     /**
-     * Is this process running as a Daemon?
-     * @see Core_Daemon::is_daemon()
-     * @example Pass CLI argument: -d
-     * @var boolean
-     */
-    private $daemon = false;
-
-    /**
      * Array of worker aliases
      * @var Array
      */
@@ -346,7 +338,7 @@ abstract class Core_Daemon
         $this->on(self::ON_IDLE, array($this, 'reap'));
 
         $this->setup();
-        if (!$this->daemon)
+        if (!$this->is('daemonized'))
             $this->log('Note: The daemonize (-d) option was not set: This process is running inside your shell. Auto-Restart feature is disabled.');
 
         $this->log('Application Startup Complete. Starting Event Loop.');
@@ -845,7 +837,7 @@ abstract class Core_Daemon
         $out[] = sprintf("Start Time:           %s (%s)", $this->get('start_time'), date('Y-m-d H:i:s', $this->get('start_time')));
         $out[] = sprintf("Duration:             %s (%s)", $this->runtime(), $pretty_duration($this->runtime()));
         $out[] = "Log File:             " . $this->log_file();
-        $out[] = "Daemon Mode:          " . $pretty_bool($this->daemon);
+        $out[] = "Daemon Mode:          " . $pretty_bool($this->is('daemonized'));
         $out[] = "Shutdown Signal:      " . $pretty_bool($this->is('shutdown'));
         $out[] = "Process Type:         " . ($this->is('parent') ? 'Application Process' : 'Background Process');
         $out[] = "Plugins:              " . implode(', ', $this->plugins);
@@ -927,7 +919,7 @@ abstract class Core_Daemon
      */
     private function auto_restart()
     {
-        if ($this->daemon == false)
+        if ($this->is('daemonized') == false)
             return false;
 
         if ($this->runtime() < $this->auto_restart_interval || $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
@@ -1165,17 +1157,16 @@ abstract class Core_Daemon
             $this->create_init_script($opts['I'], isset($opts['install']));
 
         if (isset($opts['d'])) {
-            $pid = pcntl_fork();
-            if ($pid > 0)
+            if (pcntl_fork() > 0)
                 exit();
 
-            $this->daemon = true;
             $this->pid(getmypid()); // We have a new pid now
         }
 
+        $this->set('daemonized',        isset($opts['d']));
         $this->set('recover_workers',   isset($opts['recoverworkers']));
         $this->set('debug_workers',     isset($opts['debugworkers']));
-        $this->set('verbose',           $this->daemon == false && $this->get('debug_workers') == false);
+        $this->set('verbose',           !$this->is('daemonized') && !$this->get('debug_workers'));
 
         if (isset($opts['p'])) {
             $handle = @fopen($opts['p'], 'w');
@@ -1305,15 +1296,6 @@ abstract class Core_Daemon
     public function runtime()
     {
         return time() - $this->get('start_time');
-    }
-
-    /**
-     * Is this run as a daemon or within a shell?
-     * @return boolean
-     */
-    public function is_daemon()
-    {
-        return $this->daemon;
     }
 
     /**
