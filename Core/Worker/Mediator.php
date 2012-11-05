@@ -569,10 +569,13 @@ abstract class Core_Worker_Mediator implements Core_ITask
             if ($this->daemon->get('debug_workers'))
                 $this->debug();
 
-            $this->fork();
-            $this->daemon->on(Core_Daemon::ON_PREEXECUTE,   array($this, 'run'));
-            $this->daemon->on(Core_Daemon::ON_IDLE,         array($this, 'garbage_collector'), ceil(120 / ($this->workers * 0.5)));  // Throttle the garbage collector
+            $this->daemon->on(Core_Daemon::ON_PREEXECUTE, array($this, 'run'));
+            $this->daemon->on(Core_Daemon::ON_IDLE, array($this, 'garbage_collector'), ceil(120 / ($this->workers * 0.5)));  // Throttle the garbage collector
+            $this->daemon->on(Core_Daemon::ON_REAP, array($this, 'reap'), null, function($args) use($that) {
+                return ($args[0] instanceof Core_Lib_Process && $args[0]->alias == $that->alias);
+            });
 
+            $this->fork();
 
         } else {
             unset($this->calls, $this->running_calls, $this->on_return, $this->on_timeout, $this->call_count);

@@ -32,6 +32,7 @@ abstract class Core_Daemon
     const ON_FORK           = 5;    // in a background process right after it has been forked from the daemon
     const ON_PIDCHANGE      = 6;    // whenever the pid changes -- in a background process for example
     const ON_IDLE           = 7;    // called when there is idle time at the end of a loop_interval, or at the idle_probability when loop_interval isn't used
+    const ON_REAP           = 8;    // notification from the OS that a child process of this application has exited
     const ON_SHUTDOWN       = 10;   // called at the top of the destructor
 
     /**
@@ -475,7 +476,7 @@ abstract class Core_Daemon
      *                      items (an event type, and a callback ID for that event type)
      * @param array $args   Array of arguments passed to the event listener
      */
-    protected function dispatch(Array $event, Array $args = array())
+    public function dispatch(Array $event, Array $args = array())
     {
         if (!isset($event[0]) || !isset($this->callbacks[$event[0]]))
             return;
@@ -926,27 +927,6 @@ abstract class Core_Daemon
             return false;
 
         $this->restart();
-    }
-
-    /**
-     * Maintain the worker process map and notify the worker of an exited process.
-     * @param bool $block   When true, method will block waiting for an exit signal
-     * @return void
-     */
-    private function reap($block = false)
-    {
-        $map = $this->process_map();
-
-        do {
-            $pid = pcntl_wait($status, ($block && $this->is('parent')) ? NULL : WNOHANG);
-            if (!isset($map[$pid]))
-                continue;
-
-            $alias = $map[$pid];
-            $this->{$alias}->reap(self::$processes[$alias][$pid], $status);
-            unset(self::$processes[$alias][$pid]);
-
-        } while($pid > 0);
     }
 
     /**

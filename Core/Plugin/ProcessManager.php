@@ -64,14 +64,10 @@ class ProcessManager implements Core_IPlugin
 
         while($this->count() > 0) {
 
-
             foreach($this->processes() as $pid => $process)
                 if ($message = $process->stop())
                     $this->daemon->log($message);
 
-
-                if (count($pids))
-                    $this->{$worker}->teardown();
 
             $this->reap(false);
             usleep(50000);
@@ -91,6 +87,28 @@ class ProcessManager implements Core_IPlugin
             $errors[] = "Invalid reference to Application Object";
 
         return $errors;
+    }
+
+
+    /**
+     * Maintain the worker process map and notify the worker of an exited process.
+     * @param bool $block   When true, method will block waiting for an exit signal
+     * @return void
+     */
+    private function reap($block = false)
+    {
+        $map = $this->processes();
+
+        do {
+            $pid = pcntl_wait($status, ($block && $this->daemon->is('parent')) ? NULL : WNOHANG);
+            if (!isset($map[$pid]))
+                continue;
+
+            $alias = $map[$pid]->alias;
+            $this->daemon->dispatch(array(ON_REAP), array(self::$processes[$alias][$pid], $status));
+            unset(self::$processes[$alias][$pid]);
+
+        } while($pid > 0);
     }
 
 
