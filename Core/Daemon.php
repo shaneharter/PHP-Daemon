@@ -329,8 +329,7 @@ abstract class Core_Daemon
     {
         $this->register_signal_handlers();
 
-        $this->plugin('ProcessManager')
-
+        $this->plugin('ProcessManager');
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->setup();
 
@@ -444,22 +443,21 @@ abstract class Core_Daemon
      * @return array    The return value can be passed to off() to unbind the event
      * @throws Exception
      */
-    public function on($event, $callback, $throttle = null)
+    public function on($event, $callback, $criteria = null, $throttle = null)
     {
         if (!is_scalar($event))
             throw new Exception(__METHOD__ . ' Failed. Event type must be Scalar. Given: ' . gettype($event));
 
-        if (!is_callable($callback)) {
-
-            $e = new Exception(__METHOD__ . ' Failed. Second Argument Must be Callable.');
-            echo $e->getTraceAsString();
-            echo "<<<";
-        }
-
         if (!isset($this->callbacks[$event]))
             $this->callbacks[$event] = array();
 
-        $this->callbacks[$event][] = array('callback' => $callback, 'throttle' => $throttle, 'call_at' => 0);
+        $this->callbacks[$event][] = array (
+            'callback'  => $callback,
+            'criteria'  => $criteria,
+            'throttle'  => $throttle,
+            'call_at'   => 0
+        );
+
         end($this->callbacks[$event]);
         return array($event, key($this->callbacks[$event]));
     }
@@ -494,21 +492,30 @@ abstract class Core_Daemon
         // A specific callback is being dispatched...
         if (isset($event[1]) && isset($this->callbacks[$event[0]][$event[1]])) {
             $callback =& $this->callbacks[$event[0]][$event[1]];
-            if (empty($callback['throttle']) || time() > $callback['call_at']) {
-                $callback['call_at'] = time() + (int)$callback['throttle'];
-                call_user_func_array($callback['callback'], $args);
-            }
+
+            if (is_callable($callback['criteria']) && !$callback['criteria']($args))
+                return;
+
+            if ($callback['throttle'] && time() < $callback['call_at'])
+                return;
+
+            $callback['call_at'] = time() + (int)$callback['throttle'];
+            call_user_func_array($callback['callback'], $args);
             return;
         }
 
         // All callbacks attached to a given event are being dispatched...
-        if (!isset($event[1]))
-            foreach($this->callbacks[$event[0]] as $callback_id => $callback) {
-                if (empty($callback['throttle']) || time() > $callback['call_at']) {
-                    $this->callbacks[$event[0]][$callback_id]['call_at'] = time() + (int)$callback['throttle'];
-                    call_user_func_array($callback['callback'], $args);
-                }
-            }
+        foreach($this->callbacks[$event[0]] as $callback_id => $callback) {
+
+            if (is_callable($callback['criteria']) && !$callback['criteria']($args))
+                return;
+
+            if ($callback['throttle'] && time() < $callback['call_at'])
+                continue;
+
+            $this->callbacks[$event[0]][$callback_id]['call_at'] = time() + (int)$callback['throttle'];
+            call_user_func_array($callback['callback'], $args);
+        }
     }
 
     /**
@@ -1051,7 +1058,7 @@ abstract class Core_Daemon
 
     /**
      * Create a persistent Worker process. This is an object loader similar to Core_Daemon::plugin().
-     * 
+     *
      * @param String $alias  The name of the worker -- Will be instantiated at $this->{$alias}
      * @param callable|Core_IWorker $worker An object of type Core_Worker OR a callable (function, callback, closure)
      * @param Core_IWorkerVia $via  A Core_IWorkerVia object that defines the medium for IPC (In theory could be any message queue, redis, memcache, etc)

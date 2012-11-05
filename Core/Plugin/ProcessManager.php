@@ -13,6 +13,10 @@ class ProcessManager implements Core_IPlugin
     public $processes;
 
 
+    public function __construct(Core_Daemon $daemon) {
+        $this->daemon = $daemon;
+    }
+
     /**
      * Called on Construct or Init
      * @return void
