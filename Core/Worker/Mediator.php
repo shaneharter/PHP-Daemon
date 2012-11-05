@@ -640,7 +640,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         for ($i=0; $i<$forks; $i++) {
 
             if ($pid = $this->daemon->task($this)) {
-                $process = new Core_Worker_Process();
+                $process = new Core_Lib_Process();
                 $process->microtime = microtime(true);
                 $process->alias     = $this->alias;
                 $process->pid       = $pid;
@@ -666,12 +666,12 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
     /**
      * Called in Core_Daemon to inform a worker one of it's processes has exited
-     * @param Core_Worker_Process $process
+     * @param Core_Lib_Process $process
      * @param int $status
      * @return void
      */
 
-    public function reap(Core_Worker_Process $process, $status) {
+    public function reap(Core_Lib_Process $process, $status) {
         static $failures = array();
 
         // Keep track of processes that fail within the first 30 seconds of being forked.
@@ -1050,7 +1050,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
     /**
      * Helper function to retrieve the selected process from the Core_Daemon process registry
      * @param $pid
-     * @return Core_Worker_Process
+     * @return Core_Lib_Process
      */
     public function process($pid) {
         if(!isset(Core_Daemon::$processes[$this->alias]))
@@ -1064,7 +1064,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
     /**
      * Helper function to retrieve all of this workers processes from the Core_Daemon process registry
-     * @return Core_Worker_Process[]
+     * @return Core_Lib_Process[]
      */
     public function processes() {
         if(!isset(Core_Daemon::$processes[$this->alias]))

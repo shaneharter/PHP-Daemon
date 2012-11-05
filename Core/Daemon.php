@@ -139,7 +139,7 @@ abstract class Core_Daemon
 
     /**
      * Array of worker processes. Associative array, pid as the key
-     * @var Core_Worker_Process[]
+     * @var Core_Lib_Process[]
      */
     public static $processes = array();
 
@@ -329,6 +329,8 @@ abstract class Core_Daemon
     {
         $this->register_signal_handlers();
 
+        $this->plugin('ProcessManager')
+
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->setup();
 
@@ -364,14 +366,6 @@ abstract class Core_Daemon
             foreach($this->plugins as $plugin)
                 $this->{$plugin}->teardown();
 
-            while($this->is('parent') && count($this->process_map()) > 0) {
-                foreach(self::$processes as $worker => $pids)
-                    if (count($pids))
-                        $this->{$worker}->teardown();
-
-                $this->reap(false);
-                usleep(50000);
-            }
         }
         catch (Exception $e)
         {
@@ -379,7 +373,6 @@ abstract class Core_Daemon
                 $e->getMessage(), $e->getFile(), $e->getLine(), PHP_EOL, $e->getTraceAsString()));
         }
 
-        $this->reap(false);
         if ($this->is('parent') && $this->get('pid_file') && file_exists($this->get('pid_file')) && file_get_contents($this->get('pid_file')) == $this->pid)
             unlink($this->get('pid_file'));
 
@@ -988,28 +981,37 @@ abstract class Core_Daemon
     /**
      * Load any plugin that implements the Core_IPlugin.
      *
-     * A single instance of any plugin in the /Core/Plugin directory can be created just by passing-in the significant
-     * part of the class name as the alias. See the first ini example below.
+     * This is an object loader. What we care about is what object to create and where to put it. What we care about first
+     * is an alias. This will be the name of the instance variable where the object will be set. If the alias also matches the name
+     * of a class in Core/Plugin then it will just magically instantiate that class and be on its way. The following
+     * two examples are identical:
      *
-     * If you want to load custom plugins (or multiple instances of built-in plugins with different aliases) you can
-     * provide any valid alias with an instance of the plugin as the 2nd argument.
-     *
-     * It's important to understand that plugins and workers are both created as public instance variables (properties)
-     * so aliases must be unique among plugins and workers and cannot overwrite any existing instance variables in either
-     * Core_Daemon or your superclass.
-     *
-     * Both of the following examples are equivalent. In both cases, an Ini plugin will be instantiated at $this->ini:
      * @example $this->plugin('ini');
-     * @example $this->plugin('ini', new Core_Plugins_Ini());
+     * @example $this->plugin('ini', new Core_Plugin_Ini() );
      *
-     * To use two ini files just give them unique aliases:
+     * In both of the preceding examples, a Core_Plugin_Ini object is available throughout your application object
+     * as $this->ini.
+     *
+     * More complex (or just less magical) code can be used when appropriate. Want to load multiple instances of a plugin?
+     * Want to use more meaningful names in your application instead of just duplicating part of the class name?
+     * You can do all that too. This is simple dependency injection. Inject whatever object you want at runtime as long
+     * as it implements Core_IPlugin.
+     *
      * @example $this->plugin('credentials', new Core_Plugins_Ini());
      *          $this->plugin('settings', new Core_Plugins_Ini());
      *          $this->credentials->filename = '~/prod/credentials.ini';
      *          $this->settings->filename = BASE_PATH . '/MyDaemon/settings.ini';
      *          echo $this->credentials['mysql']['user']; // Echo the 'user' key in the 'mysql' section
      *
-     * You can implicitly load Lock plugins if your alias includes "Lock_" (since they are not located in /Core/Plugin):
+     * Note: As demonstrated, the alias is used simply as the name of a public instance variable on your application
+     * object. All of the normal rules of reality apply: Aliases must be unique across plugins AND workers (which work
+     * exactly like plugins in this respect). And both must be unique from any other instance or class vars used in
+     * Core_Daemon or in your application superclass.
+     *
+     * Note: The Lock objects in Core/Lock are also Plugins and can be loaded in nearly the same way.
+     * Take Core_Lock_File for instance.  The only difference is that you cannot magically load it using the alias
+     * 'file' alone. The Plugin loader would not know to look for the file in the Lock directory. In these instances
+     * the prefix is necessary.
      * @example $this->plugin('Lock_File'); // Instantiated at $this->Lock_File
      *
      * @param string $alias
@@ -1048,7 +1050,8 @@ abstract class Core_Daemon
     }
 
     /**
-     * Create a persistent Worker process.
+     * Create a persistent Worker process. This is an object loader similar to Core_Daemon::plugin().
+     * 
      * @param String $alias  The name of the worker -- Will be instantiated at $this->{$alias}
      * @param callable|Core_IWorker $worker An object of type Core_Worker OR a callable (function, callback, closure)
      * @param Core_IWorkerVia $via  A Core_IWorkerVia object that defines the medium for IPC (In theory could be any message queue, redis, memcache, etc)
@@ -1103,7 +1106,7 @@ abstract class Core_Daemon
      * @param $alias
      * @param $pid
      */
-    public static function process(Core_Worker_Process $process) {
+    public static function process(Core_Lib_Process $process) {
         if(!isset(self::$processes[$process->alias]))
             self::$processes[$process->alias] = array();
 

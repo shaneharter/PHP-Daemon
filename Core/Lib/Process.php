@@ -1,6 +1,6 @@
 <?php
 
-class Core_Worker_Process
+class Core_Lib_Process
 {
 
     public $pid;
