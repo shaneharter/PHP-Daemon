@@ -26,7 +26,7 @@ abstract class Core_Daemon
      */
     const ON_ERROR          = 0;    // error() or fatal_error() is called
     const ON_SIGNAL         = 1;    // the daemon has received a signal
-    const ON_INIT           = 2;    // the library has completed initialization, your setup() method is about to be called
+    const ON_INIT           = 2;    // the library has completed initialization, your setup() method is about to be called. Note: Not Available to Worker code.
     const ON_PREEXECUTE     = 3;    // inside the event loop, right before your execute() method
     const ON_POSTEXECUTE    = 4;    // and right after
     const ON_FORK           = 5;    // in a background process right after it has been forked from the daemon
@@ -329,28 +329,27 @@ abstract class Core_Daemon
     {
         $this->register_signal_handlers();
 
-        $this->plugin('ProcessManager');
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->setup();
+
+        // We have some housekeeping to do after plugins have been instaniated but before worker processes are
+        $this->plugin('ProcessManager');
+        $this->dispatch(array(self::ON_INIT));
 
         foreach ($this->workers as $worker)
             $this->{$worker}->setup();
 
         $this->loop_interval($this->loop_interval);
 
-        // Our current use of the ON_INIT event is in the Lock provider plugins -- so we can prevent a duplicate daemon
-        // process from starting-up. In that case, we want to do that check as early as possible. To accomplish that,
-        // the plugin setup has to happen first -- to ensure the Lock provider plugins have a chance to load.
-        $this->dispatch(array(self::ON_INIT));
-
         // Queue any housekeeping tasks we want performed periodically
         $this->on(self::ON_IDLE, array($this, 'stats_trim'), (empty($this->loop_interval)) ? null : ($this->loop_interval * 50)); // Throttle to about once every 50 iterations
+        $this->on(self::ON_IDLE, array($this, 'reap'));
 
         $this->setup();
         if (!$this->daemon)
             $this->log('Note: The daemonize (-d) option was not set: This process is running inside your shell. Auto-Restart feature is disabled.');
 
-        $this->log('Process Initialization Complete. Starting Event Loop.');
+        $this->log('Application Startup Complete. Starting Event Loop.');
     }
 
     /**
@@ -362,9 +361,8 @@ abstract class Core_Daemon
         try
         {
             $this->dispatch(array(self::ON_SHUTDOWN));
-            foreach($this->plugins as $plugin)
+            foreach($this->plugins + $this->workers as $plugin)
                 $this->{$plugin}->teardown();
-
         }
         catch (Exception $e)
         {
@@ -418,7 +416,6 @@ abstract class Core_Daemon
             {
                 $this->timer(true);
                 $this->auto_restart();
-                $this->reap();
                 $this->dispatch(array(self::ON_PREEXECUTE));
                 $this->execute();
                 $this->dispatch(array(self::ON_POSTEXECUTE));

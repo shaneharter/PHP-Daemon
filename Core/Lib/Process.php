@@ -18,6 +18,15 @@ class Core_Lib_Process
         $this->calls[] = $call->id;
     }
 
+    public function timeout() {
+        if ($this->timeout > 0)
+            $timeout = min($this->timeout, 60);
+        else
+            $timeout = 30;
+
+        return $timeout;
+    }
+
     /**
      * Stop the process, using whatever means necessary, and possibly return a textual description
      * @return bool|string
@@ -30,7 +39,7 @@ class Core_Lib_Process
             return "Worker Process '{$this->pid}' Timeout: Killing...";
         }
 
-        if (time() > $this->stop_time + $this->timeout) {
+        if (time() > $this->stop_time + $this->timeout()) {
             @posix_kill($this->pid, SIGKILL);
             return "Worker Process '{$this->pid}' Timeout: Killing...";
         }

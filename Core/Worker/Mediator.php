@@ -252,8 +252,25 @@ abstract class Core_Worker_Mediator implements Core_ITask
     }
 
     public function __destruct() {
-        // This method intentionally left blank
-        // The Daemon destructor calls teardown() on each worker
+
+        if (!Core_Daemon::is('parent'))
+            return;
+
+        // In here (or maybe __destruct) we should wait in a loop
+        // at least until some cray timeout and then when complete
+        // run the conditional release() code
+
+        // @todo is there a chance it won't get here? If the next iteration of core_daemon::__destruct sees no pids, it wont call in here again, right? so we wouldn't ever release() ?
+        // If there are no pending messages, release all shared resources.
+        // If there are, then we want to preserve them so we can allow for daemon restarts without losing the call buffer
+        if (count($this->processes()) == 0) {
+            $stat = $this->via->state();
+            if ($stat['messages'] > 0) {
+                return;
+            }
+
+            $this->via->release();
+        }
     }
 
     /**
@@ -584,40 +601,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $this->log('Worker Process Started');
         }
     }
-
-    /**
-     * Called in the Daemon (parent) process during shutdown/restart to shutdown any worker processes.
-     * Will attempt a graceful shutdown first and kill -9 only if the worker processes seem to be hanging.
-     * @return mixed
-     */
-    public function teardown() {
-
-        if (!Core_Daemon::is('parent'))
-            return;
-
-        if ($this->timeout > 0)
-            $timeout = min($this->timeout, 60);
-        else
-            $timeout = 30;
-
-        foreach($this->processes() as $pid => $process)
-            if ($message = $process->stop())
-                $this->log($message);
-
-        // @todo is there a chance it won't get here? If the next iteration of core_daemon::__destruct sees no pids, it wont call in here again, right? so we wouldn't ever release() ?
-        // If there are no pending messages, release all shared resources.
-        // If there are, then we want to preserve them so we can allow for daemon restarts without losing the call buffer
-        if (count($this->processes()) == 0) {
-            $stat = $this->via->state();
-            if ($stat['messages'] > 0) {
-                return;
-            }
-
-            $this->via->release();
-        }
-    }
-
-
 
     /**
      * Fork an appropriate number of daemon processes. Looks at the daemon loop_interval to determine the optimal

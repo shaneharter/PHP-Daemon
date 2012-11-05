@@ -21,11 +21,36 @@ class ProcessManager implements Core_IPlugin
      * Called on Construct or Init
      * @return void
      */
-    public function setup()
-    {
+    public function setup() {
 
 
-        
+    }
+
+    public function count() {
+        $count = 0;
+        foreach($this->processes as $process_group)
+            $count += count($process_group);
+
+        return $count;
+    }
+
+    /**
+     * The $processes array is hierarchical by process group. This will return a flat array of processes.
+     * @param null $group
+     * @return Core_Lib_Process[]
+     */
+    public function processes($group = null) {
+        if ($group)
+            if (isset($this->processes[$group]))
+                return $this->processes[$group];
+            else
+                return array();
+
+        $list = array();
+        foreach($this->processes as $process_group)
+            $list += $process_group;
+
+        return $list;
     }
 
     /**
@@ -34,8 +59,17 @@ class ProcessManager implements Core_IPlugin
      */
     public function teardown()
     {
-        while($this->is('parent') && count($this->process_map()) > 0) {
-            foreach(self::$processes as $worker => $pids)
+        if (!$this->daemon->is('parent'))
+            return;
+
+        while($this->count() > 0) {
+
+
+            foreach($this->processes() as $pid => $process)
+                if ($message = $process->stop())
+                    $this->daemon->log($message);
+
+
                 if (count($pids))
                     $this->{$worker}->teardown();
 
