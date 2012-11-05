@@ -440,10 +440,12 @@ abstract class Core_Daemon
      * @param $throttle Optional time in seconds to throttle calls to the given $callback. For example, if
      *        $throttle = 10, the provided $callback will not be called more than once every 10 seconds, even if the
      *        given $event is dispatched more frequently than that.
+     * @param $criteria closure|callback Optional. If provided, any event payload will be passed to this callable and
+     *        the event dispatched only if it returns truthy.
      * @return array    The return value can be passed to off() to unbind the event
      * @throws Exception
      */
-    public function on($event, $callback, $criteria = null, $throttle = null)
+    public function on($event, $callback, $throttle = null, $criteria = null)
     {
         if (!is_scalar($event))
             throw new Exception(__METHOD__ . ' Failed. Event type must be Scalar. Given: ' . gettype($event));

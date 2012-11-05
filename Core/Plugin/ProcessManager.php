@@ -23,7 +23,9 @@ class ProcessManager implements Core_IPlugin
      */
     public function setup()
     {
-        // TODO: Implement setup() method.
+
+
+        
     }
 
     /**
@@ -55,5 +57,21 @@ class ProcessManager implements Core_IPlugin
             $errors[] = "Invalid reference to Application Object";
 
         return $errors;
+    }
+
+
+
+    /**
+     * When a signal is sent to the process it'll be handled here
+     * @param integer $signal
+     * @return void
+     */
+    public function signal($signal)
+    {
+        switch ($signal)
+        {
+            case SIGCHLD:
+                break;
+        }
     }
 }

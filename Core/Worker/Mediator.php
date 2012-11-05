@@ -96,6 +96,12 @@ abstract class Core_Worker_Mediator implements Core_ITask
     public $daemon;
 
     /**
+     * Has the shutdown signal been received?
+     * @var bool
+     */
+    public $shutdown = false;
+
+    /**
      * @var Core_IWorkerVia
      */
     protected $via;
@@ -127,12 +133,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @var array
      */
     protected $running_calls = array();
-
-    /**
-     * Has the shutdown signal been received?
-     * @var bool
-     */
-    protected $shutdown = false;
 
     /**
      * What is the alias this worker is set to on the Daemon?
@@ -540,6 +540,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
             if (!is_numeric($this->guid))
                 $this->fatal_error("Unable to create Worker ID. ftok() failed. Unexpected return value: $this->guid");
 
+            $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'dump'), null, function($args) {
+                return $args[0] == SIGUSR1;
+            });
+
 //            @todo figure out what i want to do w/ this
 //            if (!$this->daemon->get('recover_workers'))
 
@@ -551,11 +555,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $this->fork();
             $this->daemon->on(Core_Daemon::ON_PREEXECUTE,   array($this, 'run'));
             $this->daemon->on(Core_Daemon::ON_IDLE,         array($this, 'garbage_collector'), ceil(120 / ($this->workers * 0.5)));  // Throttle the garbage collector
-            $this->daemon->on(Core_Daemon::ON_SIGNAL,       function($signal) use ($that) {
-                if ($signal == SIGUSR1)
-                    $that->dump();
-            });
-
 
 
         } else {
@@ -563,13 +562,27 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $this->calls = $this->running_calls = array();
             $this->via->setup();
             $this->debug();
-//            $this->via->setup_shell();
-            $this->daemon->on(Core_Daemon::ON_SIGNAL, array($this, 'signal'));
+
+            $event_restart = function() use($that) {
+                $that->log('Restarting Worker Process...');
+            };
+
+            $this->daemon->on(Core_Daemon::ON_SIGNAL, $event_restart, null, function($args) {
+                return $args[0] == SIGUSR1;
+            });
+
+
+            $event_shutdown = function() use($that) {
+                $that->shutdown = true;
+            };
+
+            $this->daemon->on(Core_Daemon::ON_SIGNAL, $event_shutdown, null, function($args) {
+                return in_array($args[0], array(SIGTERM, SIGKILL, SIGINT));
+            });
+
             call_user_func($this->get_callback('setup'));
             $this->log('Worker Process Started');
         }
-
-
     }
 
     /**
@@ -1022,29 +1035,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     public function __invoke() {
         return $this->__call('execute', func_get_args());
-    }
-
-    /**
-     * Attached to the Daemon's ON_SIGNAL event
-     * @param $signal
-     */
-    public function signal($signal) {
-        switch ($signal)
-        {
-            case SIGUSR1:
-                // kill -10 [pid]
-                $this->dump();
-                break;
-            case SIGHUP:
-                if (!Core_Daemon::is('parent'))
-                    $this->log("Restarting Worker Process...");
-
-            case SIGINT:
-            case SIGTERM:
-                $this->shutdown = true;
-                break;
-
-        }
     }
 
     /**
