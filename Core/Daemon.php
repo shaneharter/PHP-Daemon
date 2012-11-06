@@ -336,7 +336,6 @@ abstract class Core_Daemon
 
         // Queue any housekeeping tasks we want performed periodically
         $this->on(self::ON_IDLE, array($this, 'stats_trim'), (empty($this->loop_interval)) ? null : ($this->loop_interval * 50)); // Throttle to about once every 50 iterations
-        $this->on(self::ON_IDLE, array($this, 'reap'));
 
         $this->setup();
         if (!$this->is('daemonized'))
@@ -598,7 +597,7 @@ abstract class Core_Daemon
                 break;
 
             default:
-                // Parent Process - Return the pid of the newly created Task
+                // Parent Process - Return the newly created Core_Lib_Process object
                 return $proc;
                 break;
         }
@@ -1077,34 +1076,6 @@ abstract class Core_Daemon
         $this->{$alias} = $mediator;
         return $this->{$alias};
     }
-
-    /**
-     * Used by the worker mediator to make the daemon aware of a process running for a given worker
-     * They're used, among other things, to notify the correct worker when a process exits
-     * @param $alias
-     * @param $pid
-     */
-    public static function process(Core_Lib_Process $process) {
-        if(!isset(self::$processes[$process->group]))
-            self::$processes[$process->group] = array();
-
-        self::$processes[$process->group][$process->pid] = $process;
-    }
-
-    /**
-     * Return a dictionary of pid's pointing to the worker (alias) that spawned them
-     * @return array
-     */
-    public static function process_map() {
-        $map = array();
-        foreach(self::$processes as $alias => $processes)
-            foreach(array_keys($processes) as $pid)
-                $map[$pid] = $alias;
-
-        return $map;
-    }
-
-
 
     /**
      * Simple function to validate that alises for Plugins or Workers won't interfere with each other or with existing daemon properties.

@@ -96,12 +96,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
     public $daemon;
 
     /**
-     * Has the shutdown signal been received?
-     * @var bool
-     */
-    public $shutdown = false;
-
-    /**
      * @var Core_IWorkerVia
      */
     protected $via;
@@ -263,7 +257,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
         // @todo is there a chance it won't get here? If the next iteration of core_daemon::__destruct sees no pids, it wont call in here again, right? so we wouldn't ever release() ?
         // If there are no pending messages, release all shared resources.
         // If there are, then we want to preserve them so we can allow for daemon restarts without losing the call buffer
-        if (count($this->processes()) == 0) {
+        if ($this->process_count() == 0) {
             $stat = $this->via->state();
             if ($stat['messages'] > 0) {
                 return;
@@ -271,6 +265,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             $this->via->release();
         }
+
+        unset($this->daemon);
     }
 
     /**
@@ -591,20 +587,19 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 return $args[0] == SIGUSR1;
             });
 
-
-            $event_shutdown = function() use($that) {
-                $that->shutdown = true;
-            };
-
-            $this->daemon->on(Core_Daemon::ON_SIGNAL, $event_shutdown, null, function($args) {
-                return in_array($args[0], array(SIGTERM, SIGKILL, SIGINT));
-            });
-
             call_user_func($this->get_callback('setup'));
             $this->log('Worker Process Started');
         }
     }
 
+    public function teardown() {
+
+    }
+
+    /**
+     * Satisfy the Core_ITask interface.
+     * @return string
+     */
     public function group() {
         return $this->alias;
     }
@@ -617,7 +612,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     protected function fork() {
 
-        $processes = count($this->processes());
+        $processes = $this->process_count();
         if ($this->workers <= $processes)
             return;
 
@@ -642,18 +637,16 @@ abstract class Core_Worker_Mediator implements Core_ITask
         $errors = array();
         for ($i=0; $i<$forks; $i++) {
 
-            if ($pid = $this->daemon->task($this)) {
-                $process = new Core_Lib_Process();
-                $process->microtime = microtime(true);
-                $process->group     = $this->alias;
-                $process->pid       = $pid;
-                Core_Daemon::process($process);
+            // A Core_Lib_Process object will be returned from the task() method.
+            // Set correct min_ttl and timeout values so the ProcessManager can do its job.
+            if ($process = $this->daemon->task($this)) {
+                $process->timeout = $this->timeout;
+                $process->min_ttl = 30;
                 continue;
             }
 
             // If the forking failed, we can retry a few times and then fatal-error
-            // The most common reason this could happen is the PID table gets full (zombie processes left behind?)
-            // or the machine runs out of memory.
+            // The most common reason this could happen is the PID table gets full or the machine runs out of memory.
             if (!isset($errors[$i])) {
                 $errors[$i] = 0;
             }
@@ -751,7 +744,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             // If we've killed all our processes -- either timeouts or maybe they fatal-errored -- and we have pending
             // calls in the queue, fork()
-            if (count($this->processes()) == 0) {
+            if ($this->process_count() == 0) {
                 $stat = $this->via->state();
                 if ($stat['messages'] > 0) {
                     $this->fork();
@@ -770,7 +763,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     public function start() {
 
-        while(!Core_Daemon::is('parent') && !$this->shutdown) {
+        $recycle = false;
+        while(!Core_Daemon::is('parent') && !Core_Daemon::is('shutdown') && !$recycle) {
 
             // Give the CPU a break - Sleep for 1/20 a second.
             usleep(50000);
@@ -782,10 +776,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $max_jobs       = $this->call_count++ >= (25 + $entropy);
             $min_runtime    = $this->daemon->runtime() >= (60 * 5);
             $max_runtime    = $this->daemon->runtime() >= (60 * 30 + $entropy * 10);
-            $this->shutdown = ($max_runtime || $min_runtime && $max_jobs);
-
-            if ($this->shutdown)
-                $this->log("Recycling Worker...");
+            $recycle        = ($max_runtime || $min_runtime && $max_jobs);
 
             if (mt_rand(1, 5) == 1)
                 $this->garbage_collector();
@@ -817,8 +808,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
                     $this->error($e->getMessage());
                 }
             }
-
         }
+
+        $this->log("Recycling Worker...");
     }
 
     /**
@@ -1018,6 +1010,14 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     public function processes() {
         return $this->daemon->ProcessManager->processes($this->alias);
+    }
+
+    /**
+     * Helper function to retrieve the process count from the ProcessManager for this worker
+     * @return mixed
+     */
+    public function process_count() {
+        return $this->daemon->ProcessManager->count($this->alias);
     }
 
 

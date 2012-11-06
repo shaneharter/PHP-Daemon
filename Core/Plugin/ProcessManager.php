@@ -39,7 +39,7 @@ class ProcessManager implements Core_IPlugin
      * @return void
      */
     public function setup() {
-
+        $this->daemon->on(self::ON_IDLE, array($this, 'reap'));
 
     }
 
@@ -173,9 +173,6 @@ class ProcessManager implements Core_IPlugin
         }
     }
 
-
-
-
     /**
      * Maintain the worker process map and notify the worker of an exited process.
      * @param bool $block   When true, method will block waiting for an exit signal
@@ -211,22 +208,4 @@ class ProcessManager implements Core_IPlugin
         } while($pid > 0);
     }
 
-
-
-
-
-
-    /**
-     * When a signal is sent to the process it'll be handled here
-     * @param integer $signal
-     * @return void
-     */
-    public function signal($signal)
-    {
-        switch ($signal)
-        {
-            case SIGCHLD:
-                break;
-        }
-    }
 }
