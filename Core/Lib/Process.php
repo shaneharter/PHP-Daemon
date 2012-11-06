@@ -4,11 +4,16 @@ class Core_Lib_Process
 {
 
     public $pid;
-    public $alias;
+    public $group;
     public $microtime;
     public $job;
     public $timeout = 60;
+    public $min_ttl = 5;
     private $stop_time = null;
+
+    public function __construct() {
+        $this->microtime = microtime(true);
+    }
 
     public function runtime() {
         return microtime(true) - $this->microtime;

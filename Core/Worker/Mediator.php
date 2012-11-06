@@ -571,9 +571,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             $this->daemon->on(Core_Daemon::ON_PREEXECUTE, array($this, 'run'));
             $this->daemon->on(Core_Daemon::ON_IDLE, array($this, 'garbage_collector'), ceil(120 / ($this->workers * 0.5)));  // Throttle the garbage collector
-            $this->daemon->on(Core_Daemon::ON_REAP, array($this, 'reap'), null, function($args) use($that) {
-                return ($args[0] instanceof Core_Lib_Process && $args[0]->alias == $that->alias);
-            });
+//            $this->daemon->on(Core_Daemon::ON_REAP, array($this, 'reap'), null, function($args) use($that) {
+//                return ($args[0] instanceof Core_Lib_Process && $args[0]->alias == $that->alias);
+//            });
 
             $this->fork();
 
@@ -603,6 +603,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
             call_user_func($this->get_callback('setup'));
             $this->log('Worker Process Started');
         }
+    }
+
+    public function group() {
+        return $this->alias;
     }
 
     /**
@@ -641,7 +645,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
             if ($pid = $this->daemon->task($this)) {
                 $process = new Core_Lib_Process();
                 $process->microtime = microtime(true);
-                $process->alias     = $this->alias;
+                $process->group     = $this->alias;
                 $process->pid       = $pid;
                 Core_Daemon::process($process);
                 continue;
@@ -661,30 +665,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             $this->fatal_error("Could Not Fork: See PHP error log for an error code and more information.");
         }
-    }
-
-    /**
-     * Called in Core_Daemon to inform a worker one of it's processes has exited
-     * @param Core_Lib_Process $process
-     * @param int $status
-     * @return void
-     */
-
-    public function reap(Core_Lib_Process $process, $status) {
-        static $failures = array();
-
-        // Keep track of processes that fail within the first 30 seconds of being forked.
-        // If too many failures of new processes occur inside a given interval, that's a problem. Fatal error to prevent
-        // runaway process forking which can be very damaging to a server
-        if ($process->runtime() > 30)
-            return;
-
-        foreach($failures as $key => $failure_time)
-            if ($failure_time + 120 < time())
-                unset($failures[$key]);
-
-        if (count($failures) > 5)
-            $this->fatal_error("Unsuccessful Fork: Recently forked processes are continuously failing. See error log for additional details.");
     }
 
     /**
@@ -1029,13 +1009,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return Core_Lib_Process
      */
     public function process($pid) {
-        if(!isset(Core_Daemon::$processes[$this->alias]))
-            return null;
-
-        if(!isset(Core_Daemon::$processes[$this->alias][$pid]))
-            return null;
-
-        return Core_Daemon::$processes[$this->alias][$pid];
+        return $this->daemon->ProcessManager->process($pid);
     }
 
     /**
@@ -1043,10 +1017,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return Core_Lib_Process[]
      */
     public function processes() {
-        if(!isset(Core_Daemon::$processes[$this->alias]))
-            return array();
-
-        return Core_Daemon::$processes[$this->alias];
+        return $this->daemon->ProcessManager->processes($this->alias);
     }
 
 

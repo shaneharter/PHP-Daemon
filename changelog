@@ -23,6 +23,9 @@ Changes to the Core_Daemon API
 - Instance variable $daemon removed. Now saved in the $env registry.
 - Instance method is_daemon() removed. You can now use the static methods get() and is().
 
+Changes to the Core_ITask API
+- New instance method added to the interface: group().
+
 
 To Do:
 - Consider what other vars we can move into the $env dictionary instead of thier own instance vas in Core_Daemon

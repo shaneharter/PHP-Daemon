@@ -353,6 +353,7 @@ abstract class Core_Daemon
     {
         try
         {
+            $this->set('shutdown', true);
             $this->dispatch(array(self::ON_SHUTDOWN));
             foreach($this->plugins + $this->workers as $plugin)
                 $this->{$plugin}->teardown();
@@ -536,7 +537,7 @@ abstract class Core_Daemon
      *
      * @param callable|Core_ITask $callable     A valid PHP callback or closure.
      * @param Mixed                             All additional params are passed to the $callable
-     * @return int|boolean                      Return the PID of the newly-forked task or false on failure
+     * @return Core_Lib_Process|boolean         Return a newly created Process object or false on failure
      */
     public function task($task)
     {
@@ -547,21 +548,25 @@ abstract class Core_Daemon
 
         // Standardize the $task into a $callable
         // If a Core_ITask was passed in, wrap it in a closure
+        // If no group is provided, add the process to an adhoc "tasks" group. A group identifier is required.
+        // @todo this group thing is not elegant. Improve it.
         if ($task instanceof Core_ITask) {
+            $group = $task->group();
             $callable = function() use($task) {
                 $task->setup();
                 call_user_func(array($task, 'start'));
                 $task->teardown();
             };
         } else {
+            $group = 'tasks';
             $callable = $task;
         }
 
+        $proc = $this->ProcessManager->fork($group);
 
-        $pid = pcntl_fork();
-        switch ($pid)
+        switch ($proc)
         {
-            case -1:
+            case false:
                 // Parent Process - Fork Failed
                 $e = new Exception();
                 $this->error('Task failed: Could not fork.');
@@ -569,29 +574,24 @@ abstract class Core_Daemon
                 return false;
                 break;
 
-            case 0:
+            case true:
                 // Child Process
                 $this->set('start_time', time());
-                $this->set('parent',  false);
+                $this->set('parent',     false);
                 $this->set('parent_pid', $this->pid);
                 $this->pid(getmypid());
-                pcntl_setpriority(1);
 
                 // Remove unused worker objects. They can be memory hogs.
-                foreach(array_merge($this->workers, $this->plugins) as $object)
-                    if (!(is_array($callable) && $callable[0] == $this->{$object}))
-                        unset($this->{$object});
+                foreach($this->workers as $worker)
+                    if (!is_array($callable) || $callable[0] != $this->{$worker})
+                        unset($this->{$worker});
 
-                $this->workers = $this->worker_pids = $this->plugins = $this->stats = array();
-                $this->dispatch(array(self::ON_FORK));
+                $this->workers = $this->stats = array();
 
-                try
-                {
+                try {
                     call_user_func_array($callable, array_slice(func_get_args(), 1));
-                }
-                catch (Exception $e)
-                {
-                    $this->error('Exception Caught in Fork: ' . $e->getMessage());
+                } catch (Exception $e) {
+                    $this->error('Exception Caught in Task: ' . $e->getMessage());
                 }
 
                 exit;
@@ -599,7 +599,7 @@ abstract class Core_Daemon
 
             default:
                 // Parent Process - Return the pid of the newly created Task
-                return $pid;
+                return $proc;
                 break;
         }
     }
@@ -1085,10 +1085,10 @@ abstract class Core_Daemon
      * @param $pid
      */
     public static function process(Core_Lib_Process $process) {
-        if(!isset(self::$processes[$process->alias]))
-            self::$processes[$process->alias] = array();
+        if(!isset(self::$processes[$process->group]))
+            self::$processes[$process->group] = array();
 
-        self::$processes[$process->alias][$process->pid] = $process;
+        self::$processes[$process->group][$process->pid] = $process;
     }
 
     /**
