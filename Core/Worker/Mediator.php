@@ -1,4 +1,4 @@
- <?php
+<?php
 /**
  * Create and run worker processes.
  * Use message queues and shared memory to coordinate worker processes and return work product to the daemon.
