@@ -786,7 +786,7 @@ abstract class Core_Daemon
     {
         $workers = '';
         foreach($this->workers as $worker)
-            $workers .= sprintf('%s %s [%s], ', $worker, $this->{$worker}->id(), $this->{$worker}->is_idle() ? 'AVAILABLE' : 'BUFFERING');
+            $workers .= sprintf('%s %s [%s], ', $worker, $this->{$worker}->guid(), $this->{$worker}->is_idle() ? 'AVAILABLE' : 'BUFFERING');
 
         $pretty_memory = function($bytes) {
             $kb = 1024; $mb = $kb * 1024; $gb = $mb * 1024;

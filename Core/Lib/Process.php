@@ -41,7 +41,6 @@ class Core_Lib_Process
         if (!$this->stop_time) {
             $this->stop_time = time();
             @posix_kill($this->pid, SIGTERM);
-            return "Worker Process '{$this->pid}' Timeout: Killing...";
         }
 
         if (time() > $this->stop_time + $this->timeout()) {

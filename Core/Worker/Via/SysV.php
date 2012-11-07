@@ -269,7 +269,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         $tries = 1;
         do {
             $call = $decoder($message);
-        } while(empty($call) && $this->ipc_error(null, $tries) && $tries++ < 3);
+        } while(empty($call) && $this->error(null, $tries) && $tries++ < 3);
 
         if (!is_object($call))
             throw new Exception(__METHOD__ . " Failed. Could Not Decode Message: " . print_r($message, true));
@@ -344,7 +344,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     /**
      * Handle IPC Errors
      * @param $error
-     * @param int $try    Inform ipc_error of repeated failures of the same $error_code
+     * @param int $try    Inform error() of repeated failures of the same $error_code
      * @return boolean  Returns true if the operation should be retried.
      */
     public function error($error, $try=1) {
