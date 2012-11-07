@@ -1,6 +1,6 @@
 <?php
 
-class ProcessManager implements Core_IPlugin
+class Core_Plugin_ProcessManager implements Core_IPlugin
 {
 
     /**
@@ -21,14 +21,13 @@ class ProcessManager implements Core_IPlugin
     /**
      * @var Core_Lib_Process[]
      */
-    public $processes;
+    public $processes = array();
 
     /**
      * Array of failed forks -- reaped within in expected_min_ttl
      * @var Array   Numeric key, the value is the time the failure occurred
      */
     private $failures;
-
 
     public function __construct(Core_Daemon $daemon) {
         $this->daemon = $daemon;
@@ -39,7 +38,7 @@ class ProcessManager implements Core_IPlugin
      * @return void
      */
     public function setup() {
-        $this->daemon->on(self::ON_IDLE, array($this, 'reap'));
+        $this->daemon->on(Core_Daemon::ON_IDLE, array($this, 'reap'));
 
     }
 
@@ -60,7 +59,7 @@ class ProcessManager implements Core_IPlugin
 
 
             $this->reap(false);
-            usleep(50000);
+            usleep(250000);
         }
 
         $this->reap(false);
@@ -156,7 +155,7 @@ class ProcessManager implements Core_IPlugin
             case 0:
                 // Child Process
                 @ pcntl_setpriority(1);
-                $this->daemon->dispatch(array(self::ON_FORK));
+                $this->daemon->dispatch(array(Core_Daemon::ON_FORK));
                 return true;
 
             default:
@@ -178,14 +177,14 @@ class ProcessManager implements Core_IPlugin
      * @param bool $block   When true, method will block waiting for an exit signal
      * @return void
      */
-    private function reap($block = false)
+    public function reap($block = false)
     {
         $map = $this->processes();
 
         do {
-            $pid = pcntl_wait($status, ($block && $this->daemon->is('parent')) ? NULL : WNOHANG);
+            $pid = pcntl_wait($status, ($block === true && $this->daemon->is('parent')) ? NULL : WNOHANG);
             if (!$pid || !isset($map[$pid]))
-                continue;
+               break;
 
             $alias   = $map[$pid]->group;
             $process = $this->processes[$alias][$pid];

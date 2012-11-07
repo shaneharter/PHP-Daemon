@@ -226,7 +226,7 @@ class Core_Lib_DebugShell
             'description' => 'Send the n signal to the parent daemon.',
             'closure'     => function($matches, $printer) use($shell) {
                 $time = time() + $matches[1];
-                $shell->state("skip__until", $time);
+                $shell->debug_state("skip__until", $time);
                 $printer("Skipping Breakpoints for $matches[1] seconds. Will resume at " . date('H:i:s', $time));
             }
         );
@@ -242,17 +242,17 @@ class Core_Lib_DebugShell
      * @return integer
      */
     public function increment_indent($key = null) {
-        $i = 1 + $this->state('indent_incrementor', null, 0);
+        $i = 1 + $this->debug_state('indent_incrementor', null, 0);
         if ($key === null) {
-            $this->state('indent_incrementor', $i);
+            $this->debug_state('indent_incrementor', $i);
             return $i;
         }
 
-        $map = $this->state('indent_map', null, array());
+        $map = $this->debug_state('indent_map', null, array());
         if (!isset($map[$key])) {
             $map[$key] = $i;
-            $this->state('indent_map', $map);
-            $this->state('indent_incrementor', $i);
+            $this->debug_state('indent_map', $map);
+            $this->debug_state('indent_incrementor', $i);
         }
 
         return $map[$key];
@@ -324,7 +324,7 @@ class Core_Lib_DebugShell
      * @param null $value
      * @return bool|null
      */
-    public function state ($key, $value = null, $default = null) {
+    public function debug_state ($key, $value = null, $default = null) {
         static $state = false;
         $defaults = array(
             'parent'  => Core_Daemon::get('parent_pid'),
@@ -377,9 +377,9 @@ class Core_Lib_DebugShell
      */
     private function is_breakpoint_active($method) {
         $a = !in_array($method, $this->blacklist);
-        $b = $this->state('enabled');
-        $c = !$this->state("skip_$method");
-        $d = $this->state('skip__until') === null || $this->state('skip__until') < time();
+        $b = $this->debug_state('enabled');
+        $c = !$this->debug_state("skip_$method");
+        $d = $this->debug_state('skip__until') === null || $this->debug_state('skip__until') < time();
         return $a && $b && $c && $d;
     }
 
@@ -410,7 +410,7 @@ class Core_Lib_DebugShell
             $prompt = sprintf('Call to %s::%s()', get_class($this->object), $method);
 
         $indenter = $this->indent_callback;
-        if (is_callable($indenter) && $this->state('indent')) {
+        if (is_callable($indenter) && $this->debug_state('indent')) {
             $indent = $indenter($method, $args);
             if (is_numeric($indent) && $indent > 0)
               $prompt = str_repeat("\t", $indent % self::INDENT_DEPTH) . $prompt;
@@ -429,10 +429,10 @@ class Core_Lib_DebugShell
      * @return void
      */
     private function print_banner() {
-        if ($this->state('banner')) {
+        if ($this->debug_state('banner')) {
             echo PHP_EOL, 'PHP Daemon - Worker Debug Console';
             echo PHP_EOL, 'Use `help` for list of commands', PHP_EOL, PHP_EOL;
-            $this->state('banner', false);
+            $this->debug_state('banner', false);
         }
     }
 
@@ -509,9 +509,9 @@ class Core_Lib_DebugShell
 
                 // Use the familiar bash !! to re-run the last command
                 if (substr($input, -2) == '!!')
-                    $input = $this->state('last');
+                    $input = $this->debug_state('last');
                 elseif(!empty($input))
-                    $this->state('last', $input);
+                    $this->debug_state('last', $input);
 
                 // Validate the input as an expression
                 $matches = array();
@@ -557,12 +557,12 @@ class Core_Lib_DebugShell
                         break;
 
                     case 'indent y':
-                        $this->state('indent', true);
+                        $this->debug_state('indent', true);
                         $printer('Indent enabled');
                         break;
 
                     case 'indent n':
-                        $this->state('indent', false);
+                        $this->debug_state('indent', false);
                         $printer('Indent disabled');
                         break;
 
@@ -582,14 +582,14 @@ class Core_Lib_DebugShell
                         break;
 
                     case 'end':
-                        $this->state('enabled', false);
+                        $this->debug_state('enabled', false);
                         $break = true;
                         $printer('Debugging Ended..');
                         $input = true;
                         break;
 
                     case 'skip':
-                        $this->state("skip_$method", true);
+                        $this->debug_state("skip_$method", true);
                         $printer('Breakpoint "' . $method . '" Turned Off..');
                         $break = true;
                         $input = true;

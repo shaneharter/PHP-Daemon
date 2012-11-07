@@ -71,7 +71,7 @@ abstract class Core_Daemon
      *
      * Note: If you want to take responsibility for dispatching the ON_IDLE event in your application, just set
      *       this to 0 and dispatch the event periodically, eg:
-     *       $this->dispatch(array($this->ON_IDLE));
+     *       $this->dispatch(array(self::ON_IDLE));
      *
      *
      *
@@ -322,11 +322,10 @@ abstract class Core_Daemon
     {
         $this->register_signal_handlers();
 
+        $this->plugin('ProcessManager');
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->setup();
 
-        // We have some housekeeping to do after plugins have been instaniated but before worker processes are
-        $this->plugin('ProcessManager');
         $this->dispatch(array(self::ON_INIT));
 
         foreach ($this->workers as $worker)
@@ -563,44 +562,40 @@ abstract class Core_Daemon
 
         $proc = $this->ProcessManager->fork($group);
 
-        switch ($proc)
-        {
-            case false:
-                // Parent Process - Fork Failed
-                $e = new Exception();
-                $this->error('Task failed: Could not fork.');
-                $this->error($e->getTraceAsString());
-                return false;
-                break;
-
-            case true:
-                // Child Process
-                $this->set('start_time', time());
-                $this->set('parent',     false);
-                $this->set('parent_pid', $this->pid);
-                $this->pid(getmypid());
-
-                // Remove unused worker objects. They can be memory hogs.
-                foreach($this->workers as $worker)
-                    if (!is_array($callable) || $callable[0] != $this->{$worker})
-                        unset($this->{$worker});
-
-                $this->workers = $this->stats = array();
-
-                try {
-                    call_user_func_array($callable, array_slice(func_get_args(), 1));
-                } catch (Exception $e) {
-                    $this->error('Exception Caught in Task: ' . $e->getMessage());
-                }
-
-                exit;
-                break;
-
-            default:
-                // Parent Process - Return the newly created Core_Lib_Process object
-                return $proc;
-                break;
+        if ($proc === false) {
+            // Parent Process - Fork Failed
+            $e = new Exception();
+            $this->error('Task failed: Could not fork.');
+            $this->error($e->getTraceAsString());
+            return false;
         }
+
+        if ($proc === true) {
+
+            // Child Process
+            $this->set('start_time', time());
+            $this->set('parent',     false);
+            $this->set('parent_pid', $this->pid);
+            $this->pid(getmypid());
+
+            // Remove unused worker objects. They can be memory hogs.
+            foreach($this->workers as $worker)
+                if (!is_array($callable) || $callable[0] != $this->{$worker})
+                    unset($this->{$worker});
+
+            $this->workers = $this->stats = array();
+
+            try {
+                call_user_func_array($callable, array_slice(func_get_args(), 1));
+            } catch (Exception $e) {
+                $this->error('Exception Caught in Task: ' . $e->getMessage());
+            }
+
+            exit;
+        }
+
+        // Parent Process - Return the newly created Core_Lib_Process object
+        return $proc;
     }
 
     /**
@@ -687,7 +682,7 @@ abstract class Core_Daemon
             $this->log(get_class($this) . ' is Shutting Down...');
 
             $delay = 2;
-            if ($this->is_daemon() && ($this->runtime() + $delay) > self::MIN_RESTART_SECONDS) {
+            if ($this->is('daemonized') && ($this->runtime() + $delay) > self::MIN_RESTART_SECONDS) {
                 sleep($delay);
                 $this->restart();
             }
@@ -1352,7 +1347,7 @@ abstract class Core_Daemon
             if ($this->is('parent'))
                 $this->set('parent_pid', $set_value);
 
-            $this->dispatch(array($this->ON_PIDCHANGE), array($set_value));
+            $this->dispatch(array(self::ON_PIDCHANGE), array($set_value));
         }
 
         return $this->pid;

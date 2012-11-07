@@ -1,4 +1,4 @@
- <?php
+<?php
 /**
  * Create and run worker processes.
  * Use message queues and shared memory to coordinate worker processes and return work product to the daemon.
@@ -266,6 +266,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $this->via->release();
         }
 
+        unset($this->via);
         unset($this->daemon);
     }
 
@@ -577,7 +578,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
             unset($this->calls, $this->running_calls, $this->on_return, $this->on_timeout, $this->call_count);
             $this->calls = $this->running_calls = array();
             $this->via->setup();
-            $this->debug();
+            if ($this->daemon->get('debug_workers'))
+                $this->debug();
 
             $event_restart = function() use($that) {
                 $that->log('Restarting Worker Process...');
