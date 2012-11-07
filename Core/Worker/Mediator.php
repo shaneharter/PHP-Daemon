@@ -578,8 +578,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
             unset($this->calls, $this->running_calls, $this->on_return, $this->on_timeout, $this->call_count);
             $this->calls = $this->running_calls = array();
             $this->via->setup();
-            if ($this->daemon->get('debug_workers'))
-                $this->debug();
 
             $event_restart = function() use($that) {
                 $that->log('Restarting Worker Process...');

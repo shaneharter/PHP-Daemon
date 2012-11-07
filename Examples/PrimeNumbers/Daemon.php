@@ -14,7 +14,7 @@ namespace Examples\PrimeNumbers;
  */
 class Daemon extends \Core_Daemon
 {
-    protected $loop_interval = 5;
+    protected $loop_interval = 1;
 
     /**
      * We want to be able to start workers by passing in signals. In a real daemon, workers would be used to process
