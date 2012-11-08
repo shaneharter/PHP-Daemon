@@ -312,6 +312,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     public function purge() {
         $this->purge_mq();
         $this->purge_shm();
+        $this->setup_ipc();
     }
 
     /**
@@ -323,9 +324,9 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         if (!is_resource($this->shm))
             $this->setup_ipc();
 
-    //    @shm_remove($this->shm);
-    //    @shm_detach($this->shm);
-    //    $this->shm = null;
+        @shm_remove($this->shm);
+        @shm_detach($this->shm);
+        $this->shm = null;
     }
 
     /**
@@ -337,8 +338,8 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         if (!is_resource($this->queue))
             $this->setup_ipc();
 
-    //    @msg_remove_queue($this->queue);
-    //    $this->queue = null;
+        @msg_remove_queue($this->queue);
+        $this->queue = null;
     }
 
     /**

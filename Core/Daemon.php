@@ -130,13 +130,6 @@ abstract class Core_Daemon
         'parent'    => true,
     );
 
-    /**
-     * Array of worker processes. Associative array, pid as the key
-     * @var Core_Lib_Process[]
-     */
-    public static $processes = array();
-
-
 
     /**
      * Implement this method to define plugins
@@ -700,7 +693,6 @@ abstract class Core_Daemon
      */
     public function signal($signal)
     {
-        $this->dispatch(array(self::ON_SIGNAL), array($signal));
         switch ($signal)
         {
             case SIGUSR1:
@@ -719,6 +711,8 @@ abstract class Core_Daemon
                 $this->set('shutdown', true);
                 break;
         }
+
+        $this->dispatch(array(self::ON_SIGNAL), array($signal));
     }
 
     /**
@@ -760,7 +754,7 @@ abstract class Core_Daemon
         $command = 'php ' . $this->get('filename');
 
         if ($options === false) {
-            $command .= ' -d --recoverworkers';
+            $command .= ' -d';
             if ($this->get('pid_file'))
                 $command .= ' -p ' . $this->get('pid_file');
 
@@ -914,7 +908,7 @@ abstract class Core_Daemon
      */
     private function auto_restart()
     {
-        if ($this->is('daemonized') == false)
+        if (!$this->is('daemonized'))
             return false;
 
         if ($this->runtime() < $this->auto_restart_interval || $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
@@ -935,8 +929,11 @@ abstract class Core_Daemon
 
         $this->set('shutdown', true);
         $this->log('Restart Happening Now...');
-        foreach($this->plugins as $plugin)
+        foreach($this->plugins as $plugin) {
             $this->{$plugin}->teardown();
+            unset($this->{$plugin});
+        }
+        unset($this->plugins);
 
         $this->callbacks = array();
 
