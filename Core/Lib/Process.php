@@ -44,10 +44,14 @@ class Core_Lib_Process
         }
 
         if (time() > $this->stop_time + $this->timeout()) {
-            @posix_kill($this->pid, SIGKILL);
+            $this->kill();
             return "Worker Process '{$this->pid}' Timeout: Killing...";
         }
 
         return null;
+    }
+
+    public function kill() {
+        @posix_kill($this->pid, SIGKILL);
     }
 }

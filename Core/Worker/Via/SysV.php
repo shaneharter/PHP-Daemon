@@ -51,10 +51,8 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
     public function __destruct()  {
         unset($this->mediator);
-
         @shm_detach($this->shm);
         $this->shm = null;
-
         $this->queue = null;
     }
 
@@ -68,10 +66,10 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
             $this->setup_shm();
 
         if (!is_resource($this->queue))
-            throw new Exception(__METHOD__ . " Failed. Could not attach message queue id {$this->mediator->guid()}");
+            throw new Exception(__METHOD__ . " Failed. Could not attach message queue id {$this->mediator->guid}");
 
         if (!is_resource($this->shm))
-            throw new Exception(__METHOD__ . " Failed. Could not address shared memory block {$this->mediator->guid()}");
+            throw new Exception(__METHOD__ . " Failed. Could not address shared memory block {$this->mediator->guid}");
     }
 
     /**
@@ -94,8 +92,8 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
      * @return void
      */
     private function setup_ipc() {
-        $this->shm      = shm_attach($this->mediator->guid(), $this->memory_allocation, 0666);
-        $this->queue    = msg_get_queue($this->mediator->guid(), 0666);
+        $this->shm      = shm_attach($this->mediator->guid, $this->memory_allocation, 0666);
+        $this->queue    = msg_get_queue($this->mediator->guid, 0666);
     }
 
     /**
@@ -113,7 +111,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
             );
 
             if (!shm_put_var($this->shm, self::HEADER_ADDRESS, $header))
-                throw new Exception(__METHOD__ . " Failed. Could Not Read Header. If this problem persists, try running the daemon with the --resetworkers option.");
+                throw new Exception(__METHOD__ . " Failed. Could Not Read Header. If this problem persists, try manually cleaning your system's SysV Shared Memory allocations.\nYou can use built-in tools on the linux commandline or a helper script shipped with PHP Simple Daemon. ");
         }
 
         // Check memory allocation and warn the user if their malloc() is not actually applicable (eg they changed the malloc but used --recoverworkers)
@@ -125,7 +123,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         // If we're trying to recover previous messages/shm, scan the shared memory block for call structs and import them
         // @todo if we keep this functionality, we need to at least remove it as a CLI option implemented by Core_Daemon because this will not apply to other Via conveyances
 
-        if ($this->mediator->daemon->get('recover_workers')) {
+        if ($this->mediator->daemon->is('parent') && $this->mediator->daemon->get('recover_workers')) {
             $max_id = $this->call_count;
             for ($i=0; $i<100000; $i++) {
                 if(shm_has_var($this->shm, $i)) {
@@ -374,6 +372,21 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 return true;
                 break;
 
+            case 13:
+                // Permission Denied
+                $this->mediator->count_error('communication');
+                $this->mediator->log('Permission Denied: Cannot connect to message queue');
+                $this->purge_mq();
+
+                if (Core_Daemon::is('parent'))
+                    usleep($this->mediator->backoff(100000, $try));
+                else
+                    sleep($this->mediator->backoff(3, $try));
+
+                $this->setup_ipc();
+                return true;
+                break;
+
             case 22:
                 // Invalid Argument
                 // Probably because the queue was removed in another process.
@@ -393,7 +406,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
 
             case null:
                 // Almost certainly an issue with shared memory
-                $this->mediator->log("Shared Memory I/O Error at Address {$this->mediator->guid()}.");
+                $this->mediator->log("Shared Memory I/O Error at Address {$this->mediator->guid}.");
                 $this->mediator->count_error('corruption');
 
                 // If this is a worker, all we can do is try to re-attach the shared memory.
@@ -417,12 +430,14 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 }
 
                 $this->mediator->log("IPC DIAG: Re-Connect failed to solve the problem.");
+                if (!$this->mediator->daemon->is('parent'))
+                    break;
 
                 // Attempt to re-connect the shared memory
                 // See if we can read what's in shared memory and re-write it later
                 $items_to_copy = array();
                 $items_to_call = array();
-                for ($i=0; $i<$this->mediator->call_count(); $i++) {
+                for ($i=0; $i<$this->mediator->call_count; $i++) {
                     $call = @shm_get_var($this->shm, $i);
                     if (!is_object($call))
                         continue;
@@ -473,7 +488,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                     $this->mediator->log("Message Queue Error {$error}: " . posix_strerror($error));
 
                 if (Core_Daemon::is('parent'))
-                    usleep($this->mediator->backoff(20000, $try));
+                    usleep($this->mediator->backoff(100000, $try));
                 else
                     sleep($this->mediator->backoff(3, $try));
 

@@ -92,6 +92,15 @@ class Core_Worker_Call extends stdClass
         );
     }
 
+    /**
+     * Prepare the Call struct to be passed back to the Core_Worker_Mediator::call() method for another go-around
+     * @return void
+     */
+    public function retry() {
+        $this->retries++;
+        $this->errors = 0;
+    }
+
     public function timeout($microtime = null) {
         return $this->status(Core_Worker_Mediator::TIMEOUT,    $microtime);
     }

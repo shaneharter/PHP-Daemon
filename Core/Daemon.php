@@ -346,8 +346,10 @@ abstract class Core_Daemon
         {
             $this->set('shutdown', true);
             $this->dispatch(array(self::ON_SHUTDOWN));
-            foreach($this->plugins + $this->workers as $plugin)
+            foreach($this->plugins + $this->workers as $plugin) {
                 $this->{$plugin}->teardown();
+                unset($this->{$plugin});
+            }
         }
         catch (Exception $e)
         {
@@ -374,7 +376,7 @@ abstract class Core_Daemon
      */
     public function __call($method, $args)
     {
-        $accessors = array('loop_interval', 'verbose', 'pid', 'shutdown');
+        $accessors = array('loop_interval', 'pid');
         if (in_array($method, $accessors)) {
             if ($args)
                 trigger_error("The '$method' accessor can not be used as a setter in this context. Supplied arguments ignored.", E_USER_WARNING);
@@ -382,9 +384,9 @@ abstract class Core_Daemon
             return call_user_func_array(array($this, $method), array());
         }
 
-        if (in_array($method, $this->workers)) {
+        // Handle any calls to __invoke()able objects
+        if (in_array($method, $this->workers))
             return call_user_func_array($this->$method, $args);
-        }
 
         throw new Exception("Invalid Method Call '$method'");
     }
@@ -477,10 +479,10 @@ abstract class Core_Daemon
         if (isset($event[1]) && isset($this->callbacks[$event[0]][$event[1]])) {
             $callback =& $this->callbacks[$event[0]][$event[1]];
 
-            if (is_callable($callback['criteria']) && !$callback['criteria']($args))
+            if ($callback['throttle'] && time() < $callback['call_at'])
                 return;
 
-            if ($callback['throttle'] && time() < $callback['call_at'])
+            if (is_callable($callback['criteria']) && !$callback['criteria']($args))
                 return;
 
             $callback['call_at'] = time() + (int)$callback['throttle'];
@@ -491,11 +493,11 @@ abstract class Core_Daemon
         // All callbacks attached to a given event are being dispatched...
         foreach($this->callbacks[$event[0]] as $callback_id => $callback) {
 
-            if (is_callable($callback['criteria']) && !$callback['criteria']($args))
-                return;
-
             if ($callback['throttle'] && time() < $callback['call_at'])
                 continue;
+
+            if (is_callable($callback['criteria']) && !$callback['criteria']($args))
+                return;
 
             $this->callbacks[$event[0]][$callback_id]['call_at'] = time() + (int)$callback['throttle'];
             call_user_func_array($callback['callback'], $args);
@@ -726,22 +728,21 @@ abstract class Core_Daemon
     {
         $signals = array(
             // Handled by Core_Daemon:
-            SIGTERM, SIGINT, SIGUSR1, SIGHUP,
+            SIGTERM, SIGINT, SIGUSR1, SIGHUP, SIGCHLD,
 
             // Ignored by Core_Daemon -- register callback ON_SIGNAL to listen for them.
             // Some of these are duplicated/aliased, listed here for completeness
             SIGUSR2, SIGCONT, SIGQUIT, SIGILL, SIGTRAP, SIGABRT, SIGIOT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGALRM,
             SIGCONT, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF,
-            SIGWINCH, SIGIO, SIGSYS, SIGBABY, SIGCHLD
+            SIGWINCH, SIGIO, SIGSYS, SIGBABY
         );
 
         if (defined('SIGPOLL'))     $signals[] = SIGPOLL;
         if (defined('SIGPWR'))      $signals[] = SIGPWR;
         if (defined('SIGSTKFLT'))   $signals[] = SIGSTKFLT;
 
-        foreach(array_unique($signals) as $signal) {
+        foreach(array_unique($signals) as $signal)
             pcntl_signal($signal, array($this, 'signal'));
-        }
     }
 
     /**
@@ -780,7 +781,7 @@ abstract class Core_Daemon
     {
         $workers = '';
         foreach($this->workers as $worker)
-            $workers .= sprintf('%s %s [%s], ', $worker, $this->{$worker}->guid(), $this->{$worker}->is_idle() ? 'AVAILABLE' : 'BUFFERING');
+            $workers .= sprintf('%s %s [%s], ', $worker, $this->{$worker}->guid, $this->{$worker}->is_idle() ? 'AVAILABLE' : 'BUFFERING');
 
         $pretty_memory = function($bytes) {
             $kb = 1024; $mb = $kb * 1024; $gb = $mb * 1024;
