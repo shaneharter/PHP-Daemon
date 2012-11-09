@@ -99,6 +99,7 @@ class Core_Worker_Call extends stdClass
     public function retry() {
         $this->retries++;
         $this->errors = 0;
+        $this->uncalled();
     }
 
     public function timeout($microtime = null) {
@@ -137,7 +138,8 @@ class Core_Worker_Call extends stdClass
     }
 
     public function status($status, $microtime = null) {
-        if ($status < $this->status)
+        // You can restart a Call (back to status 0) but you can't decrement or arbitrarily set the status
+        if ($status < $this->status && $status > 0)
             throw new Exception(__METHOD__ . " Failed: Cannot Rewind Status. Current Status: {$this->status} Given: {$status}");
 
         if ($microtime === null)

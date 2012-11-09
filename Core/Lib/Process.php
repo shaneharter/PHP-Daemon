@@ -45,7 +45,7 @@ class Core_Lib_Process
 
         if (time() > $this->stop_time + $this->timeout()) {
             $this->kill();
-            return "Worker Process '{$this->pid}' Timeout: Killing...";
+            return "Worker Process '{$this->pid}' Shutdown Timeout: Killing...";
         }
 
         return null;

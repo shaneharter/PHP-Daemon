@@ -958,7 +958,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return Core_Lib_Process
      */
     public function process($pid) {
-        return $this->daemon->ProcessManager->process($pid);
+        if (isset($this->daemon->ProcessManager))
+            return $this->daemon->ProcessManager->process($pid);
+
+        return null;
     }
 
     /**
@@ -966,7 +969,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return Core_Lib_Process[]
      */
     public function processes() {
-        return $this->daemon->ProcessManager->processes($this->alias);
+        if (isset($this->daemon->ProcessManager))
+            return $this->daemon->ProcessManager->processes($this->alias);
+
+        return array();
     }
 
     /**
@@ -974,7 +980,10 @@ abstract class Core_Worker_Mediator implements Core_ITask
      * @return mixed
      */
     public function process_count() {
-        return $this->daemon->ProcessManager->count($this->alias);
+        if (isset($this->daemon->ProcessManager))
+            return $this->daemon->ProcessManager->count($this->alias);
+
+        return 0;
     }
 
 

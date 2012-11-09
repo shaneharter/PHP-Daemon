@@ -1,5 +1,9 @@
 <?php
 
+/**
+ * Manage creation and shutdown of Worker and Task processes used by the Daemon
+ * @author Shane Harter
+ */
 class Core_Plugin_ProcessManager implements Core_IPlugin
 {
 
@@ -27,10 +31,16 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
      * Array of failed forks -- reaped within in expected_min_ttl
      * @var Array   Numeric key, the value is the time the failure occurred
      */
-    private $failures;
+    private $failures = array();
+
+
 
     public function __construct(Core_Daemon $daemon) {
         $this->daemon = $daemon;
+    }
+
+    public function __destruct() {
+        unset($this->daemon);
     }
 
     /**
@@ -38,25 +48,22 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
      * @return void
      */
     public function setup() {
-        $this->daemon->on(Core_Daemon::ON_IDLE, array($this, 'reap'));
-
+        $this->daemon->on(Core_Daemon::ON_IDLE, array($this, 'reap'), 30);
     }
 
     /**
      * Called on Destruct
      * @return void
      */
-    public function teardown()
-    {
+    public function teardown() {
+
         if (!$this->daemon->is('parent'))
             return;
 
         while($this->count() > 0) {
-
             foreach($this->processes() as $pid => $process)
                 if ($message = $process->stop())
                     $this->daemon->log($message);
-
 
             $this->reap(false);
             usleep(250000);
@@ -70,14 +77,12 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
      * NOTE: At a minimum you should ensure that if $errors is not empty that you pass it along as the return value.
      * @return Array  Return array of error messages (Think stuff like "GD Library Extension Required" or "Cannot open /tmp for Writing") or an empty array
      */
-    public function check_environment(Array $errors = array())
-    {
+    public function check_environment(Array $errors = array()) {
         if (! $this->daemon instanceof Core_Daemon)
             $errors[] = "Invalid reference to Application Object";
 
         return $errors;
     }
-
 
     /**
      * Return the number of processes, optionall by $group
@@ -85,7 +90,6 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
      * @return int
      */
     public function count($group = null) {
-
         if ($group)
             if (isset($this->processes[$group]))
                 return count($this->processes[$group]);
@@ -93,14 +97,12 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
                 return 0;
 
         // Sum processes across all process groups
-
         $count = 0;
         foreach($this->processes as $process_group)
             $count += count($process_group);
 
         return $count;
     }
-
 
     /**
      * The $processes array is hierarchical by process group. This will return a flat array of processes.
@@ -115,7 +117,6 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
                 return array();
 
         // List processes across all process groups
-
         $list = array();
         foreach($this->processes as $process_group)
             $list += $process_group;
@@ -177,11 +178,12 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
      * @param bool $block   When true, method will block waiting for an exit signal
      * @return void
      */
-    public function reap($block = false)
-    {
+    public function reap($block = false) {
+
         $map = $this->processes();
 
-        do {
+        while(true) {
+
             $pid = pcntl_wait($status, ($block === true && $this->daemon->is('parent')) ? NULL : WNOHANG);
             if (!$pid || !isset($map[$pid]))
                break;
@@ -203,8 +205,7 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
 
             if (count($this->failures) > self::CHURN_LIMIT)
                 $this->daemon->fatal_error("Recently forked processes are continuously failing. See error log for additional details.");
-
-        } while($pid > 0);
+        }
     }
 
 }

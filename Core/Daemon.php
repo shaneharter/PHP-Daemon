@@ -346,9 +346,9 @@ abstract class Core_Daemon
         {
             $this->set('shutdown', true);
             $this->dispatch(array(self::ON_SHUTDOWN));
-            foreach($this->plugins + $this->workers as $plugin) {
-                $this->{$plugin}->teardown();
-                unset($this->{$plugin});
+            foreach($this->workers + $this->plugins as $object) {
+                $this->{$object}->teardown();
+                unset($this->{$object});
             }
         }
         catch (Exception $e)
@@ -356,6 +356,8 @@ abstract class Core_Daemon
             $this->fatal_error(sprintf('Exception Thrown in Shutdown: %s [file] %s [line] %s%s%s',
                 $e->getMessage(), $e->getFile(), $e->getLine(), PHP_EOL, $e->getTraceAsString()));
         }
+
+        $this->callbacks = array();
 
         if ($this->is('parent') && $this->get('pid_file') && file_exists($this->get('pid_file')) && file_get_contents($this->get('pid_file')) == $this->pid)
             unlink($this->get('pid_file'));
@@ -909,8 +911,8 @@ abstract class Core_Daemon
      */
     private function auto_restart()
     {
-        if (!$this->is('daemonized'))
-            return false;
+        if (!$this->is('parent') || !$this->is('daemonized'))
+            return;
 
         if ($this->runtime() < $this->auto_restart_interval || $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
             return false;
@@ -925,18 +927,16 @@ abstract class Core_Daemon
      */
     public function restart()
     {
-        if (!$this->is('parent'))
+        if (!$this->is('parent') || !$this->is('daemonized'))
             return;
 
         $this->set('shutdown', true);
         $this->log('Restart Happening Now...');
-        foreach($this->plugins as $plugin) {
-            $this->{$plugin}->teardown();
-            unset($this->{$plugin});
-        }
-        unset($this->plugins);
 
-        $this->callbacks = array();
+        // We want to shutdown workers, release any lock files, and swap out the pid file (as applicable)
+        // Basically put this into a walking-dead state by destructing everything while keeping this process alive
+        // to actually orchestrate the restart.
+        $this->__destruct();
 
         // Close the resource handles to prevent this process from hanging on the exec() output.
         if (is_resource(STDOUT)) fclose(STDOUT);
