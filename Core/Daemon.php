@@ -127,7 +127,7 @@ abstract class Core_Daemon
      * @var array
      */
     private static $env = array(
-        'parent'    => true,
+        'parent' => true,
     );
 
 
@@ -168,7 +168,6 @@ abstract class Core_Daemon
      */
     abstract protected function execute();
 
-
     /**
      * Return a log file name that will be used by the log() method.
      *
@@ -184,8 +183,6 @@ abstract class Core_Daemon
     abstract protected function log_file();
 
 
-
-
     /**
      * Return an instance of the Core_Daemon singleton
      * @return Core_Daemon
@@ -193,20 +190,20 @@ abstract class Core_Daemon
     public static function getInstance()
     {
         static $o = null;
-        if ($o) return $o;
 
-        try
-        {
-            $o = new static;
-            $o->setup_plugins();
-            $o->setup_workers();
-            $o->check_environment();
-            $o->init();
-        }
-        catch (Exception $e)
-        {
-            $o->fatal_error($e->getMessage());
-        }
+        if (!$o)
+            try
+            {
+                $o = new static;
+                $o->setup_plugins();
+                $o->setup_workers();
+                $o->check_environment();
+                $o->init();
+            }
+            catch (Exception $e)
+            {
+                $o->fatal_error($e->getMessage());
+            }
 
         return $o;
     }
@@ -337,7 +334,7 @@ abstract class Core_Daemon
     }
 
     /**
-     * Teardown all plugins and workers and reap any zombie processes before exiting
+     * Tear down all plugins and workers and free any remaining resources
      * @return void
      */
     public function __destruct()
