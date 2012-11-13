@@ -11,9 +11,10 @@ Create solid, long-running PHP daemon processes by extending the Core_Daemon cla
  
 #### [NEW] Version 2.1 Beta Testing 
 * Version 2.1 is currently being developed in the branch `feature_abstract_ipc`. It's currently at alpha and a formal beta will be announced soon. 
-* Exciting features in 2.1 include: 
+* Exciting features in 2.1 include:
   * A new Socket Server plugin that lets you create event-driven async servers in a few lines of code. 
-  * A major refactoring of the Worker API includes pluggable IPC classes: Channel worker communication over any popular message queue or stick with the built-in SysV channel.   * Improved, simpler worker debug shell with new, powerful commands and easier integration of custom breakpoints into your own worker code. 
+  * A major refactoring of the Worker API includes pluggable IPC classes: Channel worker communication over any popular message queue or stick with the built-in SysV channel.
+  * Improved, simpler worker debug shell with new, powerful commands and easier integration of custom breakpoints into your own worker code. 
   * Centralize all the process forking, reaping and management code spread around the `Core_Daemon` and `Core_Worker_Mediator` classes into a simple ProcessManager plugin. 
   * Dozens of other bug fixes and improvements towards simpler, clearer code in the core Daemon and Mediator classes. 
 
