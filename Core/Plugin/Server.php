@@ -99,10 +99,14 @@ class Core_Plugin_Server implements Core_IPlugin
      */
     public function setup() {
         $this->socket = socket_create(AF_INET, SOCK_STREAM, 0);
-        if (!socket_bind($this->socket, $this->ip, $this->port))
-            throw new Exception('Could not bind to address');
+        if (!socket_bind($this->socket, $this->ip, $this->port)) {
+            $errno = socket_last_error();
+            $this->error(sprintf('Could not bind to address %s:%s [%s] %s', $this->ip, $this->port, $errno, socket_strerror($errno)));
+            throw new Exception('Could not start server.');
+        }
 
         socket_listen($this->socket);
+        $this->daemon->on(Core_Daemon::ON_PREEXECUTE, array($this, 'run'));
     }
 
     /**
@@ -153,6 +157,11 @@ class Core_Plugin_Server implements Core_IPlugin
             $this->connect();
 
         // Handle input from sockets in the $read array.
+        $daemon = $this->daemon;
+        $printer = function($str) use ($daemon) {
+            $daemon->log($str, 'SocketServer');
+        };
+
         foreach($this->clients as $slot => $client) {
             if (!in_array($client->socket, $read))
                 continue;
@@ -163,7 +172,7 @@ class Core_Plugin_Server implements Core_IPlugin
                 continue;
             }
 
-            $this->command($input);
+            $this->command($input, array($client->write, $printer));
         }
     }
 
@@ -171,6 +180,8 @@ class Core_Plugin_Server implements Core_IPlugin
         $slot = $this->slot();
         if ($slot === null)
             throw new Exception(sprintf('%s::%s Failed - Maximum number of connections has been reached.', __CLASS__, __METHOD__));
+
+        $this->debug("Creating New Connection");
 
         $client = new stdClass();
         $client->socket = socket_accept($this->socket);
@@ -187,7 +198,12 @@ class Core_Plugin_Server implements Core_IPlugin
         };
 
         $this->clients[$slot] = $client;
-        $this->command(self::COMMAND_CONNECT, array($client));
+
+        // @todo clean this up
+        $daemon = $this->daemon;
+        $this->command(self::COMMAND_CONNECT, array($client->write, function($str) use ($daemon) {
+            $daemon->log($str, 'SocketServer');
+        }));
     }
 
     private function command($input, Array $args = array()) {

@@ -33,12 +33,17 @@ class Daemon extends \Core_Daemon
         $this->Ini->filename = BASE_PATH . '/server.ini';
         $this->Ini->required_sections = array('server');
 
+        // This is a bit of a hack, but we want to use the Ini plugin below in the socket server plugin
+        // So we will manually call the setup() method of Ini which does the "magic" of parsing the Ini file.
+        $this->Ini->setup();
+
         // Now we will create a Server object using the Core_Plugin_Server class
         // This will handle client connections for us. The server will run incoming commands against the array of
         // Core_Lib_Command objects we will create below.
         $this->plugin('Server');
         $this->Server->ip = $this->Ini['server']['ip'];
         $this->Server->port = $this->Ini['server']['port'];
+
 
         $cmd = new \Core_Lib_Command();
         $cmd->regex = '/CLIENT_CONNECT/';
@@ -47,24 +52,35 @@ class Daemon extends \Core_Daemon
         };
         $this->Server->addCommand($cmd);
 
+
         $cmd = new \Core_Lib_Command();
         $cmd->regex = '/md5 (.+)/';
         $cmd->callable = function($matches, $reply, $printer) {
-            return md5(trim($matches[1]));
+            $reply(md5(trim($matches[1])));
         };
         $this->Server->addCommand($cmd);
 
-        $cmd = new \Core_Lib_Command();
-        $cmd->regex = '/sha1 (.+)/';
-        $cmd->callable = function($matches, $reply, $printer) {
-            return sha1($matches[1]);
-        };
-        $this->Server->addCommand($cmd);
 
         $cmd = new \Core_Lib_Command();
         $cmd->regex = '/sha1 x(\d+) (.+)/';
         $cmd->description = 'Repeated SHA1 hash. For example, recursively hash "foo" 100 times using SHA1: sha1 x100 foo';
         $cmd->callable = array($this, 'Sha1Worker');
+        $this->Server->addCommand($cmd);
+
+
+        $cmd = new \Core_Lib_Command();
+        $cmd->regex = '/sha1 (.+)/';
+        $cmd->callable = function($matches, $reply, $printer) {
+            $reply(sha1($matches[1]));
+        };
+        $this->Server->addCommand($cmd);
+
+
+        $cmd = new \Core_Lib_Command();
+        $cmd->regex = '/(.+)/';
+        $cmd->callable = function($matches, $reply, $printer) {
+            $printer('CRAZY THING RECD ' . $matches[1]);
+        };
         $this->Server->addCommand($cmd);
     }
 

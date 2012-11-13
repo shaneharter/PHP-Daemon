@@ -40,7 +40,7 @@ class Core_Lib_Command
     public function match($input, Array $args = array()) {
         $this->result_input = $this->result = $matches = null;
         if (preg_match($this->regex, $input, $matches) == 1) {
-            $args[] = $matches;
+            array_unshift($args, array($matches));
             $this->result_input = $input;
             $this->result = call_user_func_array($this->callable, $args);
             return true;

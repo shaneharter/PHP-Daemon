@@ -21,10 +21,10 @@ $flash          = '';
 while(true) {
 
     // Every few iterations verify that the socket connection is still open
-    if ($socket && ($input || mt_rand(1,3) == 2) && is_resource($socket)) {
+    if ($socket && ($input || mt_rand(1,3) == 2) && !is_resource($socket)) {
         out("Socket Connection Terminated");
         $prompt = true;
-        $socket  = false;
+        $socket = null;
         if (!$input)
             echo PHP_EOL;
     }
@@ -56,6 +56,21 @@ while(true) {
                 exit;
 
             case $socket && input() == 'help':
+                $out = array();
+                $out[] = '';
+                $out[] = 'Available Commands:';
+                $out[] = 'exit';
+                $out[] = 'help                Display this help';
+                $out[] = '[string]            Any provided string will be sent to the server. ';
+                $out[] = '';
+//                $out[] = 'Note:';
+//                $out[] = 'To send any shell commands (eg "exit" or "help") as a command to the server, escape them with a leading slash, eg /help';
+//                $out[] = '';
+
+                out(implode(PHP_EOL, $out));
+                continue;
+
+            case input() == 'help':
 
                 $out = array();
                 $out[] = '';
@@ -68,28 +83,13 @@ while(true) {
                 out(implode(PHP_EOL, $out));
                 continue;
 
-            case input() == 'help':
-                $out = array();
-                $out[] = '';
-                $out[] = 'Available Commands:';
-                $out[] = 'exit';
-                $out[] = 'help                Display this help';
-                $out[] = '[string]            Any provided string will be sent to the server. ';
-                $out[] = '';
-                $out[] = 'Note:';
-                $out[] = 'To send any shell commands (eg "exit" or "help") as a command to the server, escape them with a leading slash, eg /help';
-                $out[] = '';
-
-                out(implode(PHP_EOL, $out));
-                continue;
-
             case $socket && is_string($input):
                 out("Sending Command...");
-                socket_write($socket, $input, strlen($input));
+                fputs($socket, $input, strlen($input));
                 out("\n");
                 out("Response:");
                 $out = '';
-                while ($_out = socket_read($socket, 2048))
+                while ($_out = fgets($socket, 2048))
                     $out .= $_out;
 
                 out($out);
@@ -97,8 +97,8 @@ while(true) {
                 continue;
 
             case !$socket && strpos($input, ':'):
-
                 $conn = explode(':', $input);
+                out("Connecting to {$conn[0]}:{$conn[1]}");
                 $errno = $errstr = null;
                 $socket = fsockopen($conn[0], $conn[1], $errno, $errstr, 60);
 
