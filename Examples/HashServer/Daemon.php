@@ -15,16 +15,11 @@ namespace Examples\HashServer;
 class Daemon extends \Core_Daemon
 {
     protected $loop_interval = 0;
-    protected $idle_probability = 1;
+    protected $idle_probability = 0.5;
 
     /**
-     * When we send commands to a background worker to process, we need to cache a reference to the $reply closure
-     * that's used to write a reply to a client. We'll use this in the onReturn callback for the worker to pass the
-     * return value down the pipe to the client that sent the original request.
-     *
-     * This is necessary because the $reply and $printer closures passed to a server Command object cannot themselves
-     * be passed to the background worker.
-     *
+     * Array of HashWorker call id's mapped to $reply closures. We stash the $reply here when we do a HashWorker call
+     * and access it from the worker's onReturn and onTimeout handlers to send a reply to the client
      * @var array
      */
     public $reply_cache = array();
@@ -45,61 +40,51 @@ class Daemon extends \Core_Daemon
         $this->Ini->filename = BASE_PATH . '/server.ini';
         $this->Ini->required_sections = array('server');
 
-        // This is a bit of a hack, but we want to use the Ini plugin below in the socket server plugin
-        // So we will manually call the setup() method of Ini which does the "magic" of parsing the Ini file.
+        // We want to use the values from the Ini file later in this method when we create the socket server plugin.
+        // The "magic" of parsing the ini file is done in the setup() method so we'll manually call the setup() method
+        // which is normally called for you after this setup_plugins() method returns
         $this->Ini->setup();
 
-        // Now we will create a Server object using the Core_Plugin_Server class
-        // This will handle client connections for us. The server will run incoming commands against the array of
-        // Core_Lib_Command objects we will create below.
+        // Now we create a Server using the Core_Plugin_Server class. The plugin handles client connections and I/O for us.
+        // We simply configure the server and add a few commands that it will match client input against.
         $this->plugin('Server');
         $this->Server->blocking = false;
-        $this->Server->ip = $this->Ini['server']['ip'];
-        $this->Server->port = $this->Ini['server']['port'];
+        $this->Server->ip       = $this->Ini['server']['ip'];
+        $this->Server->port     = $this->Ini['server']['port'];
 
-
-        $cmd = new \Core_Lib_Command();
-        $cmd->regex = '/CLIENT_CONNECT/';
-        $cmd->callable = function($matches, $reply, $printer) {
+        // Each of the commands includes a regex that client input is matched against, and a Callable that, when matched,
+        // will be passed the array of $matches, a $reply function to send a reply message to the Client, and a $printer
+        // function that will write to stdout and/or the application log file.
+        $this->Server->newCommand ('/CLIENT_CONNECT/', function($matches, $reply, $printer) {
             $printer('Client Connected');
-        };
-        $this->Server->addCommand($cmd);
+        })
 
-
-        $cmd = new \Core_Lib_Command();
-        $cmd->regex = '/md5 (.+)/';
-        $cmd->callable = function($matches, $reply, $printer) {
-            $printer(print_r($matches, true));
+        ->newCommand ('/md5 (.+)/', function($matches, $reply, $printer) {
             $reply(md5(trim($matches[1])));
-        };
-        $this->Server->addCommand($cmd);
+        })
 
+        ->newCommand ('/(sha1|md5) x(\d+) (.+)/', function($matches, $reply, $printer) use($that) {
+            // This command lets a user recursively hash a string hundreds, thousands, even millions of times.
+            // We will pass this call off to a background worker to avoid blocking the event loop.
+            // Since we need to write a reply to the client, and we cannot reply directly from a background process, we
+            // save a reference to the $reply in a local array that we can access in the HashWorker's onReturn callback.
 
-        $cmd = new \Core_Lib_Command();
-        $cmd->regex = '/sha1 x(\d+) (.+)/';
-        $cmd->description = 'Repeated SHA1 hash. For example, recursively hash "foo" 100 times using SHA1: sha1 x100 foo';
-        $cmd->callable = function($matches, $reply, $printer) use($that) {
-            $printer(print_r($matches, true));
-            $call_id = $that->Sha1Worker($matches);
+            $algorithm = $matches[1];
+            $count     = $matches[2];
+            $string    = $matches[3];
+
+            $call_id = $that->HashWorker($algorithm, $count, $string);
             $that->reply_cache[$call_id] = $reply;
-        };
-        $this->Server->addCommand($cmd);
+        })
 
-
-        $cmd = new \Core_Lib_Command();
-        $cmd->regex = '/sha1 (.+)/';
-        $cmd->callable = function($matches, $reply, $printer) {
+        ->newCommand ('/sha1 (.+)/', function($matches, $reply, $printer) {
             $reply(sha1($matches[1]));
-        };
-        $this->Server->addCommand($cmd);
+        })
 
-
-        $cmd = new \Core_Lib_Command();
-        $cmd->regex = '/(.+)/';
-        $cmd->callable = function($matches, $reply, $printer) {
-            $printer('CRAZY THING RECD ' . $matches[1]);
-        };
-        $this->Server->addCommand($cmd);
+        ->newCommand ('/(.+)/', function($matches, $reply, $printer) {
+            if (trim($matches[1]))
+                $printer('Unknown Command: ' . $matches[1]);
+        });
     }
 
     protected function setup_workers()
@@ -110,32 +95,34 @@ class Daemon extends \Core_Daemon
         // Simple hash operations will be performed in-process with the reply written immediately back to the client.
         // But the server exposes a recursive hash feature that lets you hash-your-hash N times to produce a result
         // that takes more time to hash and thus takes more time to brute-force. These will be outsourced to a worker process.
-        $this->worker('Sha1Worker', function($matches)  {
-            if (!is_array($matches))
-                throw new \Exception('Invalid Input! Expected Array. Given: ' . gettype($matches));
+        $this->worker('HashWorker', function($algorithm, $count, $string)  {
+            if (!in_array($algorithm, array('sha1', 'md5')))
+                throw new \Exception('Invalid Input! Unknown algorithm: ' . $algorithm);
 
-            $count = $matches[1];
-            $string = $matches[2];
-
-            if (!is_numeric($count) || !is_string($string))
-                throw new \Exception('Invalid Input! Expected Matches Array as [Command, Count, String]');
+            if (!is_numeric($count) || !is_scalar($string))
+                throw new \Exception('Invalid Input! Expected numeric count and scalar string input.');
 
             for ($i=0; $i<$count; $i++)
-                $string = sha1($string);
+                $string = $algorithm($string);
 
             return $string;
         });
 
-        $this->Sha1Worker->timeout(180);
-        $this->Sha1Worker->workers(2);
-        $this->Sha1Worker->onReturn(function(\Core_Worker_Call $call, $log) use($that) {
+        $this->HashWorker->timeout(180);
+        $this->HashWorker->workers(2);
+        $this->HashWorker->onReturn(function($call, $log) use($that) {
             $reply = $that->reply_cache[$call->id];
             $reply($call->return);
+            unset($that->reply_cache[$call->id]);
         });
 
-        $this->Sha1Worker->onTimeout(function($call, $log) use($that) {
+        $this->HashWorker->onTimeout(function($call, $log) use($that) {
+
+            $log('Worker Timeout! Command: ' . $call->args[0][0]);
+
             $reply = $that->reply_cache[$call->id];
-            $reply('Timeout occurred while processing "' . $call->args[0][0] . '"');
+            $reply("error: timeout occurred while processing '{$call->args[0][0]}'");
+            unset($that->reply_cache[$call->id]);
         });
     }
 
@@ -148,7 +135,7 @@ class Daemon extends \Core_Daemon
 
     protected function execute()
     {
-        // This required method is unused in blocking-based servers.
+        // This required method is unused in this application.
     }
 
 

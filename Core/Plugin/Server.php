@@ -136,12 +136,32 @@ class Core_Plugin_Server implements Core_IPlugin
         return $errors;
     }
 
+    /**
+     * Add a Core_Lib_Command object to the command queue. Input from a client is evaluated against these commands
+     * in the order they are added
+     *
+     * @param Core_Lib_Command $command
+     */
     public function addCommand(Core_Lib_Command $command) {
         $this->commands[] = $command;
+        return $this;
+    }
+
+    /**
+     * An alternative to addCommand - a simple factory for Core_Lib_Command objects.
+     * @param $regex
+     * @param $callable
+     */
+    public function newCommand($regex, $callable) {
+        $cmd = new Core_Lib_Command();
+        $cmd->regex = $regex;
+        $cmd->callable = $callable;
+        return $this->addCommand($cmd);
     }
 
     public function run() {
 
+        // Build an array of sockets and select any with pending I/O
         $read = array (
             0 => $this->socket
         );
@@ -150,16 +170,9 @@ class Core_Plugin_Server implements Core_IPlugin
             $read[] = $client->socket;
 
         $result = @ socket_select($read, $write = null, $except = null, $this->blocking ? null : 1);
-        if ($result === false) {
-            $this->error('Socket Select Interruption: ' . socket_last_error());
+        if ($result === false || ($result === 0 && $this->blocking)) {
+            $this->error('Socket Select Interruption: ' . socket_strerror(socket_last_error()));
             return false;
-        }
-
-        if ($result === 0) {
-            if ($this->blocking)
-                $this->error('Socket Select Interruption: ' . socket_last_error());
-            else
-                $this->debug('Nothing waiting to be polled');
         }
 
         // If the master socket is in the $read array, there's a pending connection

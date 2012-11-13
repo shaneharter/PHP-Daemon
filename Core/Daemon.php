@@ -73,11 +73,9 @@ abstract class Core_Daemon
      *       this to 0 and dispatch the event periodically, eg:
      *       $this->dispatch(array(self::ON_IDLE));
      *
-     *
-     *
      * @var float The probability, from 0.0 to 1.0.
      */
-    protected $idle_probability = 0.1;
+    protected $idle_probability = 0.50;
 
     /**
      * The frequency of your application restarting itself. In seconds.
