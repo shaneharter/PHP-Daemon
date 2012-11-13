@@ -3,18 +3,38 @@
 namespace Examples\HashServer;
 
 /**
- * This Daemon has been created to demonstrate the Workers API in 2.0.
+ * This example application demonstrates the Socket Server and Background Worker features in PHP Simple Daemon.
+ * At startup, it binds to the IP and Port specified in the server.ini file. It responds to incoming client requests
+ * to hash a given string.
  *
- * It creates two workers: a simple closure-based worker that computers factors, and
- * an object-based Prime Numbers worker.
+ * Lightweight requests to perform a single hash are done inline to the main process and returned immediately.
  *
- * It runs jobs randomly and in response to signals and writes the jobs in a log to the MySQL table
- * described in the db.sql file.
+ * Heavier requests to perform recursive hashing are passed off to a background process using the Worker API with their
+ * result sent as a client reply when the worker returns.
  *
+ * Using background workers for large tasks, a non-blocking socket server can successfully server a large number of
+ * concurrent clients.
+ *
+ * @author Shane Harter
  */
 class Daemon extends \Core_Daemon
 {
+    /**
+     * By setting the interval to 0, we are choosing an event loop that is paced by client I/O rather than a timer-driven
+     * do-X-every-N-seconds approach.
+     * @var int
+     */
     protected $loop_interval = 0;
+
+    /**
+     * We're telling to the application to dispatch on ON_IDLE event every other iteration of the event loop. Various
+     * plugins and the Worker and Task API's and the Core_Daemon class itself attach things like garbage collection
+     * and stats processing to run ON_IDLE.
+     *
+     * This is one big lever we have to tweak the performance aspects of our application under high load.
+     *
+     * @var float
+     */
     protected $idle_probability = 0.5;
 
     /**
@@ -59,8 +79,8 @@ class Daemon extends \Core_Daemon
             $printer('Client Connected');
         })
 
-        ->newCommand ('/md5 (.+)/', function($matches, $reply, $printer) {
-            $reply(md5(trim($matches[1])));
+        ->newCommand ('/CLIENT_DISCONNECT/', function($matches, $reply, $printer) {
+            $printer('Client Disconnected');
         })
 
         ->newCommand ('/(sha1|md5) x(\d+) (.+)/', function($matches, $reply, $printer) use($that) {
@@ -77,6 +97,10 @@ class Daemon extends \Core_Daemon
             $that->reply_cache[$call_id] = $reply;
         })
 
+        ->newCommand ('/md5 (.+)/', function($matches, $reply, $printer) {
+            $reply(md5(trim($matches[1])));
+        })
+
         ->newCommand ('/sha1 (.+)/', function($matches, $reply, $printer) {
             $reply(sha1($matches[1]));
         })
@@ -85,6 +109,11 @@ class Daemon extends \Core_Daemon
             if (trim($matches[1]))
                 $printer('Unknown Command: ' . $matches[1]);
         });
+
+        // If you were building a more complex server it would need to implement a more complete and complicated protocol.
+        // You can easily move all of the newCommand() or addCommand() calls from this method. Commands can be added and removed
+        // dynamically, after the sever is created, even after clients have connected. But putting them here makes for
+        // the simplest example.
     }
 
     protected function setup_workers()
@@ -129,7 +158,7 @@ class Daemon extends \Core_Daemon
 
     protected function setup()
     {
-        $this->log("The HashServer Application is Running at {$this->Ini[server][ip]}:{$this->Ini[server][port]}");
+        $this->log("The HashServer Application is Running at {$this->Ini['server']['ip']}:{$this->Ini['server']['port']}");
     }
 
 

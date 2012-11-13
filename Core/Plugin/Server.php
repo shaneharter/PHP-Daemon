@@ -65,7 +65,7 @@ class Core_Plugin_Server implements Core_IPlugin
      * a response and return immediately if there aren't any.
      * @var bool
      */
-    public $blocking = true;
+    public $blocking = false;
 
     /**
      * Write verbose logging to the application log when true.
