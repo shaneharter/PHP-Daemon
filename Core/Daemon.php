@@ -359,7 +359,7 @@ abstract class Core_Daemon
         if ($this->is('parent') && $this->get('pid_file') && file_exists($this->get('pid_file')) && file_get_contents($this->get('pid_file')) == $this->pid)
             unlink($this->get('pid_file'));
 
-        if ($this->is('parent') && $this->is('verbose'))
+        if ($this->is('parent') && $this->is('stdout'))
             echo PHP_EOL;
     }
 
@@ -630,7 +630,7 @@ abstract class Core_Daemon
             if (strlen($log_file) > 0 && $handle = @fopen($log_file, 'a+')) {
                 if ($this->is('parent')) {
                     fwrite($handle, $header);
-                    if ($this->is('verbose'))
+                    if ($this->is('stdout'))
                         echo $header;
                 }
             } elseif (!$log_file_error) {
@@ -644,8 +644,16 @@ abstract class Core_Daemon
         if ($handle)
             fwrite($handle, $message);
 
-        if ($this->is('verbose'))
+        if ($this->is('stdout'))
             echo $message;
+    }
+
+    public function debug($message, $label = '')
+    {
+        if (!$this->is('verbose'))
+            return;
+
+        $this->log($message, $label);
     }
 
     /**
@@ -1086,7 +1094,7 @@ abstract class Core_Daemon
      */
     protected function getopt()
     {
-        $opts = getopt('hHiI:o:dp:', array('install', 'recoverworkers', 'debugworkers'));
+        $opts = getopt('hHiI:o:dp:', array('install', 'recoverworkers', 'debugworkers', 'verbose'));
 
         if (isset($opts['H']) || isset($opts['h']))
             $this->show_help();
@@ -1107,7 +1115,8 @@ abstract class Core_Daemon
         $this->set('daemonized',        isset($opts['d']));
         $this->set('recover_workers',   isset($opts['recoverworkers']));
         $this->set('debug_workers',     isset($opts['debugworkers']));
-        $this->set('verbose',           !$this->is('daemonized') && !$this->get('debug_workers'));
+        $this->set('stdout',            !$this->is('daemonized') && !$this->get('debug_workers'));
+        $this->set('verbose',           $this->is('stdout') && isset($opts['verbose']));
 
         if (isset($opts['p'])) {
             $handle = @fopen($opts['p'], 'w');
@@ -1138,7 +1147,7 @@ abstract class Core_Daemon
 
         echo get_class($this);
         $out[] =  'USAGE:';
-        $out[] =  ' # ' . basename($this->get('filename')) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--recoverworkers] [--debugworkers]';
+        $out[] =  ' $ ' . basename($this->get('filename')) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--verbose] [--debugworkers]';
         $out[] =  '';
         $out[] =  'OPTIONS:';
         $out[] =  ' -H Shows this help';
@@ -1152,8 +1161,9 @@ abstract class Core_Daemon
         $out[] =  ' -d Daemon, detach and run in the background';
         $out[] =  ' -p PID_FILE File to write process ID out to';
         $out[] =  '';
-        $out[] =  ' --recoverworkers';
-        $out[] =  '   Attempt to recover pending and incomplete calls from a previous instance of the daemon. Should be run under supervision after a daemon crash. Experimental.';
+        $out[] =  ' --verbose';
+        $out[] =  '   Include debug messages in the application log.';
+        $out[] =  '   Note: When run as a daemon (-d) or with a debug shell (--debugworkers), application log messages are written only to the log file.';
         $out[] =  '';
         $out[] =  ' --debugworkers';
         $out[] =  '   Run workers under a debug console. Provides tools to debug the inter-process communication between workers.';
