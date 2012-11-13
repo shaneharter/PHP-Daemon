@@ -106,7 +106,7 @@ class Core_Plugin_Server implements Core_IPlugin
         }
 
         socket_listen($this->socket);
-        $this->daemon->on(Core_Daemon::ON_PREEXECUTE, array($this, 'run'));
+        $this->daemon->on(Core_Daemon::ON_POSTEXECUTE, array($this, 'run'));
     }
 
     /**
@@ -114,7 +114,14 @@ class Core_Plugin_Server implements Core_IPlugin
      * @return void
      */
     public function teardown() {
-        // TODO: Implement teardown() method.
+        foreach(array_keys($this->clients) as $slot)
+            $this->disconnect($slot);
+
+        @ socket_shutdown($this->socket, 1);
+        usleep(500);
+        @ socket_shutdown($this->socket, 0);
+        @ socket_close($this->socket);
+        $this->socket = null;
     }
 
     /**
@@ -123,7 +130,10 @@ class Core_Plugin_Server implements Core_IPlugin
      * @return Array  Return array of error messages (Think stuff like "GD Library Extension Required" or "Cannot open /tmp for Writing") or an empty array
      */
     public function check_environment(Array $errors = array()) {
-        // TODO: Implement check_environment() method.
+        if (!is_callable('socket_create'))
+            $errors[] = 'Socket support is currently unavailable: You must add the php_sockets extension to your php.ini or recompile php with the --enable-sockets option set';
+
+        return $errors;
     }
 
     public function addCommand(Core_Lib_Command $command) {
@@ -139,7 +149,7 @@ class Core_Plugin_Server implements Core_IPlugin
         foreach($this->clients as $client)
             $read[] = $client->socket;
 
-        $result = socket_select($read, $write = null, $except = null, $this->blocking ? null : 1);
+        $result = @ socket_select($read, $write = null, $except = null, $this->blocking ? null : 1);
         if ($result === false) {
             $this->error('Socket Select Interruption: ' . socket_last_error());
             return false;
@@ -149,7 +159,7 @@ class Core_Plugin_Server implements Core_IPlugin
             if ($this->blocking)
                 $this->error('Socket Select Interruption: ' . socket_last_error());
             else
-                $this->log('Nothing waiting to be polled');
+                $this->debug('Nothing waiting to be polled');
         }
 
         // If the master socket is in the $read array, there's a pending connection
@@ -179,14 +189,14 @@ class Core_Plugin_Server implements Core_IPlugin
     private function connect() {
         $slot = $this->slot();
         if ($slot === null)
-            throw new Exception(sprintf('%s::%s Failed - Maximum number of connections has been reached.', __CLASS__, __METHOD__));
+            throw new Exception(sprintf('%s Failed - Maximum number of connections has been reached.', __METHOD__));
 
         $this->debug("Creating New Connection");
 
         $client = new stdClass();
         $client->socket = socket_accept($this->socket);
         if (empty($client->socket))
-            throw new Exception(sprintf('%s::%s Failed - socket_accept failed with error: %s', __CLASS__, __METHOD__, socket_last_error()));
+            throw new Exception(sprintf('%s Failed - socket_accept failed with error: %s', __METHOD__, socket_last_error()));
 
         socket_getpeername($client->socket, $client->ip);
 
@@ -213,7 +223,14 @@ class Core_Plugin_Server implements Core_IPlugin
     }
 
     private function disconnect($slot) {
-        $this->command(self::COMMAND_DISCONNECT, array($this->clients[$slot]));
+        $daemon = $this->daemon;
+        $this->command(self::COMMAND_DISCONNECT, array($this->clients[$slot]->write, function($str) use ($daemon) {
+            $daemon->log($str, 'SocketServer');
+        }));
+
+        @ socket_shutdown($this->clients[$slot]->socket, 1);
+        usleep(500);
+        @ socket_shutdown($this->clients[$slot]->socket, 0);
         @ socket_close($this->clients[$slot]->socket);
         unset($this->clients[$slot]);
     }
@@ -230,7 +247,7 @@ class Core_Plugin_Server implements Core_IPlugin
         if (!$this->debug)
             return;
 
-        $this->daemon->log($message, 'SocketServer');
+        $this->daemon->debug($message, 'SocketServer');
     }
 
     private function error($message) {
