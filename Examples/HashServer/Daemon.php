@@ -15,7 +15,19 @@ namespace Examples\HashServer;
 class Daemon extends \Core_Daemon
 {
     protected $loop_interval = 0;
-    protected $idle_probability = 0.25;
+    protected $idle_probability = 1;
+
+    /**
+     * When we send commands to a background worker to process, we need to cache a reference to the $reply closure
+     * that's used to write a reply to a client. We'll use this in the onReturn callback for the worker to pass the
+     * return value down the pipe to the client that sent the original request.
+     *
+     * This is necessary because the $reply and $printer closures passed to a server Command object cannot themselves
+     * be passed to the background worker.
+     *
+     * @var array
+     */
+    public $reply_cache = array();
 
     protected function setup_plugins()
     {
@@ -41,6 +53,7 @@ class Daemon extends \Core_Daemon
         // This will handle client connections for us. The server will run incoming commands against the array of
         // Core_Lib_Command objects we will create below.
         $this->plugin('Server');
+        $this->Server->blocking = false;
         $this->Server->ip = $this->Ini['server']['ip'];
         $this->Server->port = $this->Ini['server']['port'];
 
@@ -56,6 +69,7 @@ class Daemon extends \Core_Daemon
         $cmd = new \Core_Lib_Command();
         $cmd->regex = '/md5 (.+)/';
         $cmd->callable = function($matches, $reply, $printer) {
+            $printer(print_r($matches, true));
             $reply(md5(trim($matches[1])));
         };
         $this->Server->addCommand($cmd);
@@ -64,7 +78,11 @@ class Daemon extends \Core_Daemon
         $cmd = new \Core_Lib_Command();
         $cmd->regex = '/sha1 x(\d+) (.+)/';
         $cmd->description = 'Repeated SHA1 hash. For example, recursively hash "foo" 100 times using SHA1: sha1 x100 foo';
-        $cmd->callable = array($this, 'Sha1Worker');
+        $cmd->callable = function($matches, $reply, $printer) use($that) {
+            $printer(print_r($matches, true));
+            $call_id = $that->Sha1Worker($matches);
+            $that->reply_cache[$call_id] = $reply;
+        };
         $this->Server->addCommand($cmd);
 
 
@@ -92,34 +110,32 @@ class Daemon extends \Core_Daemon
         // Simple hash operations will be performed in-process with the reply written immediately back to the client.
         // But the server exposes a recursive hash feature that lets you hash-your-hash N times to produce a result
         // that takes more time to hash and thus takes more time to brute-force. These will be outsourced to a worker process.
-        $this->worker('Sha1Worker', function($matches, $reply, $printer)  {
+        $this->worker('Sha1Worker', function($matches)  {
             if (!is_array($matches))
-                throw new Exception('Invalid Input! Expected Array. Given: ' . gettype($matches));
+                throw new \Exception('Invalid Input! Expected Array. Given: ' . gettype($matches));
 
             $count = $matches[1];
             $string = $matches[2];
 
             if (!is_numeric($count) || !is_string($string))
-                throw new Exception('Invalid Input! Expected Matches Array as [Command, Count, String]');
+                throw new \Exception('Invalid Input! Expected Matches Array as [Command, Count, String]');
 
             for ($i=0; $i<$count; $i++)
                 $string = sha1($string);
 
-            return function() use($printer, $string) {
-               return $printer($string);
-            };
+            return $string;
         });
 
         $this->Sha1Worker->timeout(180);
         $this->Sha1Worker->workers(2);
         $this->Sha1Worker->onReturn(function(\Core_Worker_Call $call, $log) use($that) {
-            $callable = $call->return;
-            $callable();
+            $reply = $that->reply_cache[$call->id];
+            $reply($call->return);
         });
 
         $this->Sha1Worker->onTimeout(function($call, $log) use($that) {
-            $replyer = $call->args[2];
-            $replyer('Sha1 Hash Timeout :(');
+            $reply = $that->reply_cache[$call->id];
+            $reply('Timeout occurred while processing "' . $call->args[0][0] . '"');
         });
     }
 
