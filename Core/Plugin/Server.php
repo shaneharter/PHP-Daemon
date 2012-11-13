@@ -1,9 +1,20 @@
 <?php
 
-
+/**
+ * Create a simple socket server.
+ * Supply an IP and Port for incoming connections. Add any number of Core_Lib_Command objects to parse client input.
+ *
+ * Used in blocking mode, this can be the backbone of a Core_Daemon based server with a loop_interval set to Null.
+ * Alternatively, you could set $blocking = false and use it to interact with a timer-based Core_Daemon application.
+ *
+ * Can be combined with the Worker API by adding Command objects that call methods attached to a Worker. That would leave
+ * the main Application process to handle connections and client input, worker process management, and passing commands
+ * between client input to worker calls, and worker return values to client output.
+ *
+ */
 class Core_Plugin_Server implements Core_IPlugin
 {
-    const COMMAND_CONNECT       = 'CLIENT_CONNCT';
+    const COMMAND_CONNECT       = 'CLIENT_CONNECT';
     const COMMAND_DISCONNECT    = 'CLIENT_DISCONNECT';
     const COMMAND_DESTRUCT      = 'SERVER_DISCONNECT';
 
@@ -117,8 +128,10 @@ class Core_Plugin_Server implements Core_IPlugin
 
     public function run() {
 
+        $read = array (
+            0 => $this->socket
+        );
 
-        $read[0] = $this->socket;
         foreach($this->clients as $client)
             $read[] = $client->socket;
 
@@ -135,11 +148,11 @@ class Core_Plugin_Server implements Core_IPlugin
                 $this->log('Nothing waiting to be polled');
         }
 
-        // If the master socket is in the read array, there's a pending connection
+        // If the master socket is in the $read array, there's a pending connection
         if (in_array($this->socket, $read))
             $this->connect();
 
-
+        // Handle input from sockets in the $read array.
         foreach($this->clients as $slot => $client) {
             if (!in_array($client->socket, $read))
                 continue;

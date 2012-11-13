@@ -1,0 +1,2 @@
+cd ..
+php Examples/HashServer/run.php -p ./Examples/HashServer/pid $1
