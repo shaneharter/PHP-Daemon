@@ -9,26 +9,26 @@
 RETVAL=0
 
 case "$1" in
-    start)
-      %2$s
-      RETVAL=$?
-  ;;
-    stop)
-      kill `cat /var/run/%1$s.pid`
-      RETVAL=$?
-  ;;
-    restart)
-      kill `cat /var/run/%1$s.pid`
-      %2$s
-      RETVAL=$?
-  ;;
-    status)
-      RETVAL=$?
-  ;;
-    *)
-      echo "Usage: %1$s {start|stop|restart}"
-      exit 1
-  ;;
+		start)
+			%2$s
+			RETVAL=$?
+	;;
+		stop)
+			kill `cat /var/run/%1$s.pid`
+			RETVAL=$?
+	;;
+		restart)
+			kill `cat /var/run/%1$s.pid`
+			%2$s
+			RETVAL=$?
+	;;
+		status)
+			RETVAL=$?
+	;;
+		*)
+			echo "Usage: %1$s {start|stop|restart}"
+			exit 1
+	;;
 esac
 
 exit $RETVAL
