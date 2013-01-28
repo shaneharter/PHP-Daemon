@@ -10,45 +10,45 @@
  */
 final class Core_Worker_Debug_FunctionMediator extends Core_Worker_Debug_Mediator
 {
-    /**
-     * @var Core_IWorker
-     */
-    protected $function;
+		/**
+		 * @var Core_IWorker
+		 */
+		protected $function;
 
-    /**
-     * Set a function that will be executed asynchronously in the background. Given the alias "execute()" internally.
-     * @param callable $f
-     * @throws Exception
-     */
-    public function setFunction($f) {
-        if (!is_callable($f)) {
-            throw new Exception(__METHOD__ . " Failed. Supplied argument is not callable!");
-        }
-        $this->function = $f;
-        $this->methods = array('execute');
-    }
+		/**
+		 * Set a function that will be executed asynchronously in the background. Given the alias "execute()" internally.
+		 * @param callable $f
+		 * @throws Exception
+		 */
+		public function setFunction($f) {
+				if (!is_callable($f)) {
+						throw new Exception(__METHOD__ . " Failed. Supplied argument is not callable!");
+				}
+				$this->function = $f;
+				$this->methods = array('execute');
+		}
 
-    protected function get_callback($method) {
-        switch ($method) {
-            case 'execute':
-                return $this->function;
-                break;
+		protected function get_callback($method) {
+				switch ($method) {
+						case 'execute':
+								return $this->function;
+								break;
 
-            case 'setup':
-                return function() {
+						case 'setup':
+								return function() {
 
-                };
-                break;
+								};
+								break;
 
-            case 'teardown':
-                $that = $this;
-                return function() use ($that) {
-                    $that->function = null;
-                };
-                break;
+						case 'teardown':
+								$that = $this;
+								return function() use ($that) {
+										$that->function = null;
+								};
+								break;
 
-            default:
-                throw new Exception("$method() is Not Callable.");
-        }
-    }
+						default:
+								throw new Exception("$method() is Not Callable.");
+				}
+		}
 }

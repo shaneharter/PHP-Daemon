@@ -6,40 +6,40 @@
  */
 class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
 {
-    const ADDRESS = 1;
+		const ADDRESS = 1;
 
-    /**
-     * @var Resource
-     */
+		/**
+		 * @var Resource
+		 */
 	private $shm = false;
 
 	public function __construct()
 	{
 		$this->pid = getmypid();
 	}
-	
+
 	public function setup()
 	{
-        $ftok = ftok(Core_Daemon::filename(), 'L');
-        $this->shm = shm_attach($ftok, 512, 0666);
+				$ftok = ftok(Core_Daemon::filename(), 'L');
+				$this->shm = shm_attach($ftok, 512, 0666);
 	}
-	
+
 	public function teardown()
 	{
 		// If this PID set this lock, release it
 		$lock = shm_get_var($this->shm, self::ADDRESS);
 		if ($lock == $this->pid) {
 			shm_remove($this->shm);
-            shm_detach($this->shm);
-        }
+						shm_detach($this->shm);
+				}
 	}
-	
+
 	public function check_environment()
 	{
 		$errors = array();
 		return $errors;
 	}
-	
+
 	public function set()
 	{
 		$lock = $this->check();
@@ -48,7 +48,7 @@ class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
 
 		shm_put_var($this->shm, self::ADDRESS, array('pid' => $this->pid, 'time' => time()));
 	}
-	
+
 	protected function get()
 	{
 		$lock = shm_get_var($this->shm, self::ADDRESS);
@@ -57,10 +57,10 @@ class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
 		if ($lock['pid'] == $this->pid)
 			return false;
 
-        // If it's expired...
-        if ($lock['time'] + $this->ttl + Core_Lock_Lock::$LOCK_TTL_PADDING_SECONDS >= time())
-            return $lock;
-		
+				// If it's expired...
+				if ($lock['time'] + $this->ttl + Core_Lock_Lock::$LOCK_TTL_PADDING_SECONDS >= time())
+						return $lock;
+
 		return false;
 	}
 }

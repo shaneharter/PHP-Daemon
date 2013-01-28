@@ -35,49 +35,49 @@ PASS --confirm TO RUN THE CLEANER" . PHP_EOL . PHP_EOL;
 
 $opt = getopt('mqs', array('confirm'));
 if (!$opt)
-    die($warning);
+		die($warning);
 
 $ipcs = array();
 exec('ipcs', $ipcs);
 foreach($ipcs as $row) {
 
-    if (!isset($opt['m'])) {
-        if (strpos($row, 'Shared Memory Segments') > 0) {
-            echo PHP_EOL, "Cleaning Shared Memory Segments...";
-            $flag = '-m';
-            continue;
-        }
-    }
+		if (!isset($opt['m'])) {
+				if (strpos($row, 'Shared Memory Segments') > 0) {
+						echo PHP_EOL, "Cleaning Shared Memory Segments...";
+						$flag = '-m';
+						continue;
+				}
+		}
 
-    if (!isset($opt['q'])) {
-        if (strpos($row, 'Message Queues') > 0) {
-            echo PHP_EOL, "Cleaning Message Queues...";
-            $flag = '-q';
-            continue;
-        }
-    }
+		if (!isset($opt['q'])) {
+				if (strpos($row, 'Message Queues') > 0) {
+						echo PHP_EOL, "Cleaning Message Queues...";
+						$flag = '-q';
+						continue;
+				}
+		}
 
-    if (!isset($opt['s'])) {
-        if (strpos($row, 'Semaphore Arrays') > 0) {
-            echo PHP_EOL, "Cleaning Semaphore Arrays...";
-            $flag = '-s';
-            continue;
-        }
-    }
+		if (!isset($opt['s'])) {
+				if (strpos($row, 'Semaphore Arrays') > 0) {
+						echo PHP_EOL, "Cleaning Semaphore Arrays...";
+						$flag = '-s';
+						continue;
+				}
+		}
 
-    $row = explode(' ', $row);
+		$row = explode(' ', $row);
 
-    if (!isset($row[1]))
-        continue;
+		if (!isset($row[1]))
+				continue;
 
-    $id  = trim($row[1]);
-    if (!is_numeric($id))
-        continue;
+		$id	= trim($row[1]);
+		if (!is_numeric($id))
+				continue;
 
-    // Note: Consider adding filters here if you want to selectively remove resources
+		// Note: Consider adding filters here if you want to selectively remove resources
 
-    echo PHP_EOL, "Removing Address {$id}";
-    @exec("ipcrm {$flag} {$id}");
+		echo PHP_EOL, "Removing Address {$id}";
+		@exec("ipcrm {$flag} {$id}");
 }
 
 echo PHP_EOL, "** DONE **", PHP_EOL, PHP_EOL;
