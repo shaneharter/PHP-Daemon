@@ -1,11 +1,14 @@
 {
     "name": "shaneharter/php-daemon",
     "description": "Create solid, long-running PHP daemon processes",
-    "keywords": ["php","daemon"],
+    "keywords": ["php", "daemon"],
     "type": "library",
-    "license": "MIT",   
-    "require": 
-    {
-        "php": ">=5.3.0"
+    "license": "MIT",
+    "require": {
+        "php": ">=5.3.0",
+        "ext-pcntl": "*"
+    },
+    "autoload": {
+        "psr-0": {"Core": ""}
     }
 }
