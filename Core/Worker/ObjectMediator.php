@@ -46,8 +46,7 @@ final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
         parent::setup();
     }
 
-    public function check_environment() {
-        $errors = array();
+    public function check_environment(Array $errors = array()) {
 
         if (!is_object($this->object) || !$this->object instanceof Core_IWorker)
             $errors[] = 'Invalid worker object. Workers must implement Core_IWorker';
