@@ -38,13 +38,13 @@ final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
         $this->methods = get_class_methods($this->class);
     }
 
-    public function setup() {
+    /*public function setup() {
 
         if (!Core_Daemon::is('parent')) {
             $this->object->setup();
         }
         parent::setup();
-    }
+    }*/
 
     public function check_environment(Array $errors = array()) {
         $errors = array();
