@@ -46,7 +46,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         if (!$malloc)
             $malloc = 5 * 1024 * 1024;
 
-        $this->memory_allocation = $malloc;
+        $this->malloc($malloc);
     }
 
     public function __destruct()  {
@@ -511,13 +511,11 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
      * Remove and release shared memory and message queue resources
      * @return mixed
      */
-    public function release()
-    {
-        // Ensure we have an open connection to the resources we want to release.
-        if (!$this->shm || !$this->queue)
-            $this->setup_ipc();
+    public function release() {
+        if ($this->shm)
+        	@shm_remove($this->shm);
 
-        @shm_remove($this->shm);
-        @msg_remove_queue($this->queue);
+        if ($this->queue)
+        	@msg_remove_queue($this->queue);
     }
 }
