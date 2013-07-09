@@ -221,7 +221,7 @@ abstract class Core_Daemon
      * @param $key
      * @param $value
      */
-    private static function set($key, $value)
+    protected static function set($key, $value)
     {
         self::$env[$key] = $value;
     }
@@ -276,7 +276,7 @@ abstract class Core_Daemon
         if (is_numeric($this->loop_interval) == false)
             $errors[] = "Invalid Loop Interval: $this->loop_interval";
 
-        if (empty($this->auto_restart_interval) || is_numeric($this->auto_restart_interval) == false)
+        if (is_numeric($this->auto_restart_interval) == false)
             $errors[] = "Invalid auto-restart interval: $this->auto_restart_interval";
 
         if (is_numeric($this->auto_restart_interval) && $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
