@@ -185,6 +185,13 @@ abstract class Core_Worker_Mediator implements Core_ITask
     protected $guid;
 
     /**
+    * Flag to enable or disable worker auto-restart mechanism
+    * 
+    * @var bool
+    */
+    protected $auto_restart = true;
+    
+    /**
      * Array of accumulated error counts. Error thresholds are localized and when reached will
      * raise a fatal error. Generally thresholds on workers are much lower than on the daemon process
      * @var array
@@ -523,15 +530,15 @@ abstract class Core_Worker_Mediator implements Core_ITask
             // This is a bit ugly but ftok needs a filesystem path so we give it one using the daemon filename and
             // current worker alias.
 
-            @mkdir('/tmp/.phpdaemon');
-            $ftok = sprintf('/tmp/.phpdaemon/%s_%s', str_replace('/', '_', $this->daemon->get('filename')), $this->alias);
+            $tmp = sys_get_temp_dir();
+            $ftok = sprintf($tmp . '/%s_%s', str_replace('/', '_', $this->daemon->get('filename')), $this->alias);
             if (!touch($ftok))
-                $this->fatal_error("Unable to create Worker ID. ftok() failed. Could not write to /tmp directory at {$ftok}");
+                $this->fatal_error("Unable to create Worker ID. ftok() failed. Could not write to {$tmp} directory at {$ftok}");
 
             $this->guid = ftok($ftok, $this->alias[0]);
             @unlink($ftok);
 
-            if (!is_numeric($this->guid))
+            if ($this->guid == -1)
                 $this->fatal_error("Unable to create Worker ID. ftok() failed. Unexpected return value: $this->guid");
 
             $this->via->setup();
@@ -751,15 +758,17 @@ abstract class Core_Worker_Mediator implements Core_ITask
         $entropy = round((mt_rand(-1000, 1000) + mt_rand(-1000, 1000) + mt_rand(-1000, 1000)) / 100, 0);
         $recycle = false;
 
-        while(!Core_Daemon::is('parent') && !Core_Daemon::is('shutdown') && !$recycle) {
+        while (!Core_Daemon::is('parent') && !Core_Daemon::is('shutdown') && !$recycle) {
 
             // Give the CPU a break - Sleep for 1/20 a second.
             usleep(50000);
 
-            $max_jobs       = $this->call_count++ >= (25 + $entropy);
-            $min_runtime    = $this->daemon->runtime() >= (60 * 5);
-            $max_runtime    = $this->daemon->runtime() >= (60 * 30 + $entropy * 10);
-            $recycle        = ($max_runtime || $min_runtime && $max_jobs);
+            if ($this->auto_restart) {
+            	$max_jobs       = $this->call_count++ >= (25 + $entropy);
+            	$min_runtime    = $this->daemon->runtime() >= (60 * 5);
+            	$max_runtime    = $this->daemon->runtime() >= (60 * 30 + $entropy * 10);
+            	$recycle        = ($max_runtime || $min_runtime && $max_jobs);
+			}
 
             if (mt_rand(1, 5) == 1)
                 $this->garbage_collector();
@@ -1220,12 +1229,30 @@ abstract class Core_Worker_Mediator implements Core_ITask
      *
      * @param int $workers
      * @throws Exception
+     * @return void
      */
     public function workers($workers) {
-        if (!is_int($workers))
-            throw new Exception(__METHOD__ . " Failed. Integer value expected.");
+        if (!ctype_digit((string)$workers))
+            throw new Exception(__METHOD__ . " Failed. Numeric value expected.");
 
-        $this->workers = $workers;
+        $this->workers = (int)$workers;
+    }
+    
+    /**
+     * Enable or disable worker auto restart mechanism. To find out how it works
+     * look at the beginning of Core_Worker_Mediator::start() method
+     * 
+     * Auto restart is enabled by default
+     *
+     * @param bool $restart
+     * @throws Exception
+     * @return void
+     */
+    public function auto_restart($restart) {
+        if (!is_bool($restart))
+            throw new Exception(__METHOD__ . " Failed. Boolean value expected.");
+
+        $this->auto_restart = $restart;
     }
 
     /**
