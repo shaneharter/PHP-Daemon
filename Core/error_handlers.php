@@ -26,14 +26,17 @@ function daemon_error($errno, $errstr, $errfile, $errline, $errcontext = null, E
     static $runonce = true;
     static $is_writable = true;
 
-	// Respect the error_reporting Level
-	if(($errno & error_reporting()) == 0)
-		return true;
+    // Respect the error_reporting Level
+    if (($errno & error_reporting()) == 0)
+        return true;
 
-    if ($runonce) {
-        if (ini_get('log_errors')) {
+    if ($runonce)
+    {
+        if (ini_get('log_errors'))
+        {
             $error_log = ini_get('error_log');
-            if ($error_log != 'syslog' && !is_writable($error_log)) {
+            if ($error_log != 'syslog' && !is_writable($error_log))
+            {
                 $is_writable = false;
                 error_log("\nNote: The PHP error_log at {$error_log} is not writable! Errors will be written to STDERR. Fix the permissions problem or correct the error_log path.");
             }
@@ -41,9 +44,10 @@ function daemon_error($errno, $errstr, $errfile, $errline, $errcontext = null, E
         $runonce = false;
     }
 
-	$is_fatal = false;
+    $is_fatal = false;
 
-    switch ($errno) {
+    switch ($errno)
+    {
         case -1:
             // Custom - Works with the daemon_exception exception handler
             $is_fatal = true;
@@ -59,36 +63,41 @@ function daemon_error($errno, $errstr, $errfile, $errline, $errcontext = null, E
             break;
         case E_ERROR:
         case E_USER_ERROR:
-        	$is_fatal = true;
+            $is_fatal = true;
             $errors = 'Fatal Error';
             break;
         default:
             $errors = 'Unknown';
             break;
-	}
+    }
 
-	$message = sprintf('PHP %s: %s in %s on line %d pid %s', $errors, $errstr, $errfile, $errline, getmypid());
+    $message = sprintf('PHP %s: %s in %s on line %d pid %s', $errors, $errstr, $errfile, $errline, getmypid());
 
-    if (ini_get('log_errors')) {
+    if (ini_get('log_errors'))
+    {
         error_log($message);
-        if ($is_fatal) {
+        if ($is_fatal)
+        {
             if (!$e)
                 $e = new Exception;
             error_log(str_replace(PHP_EOL, PHP_EOL . str_repeat(' ', 23), print_r($e->getTraceAsString(), true)));
         }
     }
 
-    if (ini_get('display_errors') && (!ini_get('log_errors') || $is_writable)) {
-    	echo PHP_EOL, $message, PHP_EOL;
-        if ($is_fatal) {
+    if (ini_get('display_errors') && (!ini_get('log_errors') || $is_writable))
+    {
+        echo PHP_EOL, $message, PHP_EOL;
+        if ($is_fatal)
+        {
             if (!$e)
                 $e = new Exception;
             echo $e->getTraceAsString(), PHP_EOL;
         }
     }
 
-    if ($is_fatal) {
-    	exit(1);
+    if ($is_fatal)
+    {
+        exit(1);
     }
 
     return true;
@@ -99,7 +108,8 @@ function daemon_error($errno, $errstr, $errfile, $errline, $errcontext = null, E
  * @param Exception $e
  *
  */
-function daemon_exception(Exception $e) {
+function daemon_exception(Exception $e)
+{
     daemon_error(-1, $e->getMessage(), $e->getFile(), $e->getLine(), null, $e);
 }
 
@@ -113,21 +123,21 @@ function daemon_shutdown_function()
     $error = error_get_last();
 
     if (is_array($error) && isset($error['type']) == false)
-    	return;
+        return;
 
-    switch($error['type'])
+    switch ($error['type'])
     {
-    	case E_ERROR:
-    	case E_PARSE:
-    	case E_CORE_ERROR:
-    	case E_CORE_WARNING:
-    	case E_COMPILE_ERROR:
+        case E_ERROR:
+        case E_PARSE:
+        case E_CORE_ERROR:
+        case E_CORE_WARNING:
+        case E_COMPILE_ERROR:
 
-			//daemon_error($error['type'], $error['message'], $error['file'], $error['line']);
+            //daemon_error($error['type'], $error['message'], $error['file'], $error['line']);
     }
 }
+
 error_reporting(E_ALL);
-//error_reporting(E_WARNING | E_USER_ERROR);
 set_error_handler('daemon_error');
 set_exception_handler('daemon_exception');
 register_shutdown_function('daemon_shutdown_function');
