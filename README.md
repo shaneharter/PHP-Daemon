@@ -9,11 +9,13 @@ Create solid, long-running PHP daemon processes by extending the Core_Daemon cla
 * A POSIX compatible operating system (Linux, OSX, BSD)
 * POSIX and PCNTL Extensions for PHP
  
-#### Changes in 2.0:
-* Create asynchronous background workers with the new Worker API. See the `PrimeNumbers` example application or the Wiki.
-* Hook into a simple callback system using familiar `on(event, callable)` & `off()` syntax. Built-in events give you the ability to hook into application state changes, or make your own to create a simple message bus for your application.
-* Create event loops that are not timer-based (build socket-servers, or use blocking system calls with ease)
-* Dozens of additional enhancements and bug fixes.
+#### [NEW] Version 2.1 Released!
+* After a 9 month beta period, the code that was in the branch `feature_abstract_ipc` has been merged into master as v2.1
+* Exciting features in 2.1 include:
+  * A major refactoring of the Worker API includes pluggable IPC classes: Channel worker communication over any popular message queue or stick with the built-in SysV channel.
+  * Improved, simpler worker debug shell with new, powerful commands and easier integration of custom breakpoints into your own worker code. 
+  * Centralize all the process forking, reaping and management code spread around the `Core_Daemon` and `Core_Worker_Mediator` classes into a simple ProcessManager plugin. 
+  * Dozens of other bug fixes and improvements towards simpler, clearer code in the core Daemon and Mediator classes. 
 
 #### Support & Consulting
 * Commercial support & consulting is available, including on-site support in the San Francisco Bay Area.
