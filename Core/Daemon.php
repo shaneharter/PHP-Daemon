@@ -242,10 +242,12 @@ abstract class Core_Daemon
 
     protected function __construct()
     {
+        global $argv;
+
         // We have to set any installation instructions before we call getopt()
         $this->install_instructions[] = "Add to Supervisor or Monit, or add a Crontab Entry:\n   * * * * * " . $this->command();
-
-        $this->set('start_time', time());
+        $this->set('filename',    $argv[0]);
+        $this->set('start_time',  time());
         $this->pid(getmypid());
         $this->getopt();
     }
@@ -295,9 +297,6 @@ abstract class Core_Daemon
      */
     private function init()
     {
-        global $argv;
-        $this->set('filename', $argv[0]);
-
         $signals = array (
             // Handled by Core_Daemon:
             SIGTERM, SIGINT, SIGUSR1, SIGHUP, SIGCHLD,
