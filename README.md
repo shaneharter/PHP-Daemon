@@ -11,6 +11,7 @@ Create solid, long-running PHP daemon processes by extending the Core_Daemon cla
  
 #### [NEW] Version 2.1 Released!
 * After a 9 month beta period, the code that was in the branch `feature_abstract_ipc` has been merged into master as v2.1
+* Version 2.0 available in the v2.0 tag.
 * Exciting features in 2.1 include:
   * A major refactoring of the Worker API includes pluggable IPC classes: Channel worker communication over any popular message queue or stick with the built-in SysV channel.
   * Improved, simpler worker debug shell with new, powerful commands and easier integration of custom breakpoints into your own worker code. 
