@@ -378,6 +378,11 @@ abstract class Core_Daemon
      */
     public function __call($method, $args)
     {
+        $deprecated = array('shutdown', 'verbose', 'is_daemon', 'filename');
+        if (in_array($method, $deprecated)) {
+          throw new Exception("Deprecated method call: $method(). Update your code to use the v2.1 get(), set() and is() methods.");
+        }
+
         $accessors = array('loop_interval', 'pid');
         if (in_array($method, $accessors)) {
             if ($args)
