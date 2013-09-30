@@ -8,6 +8,13 @@ Create solid, long-running PHP daemon processes by extending the Core_Daemon cla
 * PHP 5.3 or Higher
 * A POSIX compatible operating system (Linux, OSX, BSD)
 * POSIX and PCNTL Extensions for PHP
+
+#### [NEW] Development Plan for v2.2
+* Refactor code to use dependency injection and begin writing unit tests.
+* Namespace the code
+* Investigate updating the minimum version to PHP5.4. 
+* Anything I'm missing? File an issue and let me know! 
+* Planning to have an alpha of these changes by the new year. 
  
 #### [NEW] Version 2.1 Released!
 * After a 9 month beta period, the code that was in the branch `feature_abstract_ipc` has been merged into master as v2.1
