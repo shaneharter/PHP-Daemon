@@ -13,8 +13,7 @@ Create solid, long-running PHP daemon processes by extending the Core_Daemon cla
 * Refactor code to use dependency injection and begin writing unit tests.
 * Namespace the code
 * Investigate updating the minimum version to PHP5.4. 
-* Anything I'm missing? File an issue and let me know! 
-* Planning to have an alpha of these changes by the new year. 
+* More Details Here https://github.com/shaneharter/PHP-Daemon/wiki/Version-2.2
  
 #### [NEW] Version 2.1 Released!
 * After a 9 month beta period, the code that was in the branch `feature_abstract_ipc` has been merged into master as v2.1
