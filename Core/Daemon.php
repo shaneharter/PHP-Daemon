@@ -207,16 +207,6 @@ abstract class Core_Daemon
     }
 
     /**
-     * Set the current Filename wherein this object is being instantiated and run.
-     * @param string $filename the actual filename, pass in __file__
-     * @return void
-     */
-    public static function set_filename($filename)
-    {
-        self::set('filename', realpath($filename));
-    }
-
-    /**
      * Set an application-wide environment variable
      * @param $key
      * @param $value
@@ -252,10 +242,12 @@ abstract class Core_Daemon
 
     protected function __construct()
     {
-        // We have to set any installation instructions before we call getopt()
-        $this->install_instructions[] = "Add to Supervisor or Monit, or add a Crontab Entry:\n   * * * * * " . $this->getFilename();
+        global $argv;
 
-        $this->set('start_time', time());
+        // We have to set any installation instructions before we call getopt()
+        $this->install_instructions[] = "Add to Supervisor or Monit, or add a Crontab Entry:\n   * * * * * " . $this->command();
+        $this->set('filename',    $argv[0]);
+        $this->set('start_time',  time());
         $this->pid(getmypid());
         $this->getopt();
     }
@@ -270,9 +262,6 @@ abstract class Core_Daemon
      */
     protected function check_environment(Array $errors = array())
     {
-        if ($this->get('filename') === null)
-            $errors[] = 'Filename is Missing: set_filename must be called before an instance can be initialized';
-
         if (is_numeric($this->loop_interval) == false)
             $errors[] = "Invalid Loop Interval: $this->loop_interval";
 
@@ -308,7 +297,23 @@ abstract class Core_Daemon
      */
     private function init()
     {
-        $this->register_signal_handlers();
+        $signals = array (
+            // Handled by Core_Daemon:
+            SIGTERM, SIGINT, SIGUSR1, SIGHUP, SIGCHLD,
+
+            // Ignored by Core_Daemon -- register callback ON_SIGNAL to listen for them.
+            // Some of these are duplicated/aliased, listed here for completeness
+            SIGUSR2, SIGCONT, SIGQUIT, SIGILL, SIGTRAP, SIGABRT, SIGIOT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGALRM,
+            SIGCONT, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF,
+            SIGWINCH, SIGIO, SIGSYS, SIGBABY
+        );
+
+        if (defined('SIGPOLL'))     $signals[] = SIGPOLL;
+        if (defined('SIGPWR'))      $signals[] = SIGPWR;
+        if (defined('SIGSTKFLT'))   $signals[] = SIGSTKFLT;
+
+        foreach(array_unique($signals) as $signal)
+            pcntl_signal($signal, array($this, 'signal'));
 
         $this->plugin('ProcessManager');
         foreach ($this->plugins as $plugin)
@@ -373,6 +378,11 @@ abstract class Core_Daemon
      */
     public function __call($method, $args)
     {
+        $deprecated = array('shutdown', 'verbose', 'is_daemon', 'filename');
+        if (in_array($method, $deprecated)) {
+          throw new Exception("Deprecated method call: $method(). Update your code to use the v2.1 get(), set() and is() methods.");
+        }
+
         $accessors = array('loop_interval', 'pid');
         if (in_array($method, $accessors)) {
             if ($args)
@@ -723,39 +733,11 @@ abstract class Core_Daemon
     }
 
     /**
-     * Register Signal Handlers
-     * Note: SIGKILL is missing -- afaik this is uncapturable in a PHP script, which makes sense.
-     * Note: Some of these signals have special meaning and use in POSIX systems like Linux. Use with care.
-     * Note: If the daemon is run with a loop_interval timer, some signals will be suppressed during sleep periods
-     * @return void
-     */
-    private function register_signal_handlers()
-    {
-        $signals = array(
-            // Handled by Core_Daemon:
-            SIGTERM, SIGINT, SIGUSR1, SIGHUP, SIGCHLD,
-
-            // Ignored by Core_Daemon -- register callback ON_SIGNAL to listen for them.
-            // Some of these are duplicated/aliased, listed here for completeness
-            SIGUSR2, SIGCONT, SIGQUIT, SIGILL, SIGTRAP, SIGABRT, SIGIOT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGALRM,
-            SIGCONT, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF,
-            SIGWINCH, SIGIO, SIGSYS, SIGBABY
-        );
-
-        if (defined('SIGPOLL'))     $signals[] = SIGPOLL;
-        if (defined('SIGPWR'))      $signals[] = SIGPWR;
-        if (defined('SIGSTKFLT'))   $signals[] = SIGSTKFLT;
-
-        foreach(array_unique($signals) as $signal)
-            pcntl_signal($signal, array($this, 'signal'));
-    }
-
-    /**
      * Get the fully qualified command used to start (and restart) the daemon
      * @param string $options    An options string to use in place of whatever options were present when the daemon was started.
      * @return string
      */
-    private function getFilename($options = false)
+    private function command($options = false)
     {
         $command = 'php ' . $this->get('filename');
 
@@ -945,7 +927,7 @@ abstract class Core_Daemon
         if (is_resource(STDOUT)) fclose(STDOUT);
         if (is_resource(STDERR)) fclose(STDERR);
         if (is_resource(STDIN))  fclose(STDIN);
-        exec($this->getFilename());
+        exec($this->command());
 
         // A new daemon process has been created. This one will stick around just long enough to clean up the worker processes.
         exit();
@@ -1207,7 +1189,7 @@ abstract class Core_Daemon
         $script = sprintf(
             file_get_contents($template),
             $daemon,
-            $this->getFilename("-d -p /var/run/{$daemon}.pid")
+            $this->command("-d -p /var/run/{$daemon}.pid")
         );
 
         if (!$install) {
@@ -1299,39 +1281,34 @@ abstract class Core_Daemon
     /**
      * Combination getter/setter for the $loop_interval property.
      * @param boolean $set_value
-     * @return int
+     * @return int|null
      */
     protected function loop_interval($set_value = null)
     {
-        if ($set_value !== null) {
-            if (is_numeric($set_value)) {
-                $this->loop_interval = $set_value;
-                switch(true) {
-                    case $set_value >= 5.0 || $set_value <= 0.0:
-                        $priority = 0;
-                        break;
-                    default:
-                        $priority = -1;
-                }
+        if ($set_value === null)
+            return $this->loop_interval;
 
-                if ($priority <> pcntl_getpriority()) {
-                    @pcntl_setpriority($priority);
-                    if (pcntl_getpriority() == $priority) {
-                        $this->log('Adjusting Process Priority to ' . $priority);
-                    } else {
-                        $this->log(
-                            "Warning: At configured loop_interval a process priorty of `{$priority}` is suggested but this process does not have setpriority privileges." . PHP_EOL .
-                                "         Consider running the daemon with `CAP_SYS_RESOURCE` privileges or set it manually using `sudo renice -n {$priority} -p {$this->pid}`"
-                        );
-                    }
-                }
+        if (!is_numeric($set_value))
+            throw new Exception(__METHOD__ . ' Failed. Could not set loop interval. Number Expected. Given: ' . $set_value);
 
-            } else {
-                throw new Exception(__METHOD__ . ' Failed. Could not set loop interval. Number Expected. Given: ' . $set_value);
-            }
+        $this->loop_interval = $set_value;
+
+        $priority = -1;
+        if ($set_value >= 5.0 || $set_value <= 0.0)
+          $priority = 0;
+
+        if ($priority == pcntl_getpriority())
+            return;
+
+        @pcntl_setpriority($priority);
+        if (pcntl_getpriority() == $priority) {
+            $this->log('Adjusting Process Priority to ' . $priority);
+        } else {
+            $this->log(
+                "Warning: At configured loop_interval a process priorty of `{$priority}` is suggested but this process does not have setpriority privileges.\n" .
+                "         Consider running the daemon with `CAP_SYS_RESOURCE` privileges or set it manually using `sudo renice -n {$priority} -p {$this->pid}`"
+            );
         }
-
-        return $this->loop_interval;
     }
 
     /**
@@ -1341,18 +1318,16 @@ abstract class Core_Daemon
      */
     protected function pid($set_value = null)
     {
-        if ($set_value !== null) {
-            if (is_integer($set_value))
-                $this->pid = $set_value;
-            else
-                throw new Exception(__METHOD__ . ' Failed. Could not set pid. Integer Expected. Given: ' . $set_value);
+        if ($set_value === null)
+            return $this->pid;
 
-            if ($this->is('parent'))
-                $this->set('parent_pid', $set_value);
+        if (!is_integer($set_value))
+            throw new Exception(__METHOD__ . ' Failed. Could not set pid. Integer Expected. Given: ' . $set_value);
 
-            $this->dispatch(array(self::ON_PIDCHANGE), array($set_value));
-        }
+        $this->pid = $set_value;
+        if ($this->is('parent'))
+            $this->set('parent_pid', $set_value);
 
-        return $this->pid;
+        $this->dispatch(array(self::ON_PIDCHANGE), array($set_value));
     }
 }

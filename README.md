@@ -8,11 +8,24 @@ Create solid, long-running PHP daemon processes by extending the Core_Daemon cla
 * PHP 5.3 or Higher
 * A POSIX compatible operating system (Linux, OSX, BSD)
 * POSIX and PCNTL Extensions for PHP
+
+#### [NEW] Development Plan for v2.2
+* Refactor code to use dependency injection and begin writing unit tests.
+* Namespace the code
+* Investigate updating the minimum version to PHP5.4. 
+* More Details Here https://github.com/shaneharter/PHP-Daemon/wiki/Version-2.2
  
+<<<<<<< HEAD
 #### [NEW] Version 2.1 Beta Testing 
 * Version 2.1 is currently being developed in the branch `feature_abstract_ipc`. It's currently at alpha and a formal beta will be announced soon. 
 * Exciting features in 2.1 include:
   * A new Socket Server plugin that lets you create event-driven async servers in a few lines of code. 
+=======
+#### [NEW] Version 2.1 Released!
+* After a 9 month beta period, the code that was in the branch `feature_abstract_ipc` has been merged into master as v2.1
+* Version 2.0 available in the v2.0 tag.
+* Exciting features in 2.1 include:
+>>>>>>> 13c05c51beed2fd9609e030ef07d01f4f88db693
   * A major refactoring of the Worker API includes pluggable IPC classes: Channel worker communication over any popular message queue or stick with the built-in SysV channel.
   * Improved, simpler worker debug shell with new, powerful commands and easier integration of custom breakpoints into your own worker code. 
   * Centralize all the process forking, reaping and management code spread around the `Core_Daemon` and `Core_Worker_Mediator` classes into a simple ProcessManager plugin. 

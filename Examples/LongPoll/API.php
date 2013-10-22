@@ -70,7 +70,7 @@ class API implements \Core_IWorker
     public function check_environment(Array $errors = array())
     {
         $errors = array();
-        if (!!function_exists('curl_init'))
+        if (!function_exists('curl_init'))
             $errors[] = 'PHP Curl Extension Required: Recompile PHP using the --with-curl option.';
 
         // Currently this class just simulates an API call by generating random results and sleeping a random time.

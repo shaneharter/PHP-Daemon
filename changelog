@@ -1,3 +1,13 @@
+Non-Backwards Compatible Changes:
+(If upgrading from 1.x or 2.0, you will need to apply these changes)
+- Remove any calls to Daemon::setFilename(). The filename is now determined programmatically.
+- Replace any calls to Daemon::filename() with Daemon::get('filename')
+- Replace any calls to Daemon::verbose() with Daemon::is('verbose')
+- Replace any calls to Daemon::shutdown() with Daemon::is('shutdown')
+- If you have any classes that implement Core_ITask you must add the method "group()" to those classes. (Returning an empty string is fine)
+
+(Note that is() and get() are aliases of the same method. The convention is to use is() when calling a boolean value.)
+
 Application-Wide changes:
 - Instance variable $is_parent is removed from several classes in favor of reading the 'parent' env variable
 
@@ -10,7 +20,7 @@ Changes to the Core_Worker API
 - Debug command 'show local' is removed.
 
 Changes to the Core_Daemon API
-- Static method setFilename() renamed to set_filename() for consistency.
+- Static method setFilename() removed.
 - Static method set() created to set application-wide environment variables.
 - Static method get() created to read application-wide environment variables.
 - Static method filename() removed, you can read the filename using Core_Daemon::get('filename')
@@ -25,7 +35,6 @@ Changes to the Core_Daemon API
 
 Changes to the Core_ITask API
 - New instance method added to the interface: group().
-
 
 To Do:
 - Consider what other vars we can move into the $env dictionary instead of thier own instance vas in Core_Daemon

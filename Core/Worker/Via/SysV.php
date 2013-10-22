@@ -8,6 +8,11 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     const HEADER_ADDRESS = 1;
 
     /**
+     * Unknown error constant
+     */
+    const ERROR_UNKNOWN = -1;
+
+    /**
      * @var Core_Worker_Mediator
      */
     public $mediator;
@@ -202,6 +207,8 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
         if ($encoder($call))
             if (msg_send($this->queue, $call->queue(), $call->header(), true, false, $error_code))
                 return true;
+
+        if ($error_code === null) $error_code = self::ERROR_UNKNOWN;
 
         $call->errors++;
         if ($this->error($error_code, $call->errors) && $call->errors < 3) {
@@ -404,7 +411,7 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
                 return true;
                 break;
 
-            case null:
+            case self::ERROR_UNKNOWN:
                 // Almost certainly an issue with shared memory
                 $this->mediator->log("Shared Memory I/O Error at Address {$this->mediator->guid}.");
                 $this->mediator->count_error('corruption');
