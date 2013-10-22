@@ -20,7 +20,7 @@ class Core_Lock_Null extends Core_Lock_Lock implements Core_IPlugin
 		// Nothing to teardown
 	}
 	
-	public function check_environment()
+	public function check_environment(Array $errors = array())
 	{
 		// Nothing to check
 		return array();

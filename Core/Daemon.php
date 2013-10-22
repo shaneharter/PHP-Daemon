@@ -26,12 +26,13 @@ abstract class Core_Daemon
      */
     const ON_ERROR          = 0;    // error() or fatal_error() is called
     const ON_SIGNAL         = 1;    // the daemon has received a signal
-    const ON_INIT           = 2;    // the library has completed initialization, your setup() method is about to be called
+    const ON_INIT           = 2;    // the library has completed initialization, your setup() method is about to be called. Note: Not Available to Worker code.
     const ON_PREEXECUTE     = 3;    // inside the event loop, right before your execute() method
     const ON_POSTEXECUTE    = 4;    // and right after
     const ON_FORK           = 5;    // in a background process right after it has been forked from the daemon
     const ON_PIDCHANGE      = 6;    // whenever the pid changes -- in a background process for example
     const ON_IDLE           = 7;    // called when there is idle time at the end of a loop_interval, or at the idle_probability when loop_interval isn't used
+    const ON_REAP           = 8;    // notification from the OS that a child process of this application has exited
     const ON_SHUTDOWN       = 10;   // called at the top of the destructor
 
     /**
@@ -72,11 +73,9 @@ abstract class Core_Daemon
      *       this to 0 and dispatch the event periodically, eg:
      *       $this->dispatch(array(self::ON_IDLE));
      *
-     *
-     *
      * @var float The probability, from 0.0 to 1.0.
      */
-    protected $idle_probability = 0.1;
+    protected $idle_probability = 0.50;
 
     /**
      * The frequency of your application restarting itself. In seconds.
@@ -90,74 +89,16 @@ abstract class Core_Daemon
     protected $auto_restart_interval = 43200;
 
     /**
-     * Will be 'false' when running in a Task or Worker background process
-     * @var boolean
-     */
-    private $is_parent = true;
-
-    /**
-     * Timestamp when was the application started
-     * @var integer
-     */
-    private $start_time;
-
-    /**
      * Process ID
      * @var integer
      */
     private $pid;
 
     /**
-     * Process ID of the parent (aka application) process
-     * When in parent, it'll be the same as $pid
-     * @var integer
-     */
-    private $parent_pid;
-
-    /**
-     * An optional filename the PID was written to at startup
-     * @see Core_Daemon::pid()
-     * @example Pass CLI argument: -p pidfile
-     * @var string
-     */
-    private $pid_file = false;
-
-    /**
-     * Is this process running as a Daemon?
-     * @see Core_Daemon::is_daemon()
-     * @example Pass CLI argument: -d
-     * @var boolean
-     */
-    private $daemon = false;
-
-    /**
-     * Is your application shutting down at the end of the current event loop iteration?
-     * @see Core_Daemon::shutdown()
-     * @var boolean
-     */
-    private $shutdown = false;
-
-    /**
-     * In verbose mode, every log entry is also dumped to stdout, as long as were not in daemon mode.
-     * Note: This was originally attached to a commandline option (-v) but it's not implicit based on whether the
-     *       application is being run inside your shell (verbose=true) or as a daemon (verbose=false)
-     *
-     * @see Core_Daemon::verbose()
-     * @var boolean
-     */
-    private $verbose = false;
-
-    /**
      * Array of worker aliases
      * @var Array
      */
     private $workers = array();
-
-    /**
-     * Map of PID's to Worker aliases
-     * @var array
-     */
-    private $worker_pids = array();
 
     /**
      * Array of plugin aliases
@@ -178,32 +119,14 @@ abstract class Core_Daemon
     private $stats = array();
 
     /**
-     * Set this in your daemon to run a debug console to interact with your worker processes.
-     * @example Pass CLI argument: --debugworkers
-     * @var bool
+     * Dictionary of application-wide environment vars with defaults.
+     * @see Core_Daemon::set()
+     * @see Core_Daemon::get()
+     * @var array
      */
-    private $debug_workers = false;
-
-    /**
-     * By default, any buffered calls and acks between a daemon and its worker processes do not persist after a restart.
-     * You can retain these calls -- and attempt to pick-up where you left off -- by using the the --recoverworkers
-     * option.
-     * Note: When a daemon auto-restarts itself it will use this function to retain worker operation.
-     * @example Pass CLI argument: --recoverworkers
-     * @var bool
-     */
-    private $recover_workers = false;
-
-
-    /**
-     * This has to be set using the Core_Daemon::setFilename() method before you call getInstance() the first time.
-     * It's used as part of the auto-restart mechanism.
-     * @todo Is there a way to get the currently executed filename from within an include?
-     * @var string
-     */
-    private static $filename = false;
-
-
+    private static $env = array(
+        'parent' => true,
+    );
 
 
     /**
@@ -243,7 +166,6 @@ abstract class Core_Daemon
      */
     abstract protected function execute();
 
-
     /**
      * Return a log file name that will be used by the log() method.
      *
@@ -259,8 +181,6 @@ abstract class Core_Daemon
     abstract protected function log_file();
 
 
-
-
     /**
      * Return an instance of the Core_Daemon singleton
      * @return Core_Daemon
@@ -268,20 +188,20 @@ abstract class Core_Daemon
     public static function getInstance()
     {
         static $o = null;
-        if ($o) return $o;
 
-        try
-        {
-            $o = new static;
-            $o->setup_plugins();
-            $o->setup_workers();
-            $o->check_environment();
-            $o->init();
-        }
-        catch (Exception $e)
-        {
-            $o->fatal_error($e->getMessage());
-        }
+        if (!$o)
+            try
+            {
+                $o = new static;
+                $o->setup_plugins();
+                $o->setup_workers();
+                $o->check_environment();
+                $o->init();
+            }
+            catch (Exception $e)
+            {
+                $o->fatal_error($e->getMessage());
+            }
 
         return $o;
     }
@@ -291,19 +211,51 @@ abstract class Core_Daemon
      * @param string $filename the actual filename, pass in __file__
      * @return void
      */
-    public static function setFilename($filename)
+    public static function set_filename($filename)
     {
-        self::$filename = realpath($filename);
+        self::set('filename', realpath($filename));
     }
 
+    /**
+     * Set an application-wide environment variable
+     * @param $key
+     * @param $value
+     */
+    protected static function set($key, $value)
+    {
+        self::$env[$key] = $value;
+    }
 
+    /**
+     * Read an application-wide environment variable
+     * @param $key
+     * @return Mixed -- Returns Null if the $key does not exist
+     */
+    public static function get($key)
+    {
+        if (isset(self::$env[$key]))
+            return self::$env[$key];
+
+        return null;
+    }
+
+    /**
+     * A simple alias for get() to create more semantically-correct and self-documenting code.
+     * @example Core_Daemon::get('parent') === Core_Daemon::is('parent')
+     * @param $key
+     * @return Mixed
+     */
+    public static function is($key)
+    {
+        return self::get($key);
+    }
 
     protected function __construct()
     {
         // We have to set any installation instructions before we call getopt()
         $this->install_instructions[] = "Add to Supervisor or Monit, or add a Crontab Entry:\n   * * * * * " . $this->getFilename();
 
-        $this->start_time = time();
+        $this->set('start_time', time());
         $this->pid(getmypid());
         $this->getopt();
     }
@@ -318,13 +270,13 @@ abstract class Core_Daemon
      */
     protected function check_environment(Array $errors = array())
     {
-        if (empty(self::$filename))
-            $errors[] = 'Filename is Missing: setFilename must be called before an instance can be initialized';
+        if ($this->get('filename') === null)
+            $errors[] = 'Filename is Missing: set_filename must be called before an instance can be initialized';
 
         if (is_numeric($this->loop_interval) == false)
             $errors[] = "Invalid Loop Interval: $this->loop_interval";
 
-        if (empty($this->auto_restart_interval) || is_numeric($this->auto_restart_interval) == false)
+        if (is_numeric($this->auto_restart_interval) == false)
             $errors[] = "Invalid auto-restart interval: $this->auto_restart_interval";
 
         if (is_numeric($this->auto_restart_interval) && $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
@@ -358,47 +310,40 @@ abstract class Core_Daemon
     {
         $this->register_signal_handlers();
 
+        $this->plugin('ProcessManager');
         foreach ($this->plugins as $plugin)
             $this->{$plugin}->setup();
+
+        $this->dispatch(array(self::ON_INIT));
 
         foreach ($this->workers as $worker)
             $this->{$worker}->setup();
 
         $this->loop_interval($this->loop_interval);
 
-        // Our current use of the ON_INIT event is in the Lock provider plugins -- so we can prevent a duplicate daemon
-        // process from starting-up. In that case, we want to do that check as early as possible. To accomplish that,
-        // the plugin setup has to happen first -- to ensure the Lock provider plugins have a chance to load.
-        $this->dispatch(array(self::ON_INIT));
-
         // Queue any housekeeping tasks we want performed periodically
         $this->on(self::ON_IDLE, array($this, 'stats_trim'), (empty($this->loop_interval)) ? null : ($this->loop_interval * 50)); // Throttle to about once every 50 iterations
 
         $this->setup();
-        if (!$this->daemon)
+        if (!$this->is('daemonized'))
             $this->log('Note: The daemonize (-d) option was not set: This process is running inside your shell. Auto-Restart feature is disabled.');
 
-        $this->log('Process Initialization Complete. Starting Event Loop.');
+        $this->log('Application Startup Complete. Starting Event Loop.');
     }
 
     /**
-     * Teardown all plugins and workers and reap any zombie processes before exiting
+     * Tear down all plugins and workers and free any remaining resources
      * @return void
      */
     public function __destruct()
     {
         try
         {
+            $this->set('shutdown', true);
             $this->dispatch(array(self::ON_SHUTDOWN));
-            foreach($this->plugins as $plugin)
-                $this->{$plugin}->teardown();
-
-            while($this->is_parent && count($this->worker_pids) > 0) {
-                foreach(array_unique($this->worker_pids) as $worker)
-                    $this->{$worker}->teardown();
-
-                $this->reap(false);
-                usleep(50000);
+            foreach($this->workers + $this->plugins as $object) {
+                $this->{$object}->teardown();
+                unset($this->{$object});
             }
         }
         catch (Exception $e)
@@ -407,11 +352,12 @@ abstract class Core_Daemon
                 $e->getMessage(), $e->getFile(), $e->getLine(), PHP_EOL, $e->getTraceAsString()));
         }
 
-        $this->reap(false);
-        if ($this->is_parent && !empty($this->pid_file) && file_exists($this->pid_file) && file_get_contents($this->pid_file) == $this->pid)
-            unlink($this->pid_file);
+        $this->callbacks = array();
 
-        if ($this->is_parent && $this->verbose)
+        if ($this->is('parent') && $this->get('pid_file') && file_exists($this->get('pid_file')) && file_get_contents($this->get('pid_file')) == $this->pid)
+            unlink($this->get('pid_file'));
+
+        if ($this->is('parent') && $this->is('stdout'))
             echo PHP_EOL;
     }
 
@@ -427,7 +373,7 @@ abstract class Core_Daemon
      */
     public function __call($method, $args)
     {
-        $accessors = array('loop_interval', 'is_parent', 'verbose', 'pid', 'shutdown');
+        $accessors = array('loop_interval', 'pid');
         if (in_array($method, $accessors)) {
             if ($args)
                 trigger_error("The '$method' accessor can not be used as a setter in this context. Supplied arguments ignored.", E_USER_WARNING);
@@ -435,9 +381,9 @@ abstract class Core_Daemon
             return call_user_func_array(array($this, $method), array());
         }
 
-        if (in_array($method, $this->workers)) {
+        // Handle any calls to __invoke()able objects
+        if (in_array($method, $this->workers))
             return call_user_func_array($this->$method, $args);
-        }
 
         throw new Exception("Invalid Method Call '$method'");
     }
@@ -450,11 +396,10 @@ abstract class Core_Daemon
     {
         try
         {
-            while ($this->shutdown == false && $this->is_parent)
+            while ($this->is('parent') && !$this->is('shutdown'))
             {
                 $this->timer(true);
                 $this->auto_restart();
-                $this->reap();
                 $this->dispatch(array(self::ON_PREEXECUTE));
                 $this->execute();
                 $this->dispatch(array(self::ON_POSTEXECUTE));
@@ -476,21 +421,26 @@ abstract class Core_Daemon
      * @param $throttle Optional time in seconds to throttle calls to the given $callback. For example, if
      *        $throttle = 10, the provided $callback will not be called more than once every 10 seconds, even if the
      *        given $event is dispatched more frequently than that.
+     * @param $criteria closure|callback Optional. If provided, any event payload will be passed to this callable and
+     *        the event dispatched only if it returns truthy.
      * @return array    The return value can be passed to off() to unbind the event
      * @throws Exception
      */
-    public function on($event, $callback, $throttle = null)
+    public function on($event, $callback, $throttle = null, $criteria = null)
     {
         if (!is_scalar($event))
             throw new Exception(__METHOD__ . ' Failed. Event type must be Scalar. Given: ' . gettype($event));
 
-        if (!is_callable($callback))
-            throw new Exception(__METHOD__ . ' Failed. Second Argument Must be Callable.');
-
         if (!isset($this->callbacks[$event]))
             $this->callbacks[$event] = array();
 
-        $this->callbacks[$event][] = array('callback' => $callback, 'throttle' => $throttle, 'call_at' => 0);
+        $this->callbacks[$event][] = array (
+            'callback'  => $callback,
+            'criteria'  => $criteria,
+            'throttle'  => $throttle,
+            'call_at'   => 0
+        );
+
         end($this->callbacks[$event]);
         return array($event, key($this->callbacks[$event]));
     }
@@ -517,7 +467,7 @@ abstract class Core_Daemon
      *                      items (an event type, and a callback ID for that event type)
      * @param array $args   Array of arguments passed to the event listener
      */
-    protected function dispatch(Array $event, Array $args = array())
+    public function dispatch(Array $event, Array $args = array())
     {
         if (!isset($event[0]) || !isset($this->callbacks[$event[0]]))
             return;
@@ -525,21 +475,30 @@ abstract class Core_Daemon
         // A specific callback is being dispatched...
         if (isset($event[1]) && isset($this->callbacks[$event[0]][$event[1]])) {
             $callback =& $this->callbacks[$event[0]][$event[1]];
-            if (empty($callback['throttle']) || time() > $callback['call_at']) {
-                $callback['call_at'] = time() + (int)$callback['throttle'];
-                call_user_func_array($callback['callback'], $args);
-            }
+
+            if ($callback['throttle'] && time() < $callback['call_at'])
+                return;
+
+            if (is_callable($callback['criteria']) && !$callback['criteria']($args))
+                return;
+
+            $callback['call_at'] = time() + (int)$callback['throttle'];
+            call_user_func_array($callback['callback'], $args);
             return;
         }
 
         // All callbacks attached to a given event are being dispatched...
-        if (!isset($event[1]))
-            foreach($this->callbacks[$event[0]] as $callback_id => $callback) {
-                if (empty($callback['throttle']) || time() > $callback['call_at']) {
-                    $this->callbacks[$event[0]][$callback_id]['call_at'] = time() + (int)$callback['throttle'];
-                    call_user_func_array($callback['callback'], $args);
-                }
-            }
+        foreach($this->callbacks[$event[0]] as $callback_id => $callback) {
+
+            if ($callback['throttle'] && time() < $callback['call_at'])
+                continue;
+
+            if (is_callable($callback['criteria']) && !$callback['criteria']($args))
+                return;
+
+            $this->callbacks[$event[0]][$callback_id]['call_at'] = time() + (int)$callback['throttle'];
+            call_user_func_array($callback['callback'], $args);
+        }
     }
 
     /**
@@ -568,76 +527,67 @@ abstract class Core_Daemon
      *
      * @param callable|Core_ITask $callable     A valid PHP callback or closure.
      * @param Mixed                             All additional params are passed to the $callable
-     * @return int|boolean                      Return the PID of the newly-forked task or false on failure
+     * @return Core_Lib_Process|boolean         Return a newly created Process object or false on failure
      */
     public function task($task)
     {
-        if ($this->shutdown) {
+        if ($this->is('shutdown')) {
             $this->log("Daemon is shutting down: Cannot run task()");
             return false;
         }
 
         // Standardize the $task into a $callable
         // If a Core_ITask was passed in, wrap it in a closure
+        // If no group is provided, add the process to an adhoc "tasks" group. A group identifier is required.
+        // @todo this group thing is not elegant. Improve it.
         if ($task instanceof Core_ITask) {
+            $group = $task->group();
             $callable = function() use($task) {
-                // By convention an is_parent variable is used when we need to keep track of process state.
-                if (isset($task->is_parent))
-                    $task->is_parent = false;
-
                 $task->setup();
                 call_user_func(array($task, 'start'));
                 $task->teardown();
             };
         } else {
+            $group = 'tasks';
             $callable = $task;
         }
 
+        $proc = $this->ProcessManager->fork($group);
 
-        $pid = pcntl_fork();
-        switch ($pid)
-        {
-            case -1:
-                // Parent Process - Fork Failed
-                $e = new Exception();
-                $this->error('Task failed: Could not fork.');
-                $this->error($e->getTraceAsString());
-                return false;
-                break;
-
-            case 0:
-                // Child Process
-                $this->start_time = time();
-                $this->is_parent  = false;
-                $this->parent_pid = $this->pid;
-                $this->pid(getmypid());
-                pcntl_setpriority(1);
-
-                // Remove unused worker objects. They can be memory hogs.
-                foreach(array_merge($this->workers, $this->plugins) as $object)
-                    if (!(is_array($callable) && $callable[0] == $this->{$object}))
-                        unset($this->{$object});
-
-                $this->workers = $this->worker_pids = $this->plugins = $this->stats = array();
-                $this->dispatch(array(self::ON_FORK));
-
-                try
-                {
-                    call_user_func_array($callable, array_slice(func_get_args(), 1));
-                }
-                catch (Exception $e)
-                {
-                    $this->error('Exception Caught in Fork: ' . $e->getMessage());
-                }
-
-                exit;
-                break;
-
-            default:
-                // Parent Process - Return the pid of the newly created Task
-                return $pid;
-                break;
+        if ($proc === false) {
+            // Parent Process - Fork Failed
+            $e = new Exception();
+            $this->error('Task failed: Could not fork.');
+            $this->error($e->getTraceAsString());
+            return false;
         }
+
+        if ($proc === true) {
+
+            // Child Process
+            $this->set('start_time', time());
+            $this->set('parent',     false);
+            $this->set('parent_pid', $this->pid);
+            $this->pid(getmypid());
+
+            // Remove unused worker objects. They can be memory hogs.
+            foreach($this->workers as $worker)
+                if (!is_array($callable) || $callable[0] != $this->{$worker})
+                    unset($this->{$worker});
+
+            $this->workers = $this->stats = array();
+
+            try {
+                call_user_func_array($callable, array_slice(func_get_args(), 1));
+            } catch (Exception $e) {
+                $this->error('Exception Caught in Task: ' . $e->getMessage());
+            }
+
+            exit;
+        }
+
+        // Parent Process - Return the newly created Core_Lib_Process object
+        return $proc;
     }
 
     /**
@@ -676,9 +626,9 @@ abstract class Core_Daemon
 
         if ($handle === false) {
             if (strlen($log_file) > 0 && $handle = @fopen($log_file, 'a+')) {
-                if ($this->is_parent) {
+                if ($this->is('parent')) {
                     fwrite($handle, $header);
-                    if ($this->verbose)
+                    if ($this->is('stdout'))
                         echo $header;
                 }
             } elseif (!$log_file_error) {
@@ -692,8 +642,16 @@ abstract class Core_Daemon
         if ($handle)
             fwrite($handle, $message);
 
-        if ($this->verbose)
+        if ($this->is('stdout'))
             echo $message;
+    }
+
+    public function debug($message, $label = '')
+    {
+        if (!$this->is('verbose'))
+            return;
+
+        $this->log($message, $label);
     }
 
     /**
@@ -720,11 +678,11 @@ abstract class Core_Daemon
     {
         $this->error($message, $label);
 
-        if ($this->is_parent) {
+        if ($this->is('parent')) {
             $this->log(get_class($this) . ' is Shutting Down...');
 
             $delay = 2;
-            if ($this->is_daemon() && ($this->runtime() + $delay) > self::MIN_RESTART_SECONDS) {
+            if ($this->is('daemonized') && ($this->runtime() + $delay) > self::MIN_RESTART_SECONDS) {
                 sleep($delay);
                 $this->restart();
             }
@@ -742,7 +700,6 @@ abstract class Core_Daemon
      */
     public function signal($signal)
     {
-        $this->dispatch(array(self::ON_SIGNAL), array($signal));
         switch ($signal)
         {
             case SIGUSR1:
@@ -755,12 +712,14 @@ abstract class Core_Daemon
                 break;
             case SIGINT:
             case SIGTERM:
-                if ($this->is_parent)
+                if ($this->is('parent'))
                     $this->log("Shutdown Signal Received\n");
 
-                $this->shutdown = true;
+                $this->set('shutdown', true);
                 break;
         }
+
+        $this->dispatch(array(self::ON_SIGNAL), array($signal));
     }
 
     /**
@@ -774,22 +733,21 @@ abstract class Core_Daemon
     {
         $signals = array(
             // Handled by Core_Daemon:
-            SIGTERM, SIGINT, SIGUSR1, SIGHUP,
+            SIGTERM, SIGINT, SIGUSR1, SIGHUP, SIGCHLD,
 
             // Ignored by Core_Daemon -- register callback ON_SIGNAL to listen for them.
             // Some of these are duplicated/aliased, listed here for completeness
             SIGUSR2, SIGCONT, SIGQUIT, SIGILL, SIGTRAP, SIGABRT, SIGIOT, SIGBUS, SIGFPE, SIGSEGV, SIGPIPE, SIGALRM,
             SIGCONT, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGPROF,
-            SIGWINCH, SIGIO, SIGSYS, SIGBABY, SIGCHLD
+            SIGWINCH, SIGIO, SIGSYS, SIGBABY
         );
 
         if (defined('SIGPOLL'))     $signals[] = SIGPOLL;
         if (defined('SIGPWR'))      $signals[] = SIGPWR;
         if (defined('SIGSTKFLT'))   $signals[] = SIGSTKFLT;
 
-        foreach(array_unique($signals) as $signal) {
+        foreach(array_unique($signals) as $signal)
             pcntl_signal($signal, array($this, 'signal'));
-        }
     }
 
     /**
@@ -799,14 +757,14 @@ abstract class Core_Daemon
      */
     private function getFilename($options = false)
     {
-        $command = 'php ' . self::$filename;
+        $command = 'php ' . $this->get('filename');
 
         if ($options === false) {
-            $command .= ' -d --recoverworkers';
-            if ($this->pid_file)
-                $command .= ' -p ' . $this->pid_file;
+            $command .= ' -d';
+            if ($this->get('pid_file'))
+                $command .= ' -p ' . $this->get('pid_file');
 
-            if ($this->debug_workers)
+            if ($this->get('debug_workers'))
                 $command .= ' --debugworkers';
         }
         else {
@@ -828,7 +786,7 @@ abstract class Core_Daemon
     {
         $workers = '';
         foreach($this->workers as $worker)
-            $workers .= sprintf('%s %s [%s], ', $worker, $this->{$worker}->id(), $this->{$worker}->is_idle() ? 'AVAILABLE' : 'BUFFERING');
+            $workers .= sprintf('%s %s [%s], ', $worker, $this->{$worker}->guid, $this->{$worker}->is_idle() ? 'AVAILABLE' : 'BUFFERING');
 
         $pretty_memory = function($bytes) {
             $kb = 1024; $mb = $kb * 1024; $gb = $mb * 1024;
@@ -867,16 +825,16 @@ abstract class Core_Daemon
         $out[] = "---------------------------------------------------------------------------------------------------";
         $out[] = "Application Runtime Statistics";
         $out[] = "---------------------------------------------------------------------------------------------------";
-        $out[] = "Command:              " . ($this->is_parent ? $this->getFilename() : 'Forked Process from pid ' . $this->parent_pid);
+        $out[] = "Command:              " . ($this->is('parent') ? $this->get('filename') : 'Forked Process from pid ' . $this->get('parent_pid'));
         $out[] = "Loop Interval:        " . $this->loop_interval;
         $out[] = "Idle Probability      " . $this->idle_probability;
         $out[] = "Restart Interval:     " . $this->auto_restart_interval;
-        $out[] = sprintf("Start Time:           %s (%s)", $this->start_time, date('Y-m-d H:i:s', $this->start_time));
+        $out[] = sprintf("Start Time:           %s (%s)", $this->get('start_time'), date('Y-m-d H:i:s', $this->get('start_time')));
         $out[] = sprintf("Duration:             %s (%s)", $this->runtime(), $pretty_duration($this->runtime()));
         $out[] = "Log File:             " . $this->log_file();
-        $out[] = "Daemon Mode:          " . $pretty_bool($this->daemon);
-        $out[] = "Shutdown Signal:      " . $pretty_bool($this->shutdown);
-        $out[] = "Process Type:         " . ($this->is_parent ? 'Application Process' : 'Background Process');
+        $out[] = "Daemon Mode:          " . $pretty_bool($this->is('daemonized'));
+        $out[] = "Shutdown Signal:      " . $pretty_bool($this->is('shutdown'));
+        $out[] = "Process Type:         " . ($this->is('parent') ? 'Application Process' : 'Background Process');
         $out[] = "Plugins:              " . implode(', ', $this->plugins);
         $out[] = "Workers:              " . $workers;
         $out[] = sprintf("Memory:               %s (%s)", memory_get_usage(true), $pretty_memory(memory_get_usage(true)));
@@ -956,30 +914,13 @@ abstract class Core_Daemon
      */
     private function auto_restart()
     {
-        if ($this->daemon == false)
-            return false;
+        if (!$this->is('parent') || !$this->is('daemonized'))
+            return;
 
         if ($this->runtime() < $this->auto_restart_interval || $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
             return false;
 
         $this->restart();
-    }
-
-    /**
-     * Maintain the worker process map and notify the worker of an exited process.
-     * @param bool $block   When true, method will block waiting for an exit signal
-     * @return void
-     */
-    private function reap($block = false)
-    {
-        do {
-            $pid = pcntl_wait($status, ($block && $this->is_parent) ? NULL : WNOHANG);
-            if (isset($this->worker_pids[$pid])) {
-                $alias = $this->worker_pids[$pid];
-                $this->{$alias}->reap($pid, $status);
-                unset($this->worker_pids[$pid]);
-            }
-        } while($pid > 0);
     }
 
     /**
@@ -989,15 +930,16 @@ abstract class Core_Daemon
      */
     public function restart()
     {
-        if ($this->is_parent == false)
+        if (!$this->is('parent') || !$this->is('daemonized'))
             return;
 
-        $this->shutdown = true;
+        $this->set('shutdown', true);
         $this->log('Restart Happening Now...');
-        foreach($this->plugins as $plugin)
-            $this->{$plugin}->teardown();
 
-        $this->callbacks = array();
+        // We want to shutdown workers, release any lock files, and swap out the pid file (as applicable)
+        // Basically put this into a walking-dead state by destructing everything while keeping this process alive
+        // to actually orchestrate the restart.
+        $this->__destruct();
 
         // Close the resource handles to prevent this process from hanging on the exec() output.
         if (is_resource(STDOUT)) fclose(STDOUT);
@@ -1012,28 +954,37 @@ abstract class Core_Daemon
     /**
      * Load any plugin that implements the Core_IPlugin.
      *
-     * A single instance of any plugin in the /Core/Plugin directory can be created just by passing-in the significant
-     * part of the class name as the alias. See the first ini example below.
+     * This is an object loader. What we care about is what object to create and where to put it. What we care about first
+     * is an alias. This will be the name of the instance variable where the object will be set. If the alias also matches the name
+     * of a class in Core/Plugin then it will just magically instantiate that class and be on its way. The following
+     * two examples are identical:
      *
-     * If you want to load custom plugins (or multiple instances of built-in plugins with different aliases) you can
-     * provide any valid alias with an instance of the plugin as the 2nd argument.
-     *
-     * It's important to understand that plugins and workers are both created as public instance variables (properties)
-     * so aliases must be unique among plugins and workers and cannot overwrite any existing instance variables in either
-     * Core_Daemon or your superclass.
-     *
-     * Both of the following examples are equivalent. In both cases, an Ini plugin will be instantiated at $this->ini:
      * @example $this->plugin('ini');
-     * @example $this->plugin('ini', new Core_Plugins_Ini());
+     * @example $this->plugin('ini', new Core_Plugin_Ini() );
      *
-     * To use two ini files just give them unique aliases:
+     * In both of the preceding examples, a Core_Plugin_Ini object is available throughout your application object
+     * as $this->ini.
+     *
+     * More complex (or just less magical) code can be used when appropriate. Want to load multiple instances of a plugin?
+     * Want to use more meaningful names in your application instead of just duplicating part of the class name?
+     * You can do all that too. This is simple dependency injection. Inject whatever object you want at runtime as long
+     * as it implements Core_IPlugin.
+     *
      * @example $this->plugin('credentials', new Core_Plugins_Ini());
      *          $this->plugin('settings', new Core_Plugins_Ini());
      *          $this->credentials->filename = '~/prod/credentials.ini';
      *          $this->settings->filename = BASE_PATH . '/MyDaemon/settings.ini';
      *          echo $this->credentials['mysql']['user']; // Echo the 'user' key in the 'mysql' section
      *
-     * You can implicitly load Lock plugins if your alias includes "Lock_" (since they are not located in /Core/Plugin):
+     * Note: As demonstrated, the alias is used simply as the name of a public instance variable on your application
+     * object. All of the normal rules of reality apply: Aliases must be unique across plugins AND workers (which work
+     * exactly like plugins in this respect). And both must be unique from any other instance or class vars used in
+     * Core_Daemon or in your application superclass.
+     *
+     * Note: The Lock objects in Core/Lock are also Plugins and can be loaded in nearly the same way.
+     * Take Core_Lock_File for instance.  The only difference is that you cannot magically load it using the alias
+     * 'file' alone. The Plugin loader would not know to look for the file in the Lock directory. In these instances
+     * the prefix is necessary.
      * @example $this->plugin('Lock_File'); // Instantiated at $this->Lock_File
      *
      * @param string $alias
@@ -1072,27 +1023,29 @@ abstract class Core_Daemon
     }
 
     /**
-     * Create a persistent Worker process.
+     * Create a persistent Worker process. This is an object loader similar to Core_Daemon::plugin().
+     *
      * @param String $alias  The name of the worker -- Will be instantiated at $this->{$alias}
      * @param callable|Core_IWorker $worker An object of type Core_Worker OR a callable (function, callback, closure)
+     * @param Core_IWorkerVia $via  A Core_IWorkerVia object that defines the medium for IPC (In theory could be any message queue, redis, memcache, etc)
      * @return Core_Worker_ObjectMediator Returns a Core_Worker class that can be used to interact with the Worker
      * @todo Use 'callable' type hinting if/when we move to a php 5.4 requirement.
      */
-    protected function worker($alias, $worker)
+    protected function worker($alias, $worker, Core_IWorkerVia $via = null)
     {
-        if (!$this->is_parent)
+        if (!$this->is('parent'))
             // While in theory there is nothing preventing you from creating workers in child processes, supporting it
             // would require changing a lot of error handling and process management code and I don't really see the value in it.
             throw new Exception(__METHOD__ . ' Failed. You cannot create workers in a background processes.');
+
+        if ($via === null)
+            $via = new Core_Worker_Via_SysV();
 
         $this->check_alias($alias);
 
         switch (true) {
             case is_object($worker) && !is_a($worker, 'Closure'):
-                if ($this->debug_workers)
-                    $mediator = new Core_Worker_Debug_ObjectMediator($alias, $this);
-                else
-                    $mediator = new Core_Worker_ObjectMediator($alias, $this);
+                $mediator = new Core_Worker_ObjectMediator($alias, $this, $via);
 
                 // Ensure that there are no reserved method names in the worker object -- Determine if there will
                 // be a collision between worker methods and public methods on the Mediator class
@@ -1107,11 +1060,7 @@ abstract class Core_Daemon
                 break;
 
             case is_callable($worker):
-                if ($this->debug_workers)
-                    $mediator = new Core_Worker_Debug_FunctionMediator($alias, $this);
-                else
-                    $mediator = new Core_Worker_FunctionMediator($alias, $this);
-
+                $mediator = new Core_Worker_FunctionMediator($alias, $this, $via);
                 $mediator->setFunction($worker);
                 break;
 
@@ -1122,16 +1071,6 @@ abstract class Core_Daemon
         $this->workers[] = $alias;
         $this->{$alias} = $mediator;
         return $this->{$alias};
-    }
-
-    /**
-     * Used by the worker mediator to make the daemon aware of a process running for a given worker
-     * They're used, among other things, to notify the correct worker when a process exits
-     * @param $alias
-     * @param $pid
-     */
-    public function worker_pid($alias, $pid) {
-        $this->worker_pids[$pid] = $alias;
     }
 
     /**
@@ -1153,7 +1092,7 @@ abstract class Core_Daemon
      */
     protected function getopt()
     {
-        $opts = getopt('hHiI:o:dp:', array('install', 'recoverworkers', 'debugworkers'));
+        $opts = getopt('hHiI:o:dp:', array('install', 'recoverworkers', 'debugworkers', 'verbose'));
 
         if (isset($opts['H']) || isset($opts['h']))
             $this->show_help();
@@ -1165,17 +1104,17 @@ abstract class Core_Daemon
             $this->create_init_script($opts['I'], isset($opts['install']));
 
         if (isset($opts['d'])) {
-            $pid = pcntl_fork();
-            if ($pid > 0)
+            if (pcntl_fork() > 0)
                 exit();
 
-            $this->daemon = true;
             $this->pid(getmypid()); // We have a new pid now
         }
 
-        $this->recover_workers = isset($opts['recoverworkers']);
-        $this->debug_workers = isset($opts['debugworkers']);
-        $this->verbose = $this->daemon == false && $this->debug_workers == false;
+        $this->set('daemonized',        isset($opts['d']));
+        $this->set('recover_workers',   isset($opts['recoverworkers']));
+        $this->set('debug_workers',     isset($opts['debugworkers']));
+        $this->set('stdout',            !$this->is('daemonized') && !$this->get('debug_workers'));
+        $this->set('verbose',           $this->is('stdout') && isset($opts['verbose']));
 
         if (isset($opts['p'])) {
             $handle = @fopen($opts['p'], 'w');
@@ -1185,7 +1124,7 @@ abstract class Core_Daemon
             fwrite($handle, $this->pid);
             fclose($handle);
 
-            $this->pid_file = $opts['p'];
+            $this->set('pid_file', $opts['p']);
         }
     }
 
@@ -1206,7 +1145,7 @@ abstract class Core_Daemon
 
         echo get_class($this);
         $out[] =  'USAGE:';
-        $out[] =  ' # ' . basename(self::$filename) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--recoverworkers] [--debugworkers]';
+        $out[] =  ' $ ' . basename($this->get('filename')) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--verbose] [--debugworkers]';
         $out[] =  '';
         $out[] =  'OPTIONS:';
         $out[] =  ' -H Shows this help';
@@ -1220,8 +1159,9 @@ abstract class Core_Daemon
         $out[] =  ' -d Daemon, detach and run in the background';
         $out[] =  ' -p PID_FILE File to write process ID out to';
         $out[] =  '';
-        $out[] =  ' --recoverworkers';
-        $out[] =  '   Attempt to recover pending and incomplete calls from a previous instance of the daemon. Should be run under supervision after a daemon crash. Experimental.';
+        $out[] =  ' --verbose';
+        $out[] =  '   Include debug messages in the application log.';
+        $out[] =  '   Note: When run as a daemon (-d) or with a debug shell (--debugworkers), application log messages are written only to the log file.';
         $out[] =  '';
         $out[] =  ' --debugworkers';
         $out[] =  '   Run workers under a debug console. Provides tools to debug the inter-process communication between workers.';
@@ -1258,7 +1198,7 @@ abstract class Core_Daemon
      */
     protected function create_init_script($template_name, $install = false)
     {
-        $template = dirname($this->filename()) . '/Core/Templates/' . $template_name;
+        $template = dirname($this->get('filename')) . '/Core/Templates/' . $template_name;
 
         if (!file_exists($template))
             $this->show_help("Invalid Template Name '{$template_name}'");
@@ -1304,43 +1244,7 @@ abstract class Core_Daemon
      */
     public function runtime()
     {
-        return time() - $this->start_time;
-    }
-
-    /**
-     * Return the pid of the parent daemon process
-     * @return integer
-     */
-    public function parent_pid()
-    {
-        return $this->parent_pid;
-    }
-
-    /**
-     * Return the daemon's filename
-     * @return string
-     */
-    public static function filename()
-    {
-        return self::$filename;
-    }
-
-    /**
-     * Is this run as a daemon or within a shell?
-     * @return boolean
-     */
-    public function is_daemon()
-    {
-        return $this->daemon;
-    }
-
-    /**
-     * Is the --recoverworkers flag set?
-     * @return boolean
-     */
-    public function recover_workers()
-    {
-        return $this->recover_workers;
+        return time() - $this->get('start_time');
     }
 
     /**
@@ -1393,45 +1297,6 @@ abstract class Core_Daemon
     }
 
     /**
-     * Combination getter/setter for the $is_parent property. Can be called manually inside a background process.
-     * @param boolean $set_value
-     * @return boolean
-     */
-    protected function is_parent($set_value = null)
-    {
-        if (is_bool($set_value))
-            $this->is_parent = $set_value;
-
-        return $this->is_parent;
-    }
-
-    /**
-     * Combination getter/setter for the $shutdown property.
-     * @param boolean $set_value
-     * @return boolean
-     */
-    protected function shutdown($set_value = null)
-    {
-        if (is_bool($set_value))
-            $this->shutdown = $set_value;
-
-        return $this->shutdown;
-    }
-
-    /**
-     * Combination getter/setter for the $verbose property.
-     * @param boolean $set_value
-     * @return boolean
-     */
-    protected function verbose($set_value = null)
-    {
-        if (is_bool($set_value))
-            $this->verbose = $set_value;
-
-        return $this->verbose;
-    }
-
-    /**
      * Combination getter/setter for the $loop_interval property.
      * @param boolean $set_value
      * @return int
@@ -1443,17 +1308,10 @@ abstract class Core_Daemon
                 $this->loop_interval = $set_value;
                 switch(true) {
                     case $set_value >= 5.0 || $set_value <= 0.0:
-                        $priority = 0; break;
-                    case $set_value > 2.0:
-                        $priority = -1; break;
-                    case $set_value > 1.0:
-                        $priority = -2; break;
-                    case $set_value > 0.5:
-                        $priority = -3; break;
-                    case $set_value > 0.1:
-                        $priority = -4; break;
+                        $priority = 0;
+                        break;
                     default:
-                        $priority = -5;
+                        $priority = -1;
                 }
 
                 if ($priority <> pcntl_getpriority()) {
@@ -1489,8 +1347,8 @@ abstract class Core_Daemon
             else
                 throw new Exception(__METHOD__ . ' Failed. Could not set pid. Integer Expected. Given: ' . $set_value);
 
-            if ($this->is_parent)
-                $this->parent_pid = $set_value;
+            if ($this->is('parent'))
+                $this->set('parent_pid', $set_value);
 
             $this->dispatch(array(self::ON_PIDCHANGE), array($set_value));
         }

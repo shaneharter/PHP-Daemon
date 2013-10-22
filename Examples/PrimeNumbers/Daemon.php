@@ -25,7 +25,7 @@ class Daemon extends \Core_Daemon
     public $run_sieve        = false;
     public $run_getfactors   = false;
     public $run_inline_sieve = false;
-    public $auto_run         = false;
+    public $auto_run         = true;
 
     /**
      * @var Resource
@@ -35,7 +35,6 @@ class Daemon extends \Core_Daemon
     protected function setup_plugins()
     {
         $this->plugin('Lock_File');
-
         // This daemon will respond to signals sent from the commandline.
         // 1) You can send a signal that will calculate factors of a random number
         // 2) You can send a signal that will find primes within a random range.
@@ -68,10 +67,13 @@ class Daemon extends \Core_Daemon
         // - By convention, workers are named in UpperCase
         // - Look at Workers_Primes to see the available methods. They are: sieve, is_prime, primes_among
 
-        $this->worker('PrimeNumbers', new Workers_Primes());
+
+        $via = new \Core_Worker_Via_SysV();
+        $via->malloc(30 * 1024 * 1024);
+
+        $this->worker('PrimeNumbers', new Workers_Primes(), $via);
         $this->PrimeNumbers->timeout(60);
         $this->PrimeNumbers->workers(4);
-        $this->PrimeNumbers->malloc(30 * 1024 * 1024);
 
         $this->PrimeNumbers->onReturn(function($call, $log) use($that) {
             $log("Job {$call->id} to {$call->method}() Complete");

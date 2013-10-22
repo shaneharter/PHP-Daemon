@@ -30,3 +30,4 @@ example_logs
 *.daemon_lock
 pid
 logs
+Core/Worker/Mediator.old.php

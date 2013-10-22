@@ -38,15 +38,7 @@ final class Core_Worker_ObjectMediator extends Core_Worker_Mediator
         $this->methods = get_class_methods($this->class);
     }
 
-    public function setup() {
-
-        if (!$this->is_parent) {
-            $this->object->setup();
-        }
-        parent::setup();
-    }
-
-    public function check_environment() {
+    public function check_environment(Array $errors = array()) {
         $errors = array();
 
         if (!is_object($this->object) || !$this->object instanceof Core_IWorker)

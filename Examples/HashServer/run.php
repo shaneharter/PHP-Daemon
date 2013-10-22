@@ -3,11 +3,11 @@
 require_once 'config.php';
 require_once 'error_handlers.php';
 
-use Examples\PrimeNumbers;
+use Examples\HashServer;
 
 
 // The daemon needs to know from which file it was executed.
-PrimeNumbers\Daemon::set_filename(__FILE__);
+HashServer\Daemon::set_filename(__FILE__);
 
 // The run() method will start the daemon loop. 
-PrimeNumbers\Daemon::getInstance()->run();
+HashServer\Daemon::getInstance()->run();
