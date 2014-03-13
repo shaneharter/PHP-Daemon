@@ -42,7 +42,7 @@ exec('ipcs', $ipcs);
 foreach($ipcs as $row) {
 
     if (!isset($opt['m'])) {
-        if (strpos($row, 'Shared Memory Segments') > 0) {
+        if (strpos($row, 'Shared Memory') !== FALSE) {
             echo PHP_EOL, "Cleaning Shared Memory Segments...";
             $flag = '-m';
             continue;
@@ -50,7 +50,7 @@ foreach($ipcs as $row) {
     }
 
     if (!isset($opt['q'])) {
-        if (strpos($row, 'Message Queues') > 0) {
+        if (strpos($row, 'Message Queues') !== FALSE) {
             echo PHP_EOL, "Cleaning Message Queues...";
             $flag = '-q';
             continue;
@@ -58,7 +58,7 @@ foreach($ipcs as $row) {
     }
 
     if (!isset($opt['s'])) {
-        if (strpos($row, 'Semaphore Arrays') > 0) {
+        if (strpos($row, 'Semaphore') !== FALSE) {
             echo PHP_EOL, "Cleaning Semaphore Arrays...";
             $flag = '-s';
             continue;
