@@ -895,8 +895,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
         }
         unset($call);
 
-        unset($call);
-
         if (!Core_Daemon::is('parent') || count($called) == 0)
             return;
 
