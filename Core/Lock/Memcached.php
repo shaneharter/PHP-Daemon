@@ -18,11 +18,6 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_IPlugin
      */
 	public $memcache_servers = array();
 	
-	public function __construct()
-	{
-		$this->pid = getmypid();
-	}
-	
 	public function setup()
 	{
 		// Connect to memcache
@@ -48,13 +43,13 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_IPlugin
 	{
 		$errors = array();
 		
-		if (false == (is_array($this->memcache_servers) && count($this->memcache_servers)))
+		if (!(is_array($this->memcache_servers) && count($this->memcache_servers)))
 			$errors[] = 'Memcache Plugin: Memcache Servers Are Not Set';
 		
-        if (false == class_exists('Memcached'))
+        if (!class_exists('Memcached'))
             $errors[] = 'Memcache Plugin: PHP Memcached Extension Is Not Loaded';
         	
-		if (false == class_exists('Core_Lib_Memcache'))
+		if (!class_exists('Core_Lib_Memcache'))
 			$errors[] = 'Memcache Plugin: Dependant Class "Core_Lib_Memcache" Is Not Loaded';
 
 		return $errors;
