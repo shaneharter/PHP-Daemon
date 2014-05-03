@@ -186,11 +186,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
     /**
     * Flag to enable or disable worker auto-restart mechanism
-    * 
+    *
     * @var bool
     */
     protected $auto_restart = true;
-    
+
     /**
      * Array of accumulated error counts. Error thresholds are localized and when reached will
      * raise a fatal error. Generally thresholds on workers are much lower than on the daemon process
@@ -721,7 +721,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
                         $this->log("Enforcing Timeout on Call $call_id in pid " . $call->pid);
 
-                        $this->process($call->pid)->kill();
+                        if($this->process($call->pid) instanceof Core_Lib_Process) {
+                          $this->process($call->pid)->kill();
+                        }
                         $call->timeout();
                         unset($this->running_calls[$call_id]);
 
@@ -764,11 +766,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
             usleep(50000);
 
             if ($this->auto_restart) {
-            	$max_jobs       = $this->call_count++ >= (25 + $entropy);
-            	$min_runtime    = $this->daemon->runtime() >= (60 * 5);
-            	$max_runtime    = $this->daemon->runtime() >= (60 * 30 + $entropy * 10);
-            	$recycle        = ($max_runtime || $min_runtime && $max_jobs);
-			}
+              $max_jobs       = $this->call_count++ >= (25 + $entropy);
+              $min_runtime    = $this->daemon->runtime() >= (60 * 5);
+              $max_runtime    = $this->daemon->runtime() >= (60 * 30 + $entropy * 10);
+              $recycle        = ($max_runtime || $min_runtime && $max_jobs);
+      }
 
             if (mt_rand(1, 5) == 1)
                 $this->garbage_collector();
@@ -894,6 +896,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 $called[] = $call_id;
         }
 
+        unset($call);
+
         if (!Core_Daemon::is('parent') || count($called) == 0)
             return;
 
@@ -995,6 +999,14 @@ abstract class Core_Worker_Mediator implements Core_ITask
         return 0;
     }
 
+    /**
+     * Retrieves the number of worker processes that are currently running
+     *
+     * @return number
+     */
+    public function running_count() {
+      return count($this->running_calls);
+    }
 
     /**
      * Dump runtime stats in tabular fashion to the log.
@@ -1237,11 +1249,11 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
         $this->workers = (int)$workers;
     }
-    
+
     /**
      * Enable or disable worker auto restart mechanism. To find out how it works
      * look at the beginning of Core_Worker_Mediator::start() method
-     * 
+     *
      * Auto restart is enabled by default
      *
      * @param bool $restart

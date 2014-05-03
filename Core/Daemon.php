@@ -346,7 +346,7 @@ abstract class Core_Daemon
         {
             $this->set('shutdown', true);
             $this->dispatch(array(self::ON_SHUTDOWN));
-            foreach($this->workers + $this->plugins as $object) {
+            foreach(array_merge($this->workers, $this->plugins) as $object) {
                 $this->{$object}->teardown();
                 unset($this->{$object});
             }
