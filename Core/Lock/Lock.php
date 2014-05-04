@@ -8,7 +8,6 @@
  */
 abstract class Core_Lock_Lock implements Core_IPlugin
 {
-    public static $LOCK_TTL_PADDING_SECONDS = 2.0;
     public static $LOCK_UNIQUE_ID = 'daemon_lock';
 
     /**
@@ -25,29 +24,18 @@ abstract class Core_Lock_Lock implements Core_IPlugin
     public $daemon_name;
 
     /**
-     * This is added to the const LOCK_TTL_SECONDS to determine how long the lock should last -- any lock provider should be
-     * self-expiring using these TTL's. This is done to minimize likelihood of errant locks being left behind after a kill or crash that
-     * would have to be manually removed.
-     *
-     * @var float   Number of seconds the lock should be active -- padded with Core_Lock_Lock::LOCK_TTL_PADDING_SECONDS
-     */
-    public $ttl = 0;
-
-    /**
      * The array of args passed-in at instantiation
      * @var Array
      */
     protected $args = array();
 
-    public function __construct(Core_Daemon $daemon, Array $args = array())
+    public function __construct(Core_Daemon $daemon, array $args = array())
     {
         $this->pid = getmypid();
         $this->daemon_name = get_class($daemon);
-        $this->ttl = $daemon->loop_interval();
         $this->args = $args;
 
-        $daemon->on(Core_Daemon::ON_INIT, array($this, 'set'));
-        $daemon->on(Core_Daemon::ON_PREEXECUTE, array($this, 'set'));
+        $daemon->on(Core_Daemon::ON_INIT, array($this, 'run'));
 
         $that = $this;
         $daemon->on(Core_Daemon::ON_PIDCHANGE, function ($args) use ($that) {
@@ -61,7 +49,7 @@ abstract class Core_Lock_Lock implements Core_IPlugin
      * @abstract
      * @return void
      */
-    abstract public function set();
+    abstract protected function set();
 
     /**
      * Read the lock from whatever shared medium it's written to.
@@ -76,18 +64,40 @@ abstract class Core_Lock_Lock implements Core_IPlugin
 
     /**
      * Check for the existence of a lock.
-     * Cache results of get() check for 1/10 a second.
      *
      * @return bool|int Either false or the PID of the process that has set the lock
      */
-    public function check()
+    protected function check()
     {
-        static $get = false;
-        static $get_time = false;
+        $pid = $this->get();
 
-        $get = $this->get();
-        $get_time = microtime(true);
+        // pid should be a positive number
+        if (!$pid)
+            return false;
+        
+        // If we're seeing our own lock..
+        if ($pid == $this->pid)
+            return false;
 
-        return $get;
+        // If the process that wrote the lock is no longer running
+        $cmd_output = `ps -p $pid`;
+        if (strpos($cmd_output, $pid) === false)
+            return false;
+        
+        return $pid;
+    }
+    
+    /**
+     * Implements main plugin logic - die if lock exists or create it otherwise.
+     *
+     * @return null
+     */
+    public function run()
+    {
+        $lock = $this->check();
+        if ($lock)
+            throw new Exception(get_class($this) . '::' . __FUNCTION__ . ' failed. Existing lock detected from PID: ' . $lock);
+        
+        $this->set();
     }
 }
