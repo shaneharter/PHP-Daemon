@@ -8,7 +8,7 @@
  */
 abstract class Core_Lock_Lock implements Core_IPlugin
 {
-    public static $LOCK_UNIQUE_ID = 'daemon_lock';
+    public static $LOCK_UNIQUE_ID = 'pid';
 
     /**
      * The pid of the current daemon -- Set automatically by the constructor.
