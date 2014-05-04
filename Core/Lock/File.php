@@ -52,12 +52,9 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_IPlugin
         return $errors;
     }
 
-    public function set()
+    protected function set()
     {
-        // The lock value will contain the process PID
         file_put_contents($this->filename, $this->pid);
-
-        touch($this->filename);
     }
 
     protected function get()

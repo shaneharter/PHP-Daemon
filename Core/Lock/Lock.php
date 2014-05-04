@@ -35,8 +35,7 @@ abstract class Core_Lock_Lock implements Core_IPlugin
         $this->daemon_name = get_class($daemon);
         $this->args = $args;
 
-        $daemon->on(Core_Daemon::ON_INIT, array($this, 'check'));
-        $daemon->on(Core_Daemon::ON_PREEXECUTE, array($this, 'check'));
+        $daemon->on(Core_Daemon::ON_INIT, array($this, 'run'));
 
         $that = $this;
         $daemon->on(Core_Daemon::ON_PIDCHANGE, function ($args) use ($that) {
@@ -50,7 +49,7 @@ abstract class Core_Lock_Lock implements Core_IPlugin
      * @abstract
      * @return void
      */
-    abstract public function set();
+    abstract protected function set();
 
     /**
      * Read the lock from whatever shared medium it's written to.
@@ -68,7 +67,7 @@ abstract class Core_Lock_Lock implements Core_IPlugin
      *
      * @return bool|int Either false or the PID of the process that has set the lock
      */
-    protected function exists()
+    protected function check()
     {
         $pid = $this->get();
 
@@ -88,10 +87,14 @@ abstract class Core_Lock_Lock implements Core_IPlugin
         return $pid;
     }
     
-    
-    public function check()
+    /**
+     * Implements main plugin logic - die if lock exists or create it otherwise.
+     *
+     * @return null
+     */
+    public function run()
     {
-        $lock = $this->exists();
+        $lock = $this->check();
         if ($lock)
             throw new Exception(get_class($this) . '::' . __FUNCTION__ . ' failed. Existing lock detected from PID: ' . $lock);
         

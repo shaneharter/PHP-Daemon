@@ -34,14 +34,14 @@ class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
 		return $errors;
 	}
 	
-	public function set()
+	protected function set()
 	{
 		shm_put_var($this->shm, self::ADDRESS, $this->pid);
 	}
 	
 	protected function get()
 	{
-        if (!shm_has_var($this->shm))
+        if (!shm_has_var($this->shm, self::ADDRESS))
             return false;
         
 		$lock = shm_get_var($this->shm, self::ADDRESS);

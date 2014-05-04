@@ -55,7 +55,7 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_IPlugin
 		return $errors;
 	}
 	
-	public function set()
+	protected function set()
 	{
 		$this->memcache->set(Core_Lock_Lock::$LOCK_UNIQUE_ID, $this->pid);
 	}
