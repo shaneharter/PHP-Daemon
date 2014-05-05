@@ -36,14 +36,6 @@ abstract class Core_Daemon
     const ON_SHUTDOWN       = 10;   // called at the top of the destructor
 
     /**
-     * An array of instructions that's displayed when the -i param is passed to the application.
-     * Helps sysadmins and users of your daemons get installation correct. Guide them to set
-     * correct permissions, supervisor/monit setup, crontab entries, init.d scripts, etc
-     * @var Array
-     */
-    protected $install_instructions = array();
-
-    /**
      * The frequency of the event loop. In seconds.
      *
      * In timer-based applications your execute() method will be called every $loop_interval seconds. Any remaining time
@@ -193,6 +185,7 @@ abstract class Core_Daemon
             try
             {
                 $o = new static;
+                $o->getopt();
                 $o->setup_plugins();
                 $o->setup_workers();
                 $o->check_environment();
@@ -245,11 +238,9 @@ abstract class Core_Daemon
         global $argv;
 
         // We have to set any installation instructions before we call getopt()
-        $this->install_instructions[] = "Add to Supervisor or Monit, or add a Crontab Entry:\n   * * * * * " . $this->command();
         $this->set('filename',    $argv[0]);
         $this->set('start_time',  time());
         $this->pid(getmypid());
-        $this->getopt();
     }
 
     /**
@@ -1074,16 +1065,10 @@ abstract class Core_Daemon
      */
     protected function getopt()
     {
-        $opts = getopt('hHiI:o:dp:', array('install', 'recoverworkers', 'debugworkers', 'verbose'));
+        $opts = getopt('hH:o:dp:', array('recoverworkers', 'debugworkers', 'verbose'));
 
         if (isset($opts['H']) || isset($opts['h']))
             $this->show_help();
-
-        if (isset($opts['i']))
-            $this->show_install_instructions();
-
-        if (isset($opts['I']))
-            $this->create_init_script($opts['I'], isset($opts['install']));
 
         if (isset($opts['d'])) {
             if (pcntl_fork() > 0)
@@ -1127,16 +1112,10 @@ abstract class Core_Daemon
 
         echo get_class($this);
         $out[] =  'USAGE:';
-        $out[] =  ' $ ' . basename($this->get('filename')) . ' -H | -i | -I TEMPLATE_NAME [--install] | [-d] [-p PID_FILE] [--verbose] [--debugworkers]';
+        $out[] =  ' $ ' . basename($this->get('filename')) . ' -H | [-d] [-p PID_FILE] [--verbose] [--debugworkers]';
         $out[] =  '';
         $out[] =  'OPTIONS:';
         $out[] =  ' -H Shows this help';
-        $out[] =  ' -i Print any daemon install instructions to the screen';
-        $out[] =  ' -I Create init/config script';
-        $out[] =  '    You must pass in a name of a template from the /Templates directory';
-        $out[] =  '    OPTIONS:';
-        $out[] =  '     --install';
-        $out[] =  '       Install the script to /etc/init.d. Otherwise just output the script to stdout.';
         $out[] =  '';
         $out[] =  ' -d Daemon, detach and run in the background';
         $out[] =  ' -p PID_FILE File to write process ID out to';
@@ -1152,71 +1131,6 @@ abstract class Core_Daemon
         $out[] =  '';
 
         echo implode("\n", $out);
-        exit();
-    }
-
-    /**
-     * Print any install instructions and Exit.
-     * Could be anything from copying init.d scripts, setting crontab entries, creating executable or writable directories, etc.
-     * Add instructions from your daemon by adding them one by one: $this->install_instructions[] = 'Do foo'
-     * @return void
-     */
-    protected function show_install_instructions()
-    {
-        echo get_class($this) . " Installation Instructions:\n\n - ";
-        echo implode("\n - ", $this->install_instructions);
-        echo "\n";
-        exit();
-    }
-
-    /**
-     * Create and output an init script for this daemon to provide start/stop/restart functionality.
-     * Uses templates in the /Templates directory to produce scripts for different process managers and linux distros.
-     * When you create an init script, you should chmod it to 0755.
-     *
-     * @param string $template The name of a template from the /Templates directory
-     * @param bool $install When true, the script will be created in the init.d directory and final setup instructions will be printed to stdout
-     * @return void
-     */
-    protected function create_init_script($template_name, $install = false)
-    {
-        $template = dirname($this->get('filename')) . '/Core/Templates/' . $template_name;
-
-        if (!file_exists($template))
-            $this->show_help("Invalid Template Name '{$template_name}'");
-
-        $daemon = get_class($this);
-        $script = sprintf(
-            file_get_contents($template),
-            $daemon,
-            $this->command("-d -p /var/run/{$daemon}.pid")
-        );
-
-        if (!$install) {
-            echo $script;
-            echo "\n\n";
-            exit;
-        }
-
-        // Print out template-specific setup instructions
-        switch($template_name) {
-            case 'init_ubuntu':
-                $filename = '/etc/init.d/' . $daemon;
-                $instructions = "\n - To run on startup on RedHat/CentOS:  sudo chkconfig --add {$filename}";
-                break;
-
-            default:
-                $instructions = '';
-        }
-
-        @file_put_contents($filename, $script);
-        @chmod($filename, 0755);
-        if (file_exists($filename) == false || is_executable($filename) == false)
-            $this->show_help("* Must Be Run as Sudo\n * Could Not Write Config File");
-
-        echo "Init Scripts Created Successfully!";
-        echo $instructions;
-        echo "\n\n";
         exit();
     }
 
