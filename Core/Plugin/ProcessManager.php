@@ -193,7 +193,7 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
             if (!$pid || !isset($map[$pid]))
                break;
 
-            $this->removePid($pid, $status);
+            $process = $this->removePid($pid, $status);
 
             // Keep track of process churn -- failures within a processes min_ttl
             // If too many failures of new processes occur inside a given interval, that's a problem.
@@ -216,6 +216,7 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
         $process = $this->processes[$alias][$pid];
         $this->daemon->dispatch(array(Core_Daemon::ON_REAP), array($process, $status));
         unset($this->processes[$alias][$pid]);
+        return $process;
     }
 
 }
