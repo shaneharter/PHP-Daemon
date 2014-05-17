@@ -185,6 +185,7 @@ abstract class Core_Daemon
             try
             {
                 $o = new static;
+                $o->getopt();
                 $o->setup_plugins();
                 $o->setup_workers();
                 $o->check_environment();
@@ -240,7 +241,6 @@ abstract class Core_Daemon
         $this->set('filename',    $argv[0]);
         $this->set('start_time',  time());
         $this->pid(getmypid());
-        $this->getopt();
     }
 
     /**

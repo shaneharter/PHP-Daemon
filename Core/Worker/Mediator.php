@@ -715,7 +715,9 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
                         $this->log("Enforcing Timeout on Call $call_id in pid " . $call->pid);
 
-                        $this->process($call->pid)->kill();
+                        if($this->process($call->pid) instanceof Core_Lib_Process) {
+                          $this->process($call->pid)->kill();
+                        }
                         $call->timeout();
                         unset($this->running_calls[$call_id]);
 
@@ -1011,6 +1013,14 @@ abstract class Core_Worker_Mediator implements Core_ITask
         return 0;
     }
 
+    /**
+     * Retrieves the number of worker processes that are currently running
+     *
+     * @return number
+     */
+    public function running_count() {
+      return count($this->running_calls);
+    }
 
     /**
      * Dump runtime stats in tabular fashion to the log.

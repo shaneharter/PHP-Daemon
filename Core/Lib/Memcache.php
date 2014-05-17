@@ -64,7 +64,7 @@ final class Core_Lib_Memcache extends Memcached
 	 * @param integer $timeout_override		The retry timeout in seconds
 	 * @return mixed 	The value from Memcache or False  
 	 */
-	public function getWithRetry($key, $flags = false, $timeout_override = false)
+	public function getWithRetry($key, $timeout_override = false)
 	{
 		if ($timeout_override)
 			$max_tries = intval($timeout_override / 0.10);
@@ -76,7 +76,7 @@ final class Core_Lib_Memcache extends Memcached
 			
 		for ($i=0; $i<$max_tries; $i++)
 		{
-			$value = $this->get($key, $flags);
+			$value = $this->get($key);
 			if(false == empty($value))
 				return $value;
 				
@@ -94,7 +94,7 @@ final class Core_Lib_Memcache extends Memcached
 	 * @param integer $expire
 	 * @return boolean
 	 */
-	public function set($key, $var, $flags = null, $expire = null)
+	public function set($key, $var, $expire = 0)
 	{
 		if ($this->auto_retry)
 			$max_tries = intval($this->auto_retry_timeout / 0.10);
@@ -106,7 +106,7 @@ final class Core_Lib_Memcache extends Memcached
 			
 		for ($i=0; $i<$max_tries; $i++)
 		{
-			if(parent::set($this->key($key), $var, $flags, $expire))
+			if(parent::set($this->key($key), $var, $expire))
 				return true;
 				
 			usleep(100000);
@@ -121,19 +121,19 @@ final class Core_Lib_Memcache extends Memcached
 	 * @param string $flags
      * @return mixed
 	 */
-	public function get($key, $flags = null)
+	public function get($key)
 	{
-		return parent::get($this->key($key), $flags);
+		return parent::get($this->key($key));
 	}
 	
-	public function decrement($key, $value = 1)
+	public function decrement($key, $offset = 1)
 	{
-		return parent::decrement($this->key($key), $value);
+		return parent::decrement($this->key($key), $offset);
 	}
 	
-	public function increment($key, $value = 1)
+	public function increment($key, $offset = 1)
 	{
-		return parent::increment($this->key($key), $value);
+		return parent::increment($this->key($key), $offset);
 	}	
 	
 	public function delete($key)
@@ -141,9 +141,9 @@ final class Core_Lib_Memcache extends Memcached
 		return parent::delete($this->key($key));
 	}	
 	
-	public function replace($key, $var, $flags = null, $expire = null)
+	public function replace($key, $var, $expire = 0)
 	{
-		return parent::replace($this->key($key), $var, $flags, $expire);
+		return parent::replace($this->key($key), $var, $expire);
 	}	
 			
 	/**

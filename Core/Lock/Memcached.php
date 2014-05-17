@@ -18,11 +18,6 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_IPlugin
      */
 	public $memcache_servers = array();
 	
-	public function __construct()
-	{
-		$this->pid = getmypid();
-	}
-	
 	public function setup()
 	{
 		// Connect to memcache
@@ -40,8 +35,7 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_IPlugin
 	public function teardown()
 	{
 		// If this PID set this lock, release it
-		$lock = $this->memcache->get(Core_Lock_Lock::$LOCK_UNIQUE_ID);
-		if ($lock == $this->pid)
+		if ($this->get() == $this->pid)
 			$this->memcache->delete(Core_Lock_Lock::$LOCK_UNIQUE_ID);
 	}
 	
@@ -49,37 +43,27 @@ class Core_Lock_Memcached extends Core_Lock_Lock implements Core_IPlugin
 	{
 		$errors = array();
 		
-		if (false == (is_array($this->memcache_servers) && count($this->memcache_servers)))
+		if (!(is_array($this->memcache_servers) && count($this->memcache_servers)))
 			$errors[] = 'Memcache Plugin: Memcache Servers Are Not Set';
-			
-		if (false == class_exists('Core_Memcache'))
-			$errors[] = 'Memcache Plugin: Dependant Class "Core_Memcache" Is Not Loaded';
-			
-		if (false == class_exists('Memcached'))
-			$errors[] = 'Memcache Plugin: PHP Memcached Extension Is Not Loaded';
+		
+        if (!class_exists('Memcached'))
+            $errors[] = 'Memcache Plugin: PHP Memcached Extension Is Not Loaded';
+        	
+		if (!class_exists('Core_Lib_Memcache'))
+			$errors[] = 'Memcache Plugin: Dependant Class "Core_Lib_Memcache" Is Not Loaded';
 
 		return $errors;
 	}
 	
-	public function set()
+	protected function set()
 	{
-		$lock = $this->check();
-		if ($lock)
-			throw new Exception('Core_Lock_Memcached::set Failed. Existing Lock Detected from PID ' . $lock);
-
-		$timeout = Core_Lock_Lock::$LOCK_TTL_PADDING_SECONDS + $this->ttl;
-		$this->memcache->set(Core_Lock_Lock::$LOCK_UNIQUE_ID, $this->pid, false, $timeout);
+		$this->memcache->set(Core_Lock_Lock::$LOCK_UNIQUE_ID, $this->pid);
 	}
 	
 	protected function get()
 	{
 		$lock = $this->memcache->get(Core_Lock_Lock::$LOCK_UNIQUE_ID);
-
-		// Ensure we're not seeing our own lock
-		if ($lock == $this->pid)
-			return false;
 		
-		// If We're here, there's another lock... return the pid..
 		return $lock;
 	}
 }
