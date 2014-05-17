@@ -60,7 +60,6 @@ final class Core_Lib_Memcached extends Memcached
   /**
    * Return a value from memcached with Retry functionality if a value is not returned.
    * @param string|array $key
-   * @param string $flags
    * @param integer $timeout_override    The retry timeout in seconds
    * @return mixed   The value from memcached or False
    */
@@ -90,7 +89,6 @@ final class Core_Lib_Memcached extends Memcached
    * Set a value in memcached with optional built-in Auto-Retry functionity
    * @param string $key
    * @param string $var
-   * @param string $flags
    * @param integer $expire
    * @return boolean
    */
@@ -118,7 +116,6 @@ final class Core_Lib_Memcached extends Memcached
   /**
    * Return a key or keys from memcached
    * @param string|array $key
-   * @param string $flags
      * @return mixed
    */
   public function get($key)

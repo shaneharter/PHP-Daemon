@@ -947,7 +947,8 @@ abstract class Core_Worker_Mediator implements Core_ITask
             break;
         }
 
-        $this->fork();
+        if(!$this->daemon->get('shutdown'))
+            $this->fork();
     }
 
 

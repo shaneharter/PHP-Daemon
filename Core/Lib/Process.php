@@ -34,7 +34,7 @@ class Core_Lib_Process
 
     /**
      * Stop the process, using whatever means necessary, and possibly return a textual description
-     * @return bool|string
+     * @return int|array
      */
     public function stop() {
 
@@ -44,14 +44,19 @@ class Core_Lib_Process
         }
 
         if (time() > $this->stop_time + $this->timeout()) {
-            $this->kill();
-            return "Worker Process '{$this->pid}' Shutdown Timeout: Killing...";
+            return array('pid' => $this->pid, 'status' => $this->kill());
         }
 
-        return null;
+        return false;
     }
 
+    /**
+     *
+     * @return int status from pcntl_waitpid
+     */
     public function kill() {
         @posix_kill($this->pid, SIGKILL);
+        pcntl_waitpid($this->pid, $status, WNOHANG);
+        return $status;
     }
 }

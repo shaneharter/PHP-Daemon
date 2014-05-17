@@ -23,7 +23,7 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
     public $daemon;
 
     /**
-     * @var Core_Lib_Process[]
+     * @var [Core_Lib_Process]
      */
     public $processes = array();
 
@@ -61,9 +61,14 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
             return;
 
         while($this->count() > 0) {
-            foreach($this->processes() as $pid => $process)
-                if ($message = $process->stop())
-                    $this->daemon->log($message);
+            foreach($this->processes() as $pid => $process) {
+                if ($message = $process->stop()) {
+                    // process got the SIGKILL treatment so pcntl_wait might not see it
+                    // cleanup here instead of trying to reap
+                    $this->daemon->log(sprintf("Worker Process '%s' Shutdown Timeout: Killing...", $message['pid']));
+                    $this->removePid($message['pid'], $message['status']);
+                }
+            }
 
             $this->reap(false);
             usleep(250000);
@@ -188,10 +193,7 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
             if (!$pid || !isset($map[$pid]))
                break;
 
-            $alias   = $map[$pid]->group;
-            $process = $this->processes[$alias][$pid];
-            $this->daemon->dispatch(array(Core_Daemon::ON_REAP), array($process, $status));
-            unset($this->processes[$alias][$pid]);
+            $this->removePid($pid, $status);
 
             // Keep track of process churn -- failures within a processes min_ttl
             // If too many failures of new processes occur inside a given interval, that's a problem.
@@ -206,6 +208,14 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
             if (count($this->failures) > self::CHURN_LIMIT)
                 $this->daemon->fatal_error("Recently forked processes are continuously failing. See error log for additional details.");
         }
+    }
+
+    private function removePid($pid, $status) {
+        $map = $this->processes();
+        $alias   = $map[$pid]->group;
+        $process = $this->processes[$alias][$pid];
+        $this->daemon->dispatch(array(Core_Daemon::ON_REAP), array($process, $status));
+        unset($this->processes[$alias][$pid]);
     }
 
 }

@@ -7,6 +7,11 @@
  *
  * You can use the Core_Daemon::on(ON_FORK) method to provide universal setup code that is run after every fork and
  * in every worker. The setup() method defined here can be used if you want specific setup code run in this forked process.
+ *
+ * @method boolean is_idle() Does the worker have at least one idle process?
+ * @method integer status(integer $call_id) Determine the status of a given call. Call ID's are returned when a job is called.
+ * @method number running_count() Retrieves the number of worker processes that are currently running
+ *
  */
 
 interface Core_IWorker
