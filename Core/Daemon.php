@@ -1000,7 +1000,7 @@ abstract class Core_Daemon
      *
      * @param String $alias  The name of the worker -- Will be instantiated at $this->{$alias}
      * @param callable|Core_IWorker $worker An object of type Core_Worker OR a callable (function, callback, closure)
-     * @param Core_IWorkerVia $via  A Core_IWorkerVia object that defines the medium for IPC (In theory could be any message queue, redis, memcache, etc)
+     * @param Core_IWorkerVia $via  A Core_IWorkerVia object that defines the medium for IPC (In theory could be any message queue, redis, memcached, etc)
      * @return Core_Worker_ObjectMediator Returns a Core_Worker class that can be used to interact with the Worker
      * @todo Use 'callable' type hinting if/when we move to a php 5.4 requirement.
      */
