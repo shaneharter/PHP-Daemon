@@ -118,6 +118,7 @@ abstract class Core_Daemon
      */
     private static $env = array(
         'parent' => true,
+        'restart' => false
     );
 
 
@@ -185,6 +186,7 @@ abstract class Core_Daemon
             try
             {
                 $o = new static;
+                $o->getopt();
                 $o->setup_plugins();
                 $o->setup_workers();
                 $o->check_environment();
@@ -240,7 +242,6 @@ abstract class Core_Daemon
         $this->set('filename',    $argv[0]);
         $this->set('start_time',  time());
         $this->pid(getmypid());
-        $this->getopt();
     }
 
     /**
@@ -337,9 +338,27 @@ abstract class Core_Daemon
         {
             $this->set('shutdown', true);
             $this->dispatch(array(self::ON_SHUTDOWN));
-            foreach(array_merge($this->workers, $this->plugins) as $object) {
-                $this->{$object}->teardown();
-                unset($this->{$object});
+
+            foreach($this->workers as $key => $worker) {
+                if(!property_exists($this, $worker)) {
+                    unset($this->workers[$key]);
+                    continue;
+                }
+
+                $this->$worker->teardown();
+                unset($this->$worker);
+                unset($this->workers[$key]);
+            }
+
+            foreach($this->plugins as $key => $plugin) {
+                if(!property_exists($this, $plugin)) {
+                    unset($this->plugins[$key]);
+                    continue;
+                }
+
+                $this->$plugin->teardown();
+                unset($this->$plugin);
+                unset($this->plugins[$key]);
             }
         }
         catch (Exception $e)
@@ -890,7 +909,9 @@ abstract class Core_Daemon
         if (!$this->is('parent') || !$this->is('daemonized'))
             return;
 
-        if ($this->runtime() < $this->auto_restart_interval || $this->auto_restart_interval < self::MIN_RESTART_SECONDS)
+        if (($this->runtime() < $this->auto_restart_interval ||
+            $this->auto_restart_interval < self::MIN_RESTART_SECONDS) &&
+            !$this->get('restart'))
             return false;
 
         $this->restart();
@@ -906,6 +927,8 @@ abstract class Core_Daemon
         if (!$this->is('parent') || !$this->is('daemonized'))
             return;
 
+        // recover workers when restarting
+        $this->set('recover_workers', true);
         $this->set('shutdown', true);
         $this->log('Restart Happening Now...');
 
@@ -918,7 +941,7 @@ abstract class Core_Daemon
         if (is_resource(STDOUT)) fclose(STDOUT);
         if (is_resource(STDERR)) fclose(STDERR);
         if (is_resource(STDIN))  fclose(STDIN);
-        exec($this->command());
+        exec($this->command() . ' --recover_workers');
 
         // A new daemon process has been created. This one will stick around just long enough to clean up the worker processes.
         exit();
@@ -1000,7 +1023,7 @@ abstract class Core_Daemon
      *
      * @param String $alias  The name of the worker -- Will be instantiated at $this->{$alias}
      * @param callable|Core_IWorker $worker An object of type Core_Worker OR a callable (function, callback, closure)
-     * @param Core_IWorkerVia $via  A Core_IWorkerVia object that defines the medium for IPC (In theory could be any message queue, redis, memcache, etc)
+     * @param Core_IWorkerVia $via  A Core_IWorkerVia object that defines the medium for IPC (In theory could be any message queue, redis, memcached, etc)
      * @return Core_Worker_ObjectMediator Returns a Core_Worker class that can be used to interact with the Worker
      * @todo Use 'callable' type hinting if/when we move to a php 5.4 requirement.
      */

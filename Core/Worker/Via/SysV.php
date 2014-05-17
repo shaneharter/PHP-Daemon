@@ -55,8 +55,14 @@ class Core_Worker_Via_SysV implements Core_IWorkerVia, Core_IPlugin {
     }
 
     public function __destruct()  {
+        if(!$this->mediator->daemon->get('recover_workers')) {
+            $this->release();
+        }
+        else {
+            @shm_detach($this->shm);
+        }
+
         unset($this->mediator);
-        @shm_detach($this->shm);
         $this->shm = null;
         $this->queue = null;
     }
