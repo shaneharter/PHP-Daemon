@@ -548,6 +548,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
             $this->daemon->on(Core_Daemon::ON_PREEXECUTE,   array($this, 'run'));
             $this->daemon->on(Core_Daemon::ON_IDLE,         array($this, 'garbage_collector'), ceil(120 / ($this->workers * 0.5)));  // Throttle the garbage collector
+            $this->daemon->on(Core_Daemon::ON_REAP,         array($this, 'reap'));
             $this->daemon->on(Core_Daemon::ON_SIGNAL,       array($this, 'dump'), null, function($args) {
                 return $args[0] == SIGUSR1;
             });
@@ -664,13 +665,6 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
         try {
 
-            // If there are any callbacks registered (onReturn, onTimeout, etc), we will pass
-            // the call object and this $logger closure to them
-            $that = $this;
-            $logger = function($message) use($that) {
-                $that->log($message);
-            };
-
             while($call = $this->via->get(self::WORKER_RUNNING)) {
 
                 if (!isset($this->calls[$call->id])) {
@@ -702,7 +696,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
                 $on_return = $this->on_return;
                 if (is_callable($on_return))
-                    call_user_func($on_return, $call, $logger);
+                    call_user_func($on_return, $call, $this->get_logger());
                 else
                     $this->log('No onReturn Callback Available');
 
@@ -729,19 +723,13 @@ abstract class Core_Worker_Mediator implements Core_ITask
 
                         $on_timeout = $this->on_timeout;
                         if (is_callable($on_timeout))
-                            call_user_func($on_timeout, $call, $logger);
+                            call_user_func($on_timeout, $call, $this->get_logger());
                     }
                 }
             }
 
-            // If we've killed all our processes -- either timeouts or maybe they fatal-errored -- and we have pending
-            // calls in the queue, fork()
-            if ($this->process_count() == 0) {
-                $state = $this->via->state();
-                if ($state['messages'] > 0) {
-                    $this->fork();
-                }
-            }
+            // Ensure we have correct # of workers running based on our current forking strategy
+            $this->fork();
 
         } catch (Exception $e) {
             $this->log(__METHOD__ . ' Failed: ' . $e->getMessage(), true);
@@ -935,6 +923,33 @@ abstract class Core_Worker_Mediator implements Core_ITask
             $this->call($call);
         }
     }
+
+    public function reap(Core_Lib_Process $process, $status) {
+
+        // There should only ever be at-most 1 call in running_calls for the reaped process
+        // break the loop after we find it
+        foreach(array_keys($this->running_calls) as $call_id) {
+            $call = $this->calls[$call_id];
+            if ($call->pid != $process->pid)
+                continue;
+
+            if (!$this->breakpoint("[{$this->alias} Call {$call_id}] Worked exited at runtime: " . $call->runtime(), $call_id-1))
+                break;
+
+            $this->log("Invoking premature timeout on Call {$call_id} in pid {$call->pid}. Worker exited.");
+            $call->timeout();
+            unset($this->running_calls[$call_id]);
+
+            $on_timeout = $this->on_timeout;
+            if (is_callable($on_timeout))
+              call_user_func($on_timeout, $call, $this->get_logger());
+
+            break;
+        }
+
+        $this->fork();
+    }
+
 
     /**
      * Report an error. Keep a count of error types and act appropriately when thresholds have been met.
@@ -1279,6 +1294,17 @@ abstract class Core_Worker_Mediator implements Core_ITask
      */
     public function is_idle() {
         return $this->workers > count($this->running_calls);
+    }
+
+    /**
+     * Get a logger callback that can be passed to e.g. the onTimeout and onReturn callbacks..
+     * @return callable
+     */
+    public function get_logger() {
+        $that = $this;
+        return function($message) use($that) {
+          $that->log($message);
+        };
     }
 
 }
