@@ -16,7 +16,7 @@ Create solid, long-running PHP daemon processes by extending the Core_Daemon cla
 * More Details Here https://github.com/shaneharter/PHP-Daemon/wiki/Version-2.2
 
 #### Daemon Monitoring 
-* Over the last few years I've built and deployed many daemons based on this library as well as cron jobs of all sorts. Recently I launched https://cronitor.io -- a dead simple cron (and daemon!) monitoring service. With one line of code you can integrate Cronitor <a href="https://cronitor.io">cron monitoring</a> into your system. One job is always free! Check it out at https://cronitor.io
+* Over the last few years I've built and deployed many daemons based on this library as well as cron jobs of all sorts. Recently I launched https://cronitor.io -- a dead simple cron (and daemon!) monitoring service. With one line of code you can integrate Cronitor into your daemon and get email/sms alerts if anything goes wrong.
 
 #### [NEW] Version 2.1 Released!
 * After a 9 month beta period, the code that was in the branch `feature_abstract_ipc` has been merged into master as v2.1
