@@ -40,7 +40,7 @@ class Core_Lock_File extends Core_Lock_Lock implements Core_IPlugin
     public function teardown()
     {
         // If the lockfile was set by this process, remove it. If filename is empty, this is being called before setup()
-        if (!empty($this->filename) && $this->pid == @file_get_contents($this->filename))
+        if (!empty($this->filename) && getmypid() == @file_get_contents($this->filename))
             @unlink($this->filename);
     }
 
