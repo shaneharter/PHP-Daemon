@@ -45,7 +45,7 @@ class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
 	{
 		$lock = $this->check();
 		if ($lock)
-			throw new Exception('Core_Lock_Shm::set Failed. Existing Lock Detected from PID ' . $lock);
+			throw new Exception('Core_Lock_Shm::set Failed. Existing Lock Detected from PID ' . $lock['pid']);
 
 		shm_put_var($this->shm, self::ADDRESS, array('pid' => $this->pid, 'time' => time()));
 	}
