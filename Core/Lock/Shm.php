@@ -13,8 +13,9 @@ class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
      */
 	private $shm = false;
 
-	public function __construct()
-	{
+    public function __construct(Core_Daemon $daemon, Array $args = array())
+    {
+        parent::__construct($daemon, $args);
 		$this->pid = getmypid();
 	}
 	
