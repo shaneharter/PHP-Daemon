@@ -27,9 +27,16 @@ class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
 	
 	public function teardown()
 	{
+        // Check shm validity before shm_get_var, return directly if NULL or FALSE
+        // This may happen when check_environment fail.
+        if ($this->shm) {
+            $lock = shm_get_var($this->shm, self::ADDRESS);
+        } else {
+            return;
+        }
+
 		// If this PID set this lock, release it
-		$lock = shm_get_var($this->shm, self::ADDRESS);
-		if ($lock == $this->pid) {
+		if ($lock['pid'] == $this->pid) {
 			shm_remove($this->shm);
             shm_detach($this->shm);
         }
