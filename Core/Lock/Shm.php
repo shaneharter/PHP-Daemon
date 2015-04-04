@@ -13,8 +13,9 @@ class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
      */
 	private $shm = false;
 
-	public function __construct()
-	{
+    public function __construct(Core_Daemon $daemon, Array $args = array())
+    {
+        parent::__construct($daemon, $args);
 		$this->pid = getmypid();
 	}
 	
@@ -26,9 +27,16 @@ class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
 	
 	public function teardown()
 	{
+        // Check shm validity before shm_get_var, return directly if NULL or FALSE
+        // This may happen when check_environment fail.
+        if ($this->shm) {
+            $lock = shm_get_var($this->shm, self::ADDRESS);
+        } else {
+            return;
+        }
+
 		// If this PID set this lock, release it
-		$lock = shm_get_var($this->shm, self::ADDRESS);
-		if ($lock == $this->pid) {
+		if ($lock['pid'] == $this->pid) {
 			shm_remove($this->shm);
             shm_detach($this->shm);
         }
@@ -44,14 +52,18 @@ class Core_Lock_Shm extends Core_Lock_Lock implements Core_IPlugin
 	{
 		$lock = $this->check();
 		if ($lock)
-			throw new Exception('Core_Lock_Shm::set Failed. Existing Lock Detected from PID ' . $lock);
+			throw new Exception('Core_Lock_Shm::set Failed. Existing Lock Detected from PID ' . $lock['pid']);
 
 		shm_put_var($this->shm, self::ADDRESS, array('pid' => $this->pid, 'time' => time()));
 	}
 	
 	protected function get()
 	{
-		$lock = shm_get_var($this->shm, self::ADDRESS);
+		$lock = array();
+        if (shm_has_var($this->shm, self::ADDRESS))
+            $lock = shm_get_var($this->shm, self::ADDRESS);
+        else
+            return false;
 
 		// Ensure we're not seeing our own lock
 		if ($lock['pid'] == $this->pid)
