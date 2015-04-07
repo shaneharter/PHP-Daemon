@@ -45,7 +45,7 @@ Most daemon applications will either use a blocking API library (libevent, socke
 * ###True parallel processing in PHP 
 In a few lines of code you can create asynchronous background processes that let you keep your daemon process light and responsive. After you pass an object to the Worker API, you can call its methods normally. The API silently intercepts your method call and passes it to the object running in the background process. The call returns as soon as the Worker API intercepts it, and your daemon continues normally.  When the background process completes the method call any `onReturn` callbacks you set are fired. And if things go wrong you've got the ability to enforce a timeout and easily retry the call. 
 
-  As an altenative to the persistent, long-running background workers, the Tasks API gives you a simple way to call any method in an ad-hoc background process that will exit when your method is complete. 
+  As an alternative to the persistent, long-running background workers, the Tasks API gives you a simple way to call any method in an ad-hoc background process that will exit when your method is complete. 
 
   PHP Simple Daemon workers and tasks are simple and powerful multi-processing tools in a language with very few of them. (But don't go trying to build a PHP version of Node.js)
 
@@ -56,9 +56,9 @@ In a few lines of code you can create asynchronous background processes that let
 * ###Integrated Debugging Tools
 Debugging multi-process applications is notoriously painful and several integrated debugging tools are shipped with the library. 
 
-  Since you cannot run an application like this under xdebug or zend debugger, a debug console is provided that lets you set psuedo breakpoints in your code. Your daemon turns into an interactive shell that gives you the ability to proceed or abort as well as a dozen+ commands to figure out exactly what is happening at any given time. Dump function arguments, eval() custom code, print stack traces, the list goes on. 
+  Since you cannot run an application like this under xdebug or zend debugger, a debug console is provided that lets you set pseudo breakpoints in your code. Your daemon turns into an interactive shell that gives you the ability to proceed or abort as well as a dozen+ commands to figure out exactly what is happening at any given time. Dump function arguments, eval() custom code, print stack traces, the list goes on. 
   
-  In addition to the integrated debug console, the `/scripts` directory includes a useful signal_console app: Attach to your daemon and easily send and re-send signals. Checkout the `PrimeNumbers` application for an example of using a signal handler to mimic occassional real-world events. 
+  In addition to the integrated debug console, the `/scripts` directory includes a useful signal_console app: Attach to your daemon and easily send and re-send signals. Checkout the `PrimeNumbers` application for an example of using a signal handler to mimic occasional real-world events. 
 
   You'll also find the shm_console app that lets you attach to a shared memory address, scan for keys, view them, and even run a `watch` command that prints out a transactional log of creations, updates and deletes.
   
