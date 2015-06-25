@@ -128,6 +128,13 @@ abstract class Core_Daemon
         'parent' => true,
     );
 
+    /**
+     * Handle for log() method,
+     * @see Core_Daemon::log()
+     * @see Core_Daemon::restart();
+     * @var stream
+     */
+    private static $log_handle = false;
 
     /**
      * Implement this method to define plugins
@@ -615,8 +622,7 @@ abstract class Core_Daemon
      * @param string $label Truncated at 12 chars
      */
     public function log($message, $label = '', $indent = 0)
-    {
-        static $handle = false;
+    {        
         static $log_file = '';
         static $log_file_check_at = 0;
         static $log_file_error = false;
@@ -630,14 +636,14 @@ abstract class Core_Daemon
         if (time() >= $log_file_check_at && $this->log_file() != $log_file) {
             $log_file = $this->log_file();
             $log_file_check_at = mktime(date('H'), (date('i') - (date('i') % 5)) + 5, null);
-            @fclose($handle);
-            $handle = $log_file_error = false;
+            @fclose(self::$log_handle);
+            self::$log_handle = $log_file_error = false;
         }
 
-        if ($handle === false) {
-            if (strlen($log_file) > 0 && $handle = @fopen($log_file, 'a+')) {
+        if (self::$log_handle === false) {
+            if (strlen($log_file) > 0 && self::$log_handle = @fopen($log_file, 'a+')) {
                 if ($this->is('parent')) {
-                    fwrite($handle, $header);
+                    fwrite(self::$log_handle, $header);
                     if ($this->is('stdout'))
                         echo $header;
                 }
@@ -649,8 +655,8 @@ abstract class Core_Daemon
 
         $message = $prefix . ' ' . str_replace("\n", "\n$prefix ", trim($message)) . "\n";
 
-        if ($handle)
-            fwrite($handle, $message);
+        if (self::$log_handle)
+            fwrite(self::$log_handle, $message);
 
         if ($this->is('stdout'))
             echo $message;
@@ -927,6 +933,8 @@ abstract class Core_Daemon
         if (is_resource(STDOUT)) fclose(STDOUT);
         if (is_resource(STDERR)) fclose(STDERR);
         if (is_resource(STDIN))  fclose(STDIN);
+        // Close the static log handle to prevent it being inherrited by the new process.
+        if (is_resource(self::$log_handle)) fclose(self::$log_handle);
         exec($this->command());
 
         // A new daemon process has been created. This one will stick around just long enough to clean up the worker processes.
