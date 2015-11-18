@@ -60,7 +60,7 @@ class Core_Plugin_ProcessManager implements Core_IPlugin
         if (!$this->daemon->is('parent'))
             return;
 
-        while($this->count() > 0) {
+        if ($this->count() > 0) {
             foreach($this->processes() as $pid => $process)
                 if ($message = $process->stop())
                     $this->daemon->log($message);
