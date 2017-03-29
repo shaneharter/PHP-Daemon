@@ -653,6 +653,9 @@ abstract class Core_Daemon
             }
         }
 
+        if (is_array($message)) {
+            $message = print_r($message,true);
+        }
         $message = $prefix . ' ' . str_replace("\n", "\n$prefix ", trim($message)) . "\n";
 
         if (self::$log_handle)
