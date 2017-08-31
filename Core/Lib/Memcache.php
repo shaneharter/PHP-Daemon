@@ -67,9 +67,9 @@ final class Core_Lib_Memcache extends Memcached
 	public function getWithRetry($key, $flags = false, $timeout_override = false)
 	{
 		if ($timeout_override)
-			$max_tries = intval($timeout_override / 0.10);
+			$max_tries = (int)($timeout_override / 0.10);
 		else
-			$max_tries = intval($this->auto_retry_timeout / 0.10);
+			$max_tries = (int)($this->auto_retry_timeout / 0.10);
 		
 		if ($max_tries < 1)
 			$max_tries = 1;
@@ -97,7 +97,7 @@ final class Core_Lib_Memcache extends Memcached
 	public function set($key, $var, $flags = null, $expire = null)
 	{
 		if ($this->auto_retry)
-			$max_tries = intval($this->auto_retry_timeout / 0.10);
+			$max_tries = (int)($this->auto_retry_timeout / 0.10);
 		else
 			$max_tries = 1;
 		
