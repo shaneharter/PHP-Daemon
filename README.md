@@ -4,16 +4,12 @@ Create solid, long-running PHP daemon processes by extending the Core_Daemon cla
 
 > Note: For many reasons PHP is not an optimal language choice for creating servers or daemons. I created this library so if you *must* use PHP for these things, you can do it with ease and produce great results. But if you have the choice, Java, Python, Ruby, etc, are all better suited for this. 
 
+> Note: I have not found time to invest in this project for the last few years. It's not modern PHP, but may still work for you. If anybody would like to maintain a fork please let me know and I will point to it here. 
+
 #### Requires: ###
 * PHP 5.3 or Higher
 * A POSIX compatible operating system (Linux, OSX, BSD)
 * POSIX and PCNTL Extensions for PHP
-
-#### [NEW] Development Plan for v2.2
-* Refactor code to use dependency injection and begin writing unit tests.
-* Namespace the code
-* Investigate updating the minimum version to PHP5.4. 
-* More Details Here https://github.com/shaneharter/PHP-Daemon/wiki/Version-2.2
 
 #### Daemon Monitoring 
 * Over the last few years I've built and deployed many daemons based on this library as well as cron jobs of all sorts. Recently I launched https://cronitor.io -- a dead simple cron (and daemon!) monitoring service. With one line of code you can integrate Cronitor into your daemon and get email/sms alerts if anything goes wrong.
