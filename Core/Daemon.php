@@ -791,13 +791,13 @@ abstract class Core_Daemon
             $out = '';
             switch(true) {
                 case $seconds > $d:
-                    $out .= intval($seconds / $d) . 'd ';
+                    $out .= (int)($seconds / $d) . 'd ';
                     $seconds %= $d;
                 case $seconds > $h:
-                    $out .= intval($seconds / $h) . 'h ';
+                    $out .= (int)($seconds / $h) . 'h ';
                     $seconds %= $h;
                 case $seconds > $m:
-                    $out .= intval($seconds / $m) . 'm ';
+                    $out .= (int)($seconds / $m) . 'm ';
                     $seconds %= $m;
                 default:
                     $out .= "{$seconds}s";

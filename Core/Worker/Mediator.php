@@ -1056,7 +1056,7 @@ abstract class Core_Worker_Mediator implements Core_ITask
                 sort($status_data);
                 if ($count  = count($status_data)) {
                     $mean   = round(array_sum($status_data) / $count, 5);
-                    $median = round($status_data[intval($count / 2)], 5);
+                    $median = round($status_data[(int)($count / 2)], 5);
                 }
                 $out[]  = sprintf('%s %s %s %s %s',
                     str_pad(substr($method, 0, 20), 20, ' ', STR_PAD_RIGHT),
